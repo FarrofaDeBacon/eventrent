@@ -1,0 +1,39 @@
+# Node & pnpm
+node_modules/
+.pnpm-store/
+.svelte-kit/
+build/
+dist/
+.env
+.env.*
+!.env.example
+
+# Rust & Cargo
+target/
+Cargo.lock
+**/*.rs.bk
+
+# Tauri
+src-tauri/target/
+
+# SQLite & local data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Test & Coverage
+test-results/
+playwright-report/
+blob-report/
+coverage/
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.user
