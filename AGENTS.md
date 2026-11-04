@@ -66,6 +66,10 @@ Este documento estabelece as diretrizes arquiteturais, de qualidade de código, 
    - Sem `unwrap()` em código Rust de produção. Erros tratados via tipos de erro explícitos (`Result<T, E>`).
 10. **Segurança de Credenciais**:
     - Nunca comitar segredos, chaves de API, arquivos de banco local (`*.db`) ou variáveis `.env`.
+11. **Unicidade com Exclusão Lógica**:
+    - Usar índices únicos parciais `WHERE deleted_at IS NULL`, em migração nova; nunca `UNIQUE` simples em tabela com `deleted_at`.
+12. **Escopo de Migrações**:
+    - Migrações contêm apenas estrutura, nunca dados de negócio. Dados iniciais do ambiente desktop (como o tenant padrão) são garantidos via código idempotente na inicialização.
 
 ---
 
