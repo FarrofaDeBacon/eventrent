@@ -1,0 +1,60 @@
+{
+  "app": {
+    "name": "EventRent",
+    "subtitle": "Gestão de Locação para Eventos",
+    "tagline": "Audiovisual, som, luz e imagem"
+  },
+  "nav": {
+    "dashboard": "Painel Principal",
+    "quotes": "Orçamentos",
+    "reservations": "Reservas",
+    "catalog": "Equipamentos",
+    "customers": "Clientes",
+    "settings": "Configurações",
+    "appearance": "Aparência",
+    "collapse": "Recolher barra lateral",
+    "expand": "Expandir barra lateral"
+  },
+  "command": {
+    "placeholder": "Digite um comando ou pesquise (Ctrl+K)...",
+    "noResults": "Nenhum resultado encontrado.",
+    "navigation": "Navegação",
+    "actions": "Ações Rápidas",
+    "toggleTheme": "Alternar Modo Claro/Escuro",
+    "goToDashboard": "Ir para o Painel Principal",
+    "goToAppearance": "Ir para Configurações de Aparência"
+  },
+  "appearance": {
+    "title": "Aparência e Identidade Visual",
+    "description": "Personalize as cores da marca, o nome da empresa e o logotipo exibido na aplicação.",
+    "companyNameLabel": "Nome da Empresa",
+    "companyNamePlaceholder": "Ex.: Mega Som & Luz Eventos",
+    "primaryColorLabel": "Cor Primária",
+    "primaryColorDesc": "Usada em botões principais, destaques ativos e foco.",
+    "secondaryColorLabel": "Cor Secundária",
+    "secondaryColorDesc": "Usada em superfícies secundárias e bordas sutis.",
+    "accentColorLabel": "Cor de Destaque",
+    "accentColorDesc": "Usada em badges, tags e notificações de ação.",
+    "logoLabel": "Logotipo da Empresa",
+    "logoDesc": "Envie uma imagem PNG ou SVG para o cabeçalho e relatórios.",
+    "logoUploadBtn": "Selecionar Imagem",
+    "logoRemoveBtn": "Remover Logo",
+    "previewTitle": "Pré-visualização da Identidade",
+    "saveBtn": "Salvar Alterações",
+    "saving": "Salvando...",
+    "saveSuccess": "Identidade visual salva e aplicada com sucesso!",
+    "saveError": "Erro ao salvar identidade visual. Tente novamente."
+  },
+  "common": {
+    "loading": "Carregando informações...",
+    "errorTitle": "Ocorreu um erro",
+    "errorMessage": "Não foi possível carregar os dados solicitados.",
+    "retry": "Tentar Novamente",
+    "emptyTitle": "Nenhum registro encontrado",
+    "emptyMessage": "Não há dados para exibir no momento.",
+    "lightMode": "Modo Claro",
+    "darkMode": "Modo Escuro",
+    "systemMode": "Seguir Sistema",
+    "close": "Fechar"
+  }
+}
