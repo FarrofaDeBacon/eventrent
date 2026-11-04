@@ -113,24 +113,37 @@ impl BrandingRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_db;
+    use crate::db::{ensure_default_tenant, init_memory_db};
 
     #[tokio::test]
     async fn test_branding_repository_in_memory() {
-        // Inicializa SQLite em memória com migrações
-        let pool = init_db("sqlite::memory:")
+        // Inicializa SQLite em memória apenas com a estrutura das migrações (sem seed na migration)
+        let pool = init_memory_db()
             .await
             .expect("Falha ao inicializar banco de testes em memória");
 
-        let default_tenant_id = "018f0000-0000-7000-8000-000000000001";
+        // Garante de forma idempotente o tenant padrão com UUID v7 e timestamps UTC reais
+        let default_tenant_id = ensure_default_tenant(&pool)
+            .await
+            .expect("Falha ao executar ensure_default_tenant");
 
-        // Verifica existência do branding pré-carregado na migração
-        let initial = BrandingRepository::get_by_tenant_id(&pool, default_tenant_id)
+        let idempotent_tenant_id = ensure_default_tenant(&pool)
+            .await
+            .expect("Segunda chamada a ensure_default_tenant deve ser idempotente");
+        assert_eq!(default_tenant_id, idempotent_tenant_id);
+
+        let parsed_uuid =
+            Uuid::parse_str(&default_tenant_id).expect("ID do tenant deve ser UUID válido");
+        assert_eq!(parsed_uuid.get_version_num(), 7);
+
+        // Verifica existência do branding criado por ensure_default_tenant
+        let initial = BrandingRepository::get_by_tenant_id(&pool, &default_tenant_id)
             .await
             .expect("Erro ao buscar branding inicial")
-            .expect("Branding padrão da migration deve existir");
+            .expect("Branding padrão deve existir após ensure_default_tenant");
 
         assert_eq!(initial.company_name, "EventRent Audiovisual");
+        assert!(chrono::DateTime::parse_from_rfc3339(&initial.created_at).is_ok());
 
         // Atualiza branding
         let input = UpdateBrandingInput {
@@ -141,7 +154,7 @@ mod tests {
             logo_url: Some("data:image/svg+xml;base64,...".to_string()),
         };
 
-        let updated = BrandingRepository::save(&pool, default_tenant_id, &input)
+        let updated = BrandingRepository::save(&pool, &default_tenant_id, &input)
             .await
             .expect("Erro ao salvar branding");
 
@@ -155,7 +168,7 @@ mod tests {
         );
 
         // Confirma leitura após atualização
-        let reloaded = BrandingRepository::get_by_tenant_id(&pool, default_tenant_id)
+        let reloaded = BrandingRepository::get_by_tenant_id(&pool, &default_tenant_id)
             .await
             .expect("Erro ao recarregar")
             .expect("Branding deve existir");
