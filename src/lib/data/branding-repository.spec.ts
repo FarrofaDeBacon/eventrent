@@ -1,24 +1,20 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MockBrandingRepository } from "./mock-branding-repository";
 import type { BrandingRepository } from "./branding-repository";
+import { DEFAULT_COMPANY_NAME } from "./types";
 
 describe("BrandingRepository (Data Layer Port & Adapter)", () => {
   let repository: BrandingRepository;
   const tenantId = "018f0000-0000-7000-8000-000000000001";
 
   beforeEach(() => {
-    repository = new MockBrandingRepository({
-      company_name: "EventRent Audiovisual",
-      primary_color: "#2563eb",
-      secondary_color: "#475569",
-      accent_color: "#7c3aed",
-    });
+    repository = new MockBrandingRepository();
   });
 
-  it("deve carregar o branding inicial do tenant", async () => {
+  it("deve carregar o branding inicial do tenant com nome padrão 'Minha empresa'", async () => {
     const branding = await repository.getBranding(tenantId);
     expect(branding).not.toBeNull();
-    expect(branding?.company_name).toBe("EventRent Audiovisual");
+    expect(branding?.company_name).toBe(DEFAULT_COMPANY_NAME);
     expect(branding?.primary_color).toBe("#2563eb");
     expect(branding?.secondary_color).toBe("#475569");
   });
