@@ -12,17 +12,17 @@
 
 ## 1. O que foi feito (por item do escopo, com status)
 
-| Item  | Descrição do Escopo                                                                                                     |    Status     | Detalhes                                                                                                                                                                                                                               |
-| ----- | ----------------------------------------------------------------------------------------------------------------------- | :-----------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1** | Scaffold do projeto (Tauri 2 + SvelteKit adapter-static + TS strict + Tailwind 4 + ESLint + Prettier + Cargo workspace) | **Concluído** | Workspace Rust com `crates/core` e `src-tauri`; Frontend SvelteKit 2 SPA com Svelte 5 (Runes), adapter-static, Tailwind 4, ESLint 9 flat config e Prettier.                                                                            |
-| **2** | Criar `AGENTS.md` e os documentos `docs/00` a `05` e `05-roadmap.md`                                                    | **Concluído** | Governança completa com regras inegociáveis, visão, arquitetura, modelo de dados, regras de negócio, design system e roadmap das 9 fases.                                                                                              |
-| **3** | Design system base (tokens OKLCH claro/escuro, branding dinâmico, Button, Input, Card, Badge, Dialog, Toast, Estados)   | **Concluído** | Tokens perceptuais em OKLCH (sem cores fixas), suporte a `prefers-reduced-motion`, função `applyBranding` no `:root`, componentes tipados em Svelte 5 com `bits-ui` e `svelte-sonner`.                                                 |
-| **4** | App shell (sidebar recolhível, cabeçalho, rota inicial e "Configurações > Aparência" com logo e cores)                  | **Concluído** | Shell fluido e reativo; tela de aparência com atualização em tempo real de pré-visualização, seleção de paleta e upload de logotipo.                                                                                                   |
-| **5** | Paleta de comandos (Ctrl+K) com estrutura básica e sistema de atalhos de teclado                                        | **Concluído** | Diálogo acessível aberto via `Ctrl+K` / `Cmd+K` com busca de rotas e alternador de tema acionável por teclado (setas e Enter).                                                                                                         |
-| **6** | i18n configurado com pt-BR padrão                                                                                       | **Concluído** | Configurado via `svelte-i18n` com inicialização síncrona (`addMessages`) e dicionário JSON em `pt-BR` cobrindo 100% dos textos visíveis.                                                                                               |
-| **7** | Infra de banco SQLite (caminho no app data, migrações automáticas, tenant/branding ponta a ponta)                       | **Concluído** | SQLite via SQLx com modo WAL, chaves estrangeiras e `ON CONFLICT DO NOTHING` portável; migration `0001` com UUID v7; repositório no `crates/core` exposto via Tauri `invoke` para `src/lib/data`.                                      |
-| **8** | Testes (Rust em memória, Vitest data mock, Playwright smoke) e CI no GitHub Actions                                     | **Concluído** | Teste Rust `test_branding_repository_in_memory` (ok); 3 testes Vitest da camada de dados (ok); 2 testes E2E Playwright executados no Chromium headless (250ms/350ms, ok); CI matricial Ubuntu e Windows em `.github/workflows/ci.yml`. |
-| **9** | README com instruções de instalação, execução, testes e build                                                           | **Concluído** | Documentação técnica completa em `README.md` com guia passo a passo.                                                                                                                                                                   |
+| Item  | Descrição do Escopo                                                                                                     |    Status     | Detalhes                                                                                                                                                                                                                                                                                                                               |
+| ----- | ----------------------------------------------------------------------------------------------------------------------- | :-----------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1** | Scaffold do projeto (Tauri 2 + SvelteKit adapter-static + TS strict + Tailwind 4 + ESLint + Prettier + Cargo workspace) | **Concluído** | Workspace Rust com `crates/core` e `src-tauri`; Frontend SvelteKit 2 SPA com Svelte 5 (Runes), adapter-static, Tailwind 4, ESLint 9 flat config e Prettier.                                                                                                                                                                            |
+| **2** | Criar `AGENTS.md` e os documentos `docs/00` a `05` e `05-roadmap.md`                                                    | **Concluído** | Governança completa com regras inegociáveis, visão, arquitetura, modelo de dados, regras de negócio, design system e roadmap das 9 fases.                                                                                                                                                                                              |
+| **3** | Design system base (tokens OKLCH claro/escuro, branding dinâmico, Button, Input, Card, Badge, Dialog, Toast, Estados)   | **Concluído** | Tokens perceptuais em OKLCH (sem cores fixas), suporte a `prefers-reduced-motion`, função `applyBranding` no `:root`, componentes tipados em Svelte 5 com `bits-ui` e `svelte-sonner`.                                                                                                                                                 |
+| **4** | App shell (sidebar recolhível, cabeçalho, rota inicial e "Configurações > Aparência" com logo e cores)                  | **Concluído** | Shell fluido e reativo; tela de aparência com atualização em tempo real de pré-visualização, seleção de paleta e upload de logotipo.                                                                                                                                                                                                   |
+| **5** | Paleta de comandos (Ctrl+K) com estrutura básica e sistema de atalhos de teclado                                        | **Concluído** | Diálogo acessível aberto via `Ctrl+K` / `Cmd+K` com busca de rotas e alternador de tema acionável por teclado (setas e Enter).                                                                                                                                                                                                         |
+| **6** | i18n configurado com pt-BR padrão                                                                                       | **Concluído** | Configurado via `svelte-i18n` com inicialização síncrona (`addMessages`) e dicionário JSON em `pt-BR` cobrindo 100% dos textos visíveis.                                                                                                                                                                                               |
+| **7** | Infra de banco SQLite (caminho no app data, migrações automáticas, tenant/branding ponta a ponta)                       | **Concluído** | SQLite via SQLx com modo WAL, chaves estrangeiras e `ON CONFLICT DO NOTHING` portável; migration `0001` com UUID v7; repositório no `crates/core` exposto via Tauri `invoke` para `src/lib/data`.                                                                                                                                      |
+| **8** | Testes (Rust em memória, Vitest data mock, Playwright smoke) e CI no GitHub Actions                                     | **Concluído** | Teste de integração Rust em `crates/core/src/repository/branding_repository.rs` (`repository::branding_repository::tests::test_branding_repository_in_memory`); 3 testes Vitest da camada de dados; 2 testes E2E Playwright executados local e no CI (Ubuntu); CI matricial Ubuntu e Windows 100% verde em `.github/workflows/ci.yml`. |
+| **9** | README com instruções de instalação, execução, testes e build                                                           | **Concluído** | Documentação técnica completa em `README.md` com guia passo a passo.                                                                                                                                                                                                                                                                   |
 
 ---
 
@@ -30,9 +30,11 @@
 
 ```
 eventrent/
-├── .github/workflows/ci.yml            # CI no GitHub Actions (Ubuntu + Windows)
-├── .npmrc                              # Configuração de build scripts autorizados do pnpm
+├── .github/workflows/ci.yml            # CI no GitHub Actions (Ubuntu + Windows, E2E Playwright)
+├── .gitattributes                      # Normalização obrigatória de fim de linha LF (* text=auto eol=lf)
+├── .prettierrc                         # Configuração Prettier (endOfLine: lf + prettier-plugin-svelte)
 ├── .prettierignore                     # Exclusão de diretórios de build e lockfiles
+├── pnpm-workspace.yaml                 # Autorização de build scripts do pnpm (onlyBuiltDependencies)
 ├── Cargo.toml                          # Workspace raiz Rust (crates/core + src-tauri)
 ├── Cargo.lock                          # Lockfile determinístico das dependências Rust
 ├── eslint.config.js                    # ESLint 9 Flat Config (TypeScript + Svelte 5)
@@ -64,7 +66,7 @@ eventrent/
 │   └── Cargo.toml
 ├── src-tauri/
 │   ├── capabilities/default.json       # Permissões do Tauri 2
-│   ├── icons/                          # Ícones multiplataforma gerados via tauri icon (.ico, .icns, .png)
+│   ├── icons/                          # Ícones desktop essenciais (.ico, .icns, 32x32, 128x128, 128x128@2x, icon.png)
 │   ├── src/
 │   │   ├── commands/branding.rs        # Comandos finos get_branding e save_branding
 │   │   ├── lib.rs                      # Setup do app data dir, SQLite e invoke_handlers
@@ -163,7 +165,11 @@ Running 2 tests using 2 workers
   2 passed (24.3s)
 ```
 
-### E. Formatação, Linter e Testes do Backend Rust
+### E. Formatação, Linter e Testes de Integração do Backend Rust
+
+- **Arquivo do Teste de Integração SQLite em Memória**: `crates/core/src/repository/branding_repository.rs`
+- **Nome Completo do Teste**: `repository::branding_repository::tests::test_branding_repository_in_memory`
+- **Escopo Verificado**: Inicializa um banco SQLite real em memória (`init_db("sqlite::memory:")`), executa automaticamente as migrações (`0001_init_tenant_and_branding.sql`), valida a leitura do tenant/branding padrão inserido na migração, persiste uma atualização completa via `BrandingRepository::save` e recarrega do banco confirmando a gravação.
 
 ```
 $ cargo fmt --all --check
@@ -177,6 +183,18 @@ running 1 test
 test repository::branding_repository::tests::test_branding_repository_in_memory ... ok
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 ```
+
+### F. CI no GitHub Actions e Correções da Fase 0.1
+
+- **Run Verde do CI (Ubuntu + Windows)**: [https://github.com/FarrofaDeBacon/eventrent/actions/runs/41852319762](https://github.com/FarrofaDeBacon/eventrent/actions/runs/41852319762)
+  - Job `Check & Tests (ubuntu-latest)` (incluindo Playwright E2E): [https://github.com/FarrofaDeBacon/eventrent/actions/runs/41852319762/job/126651590849](https://github.com/FarrofaDeBacon/eventrent/actions/runs/41852319762/job/126651590849) — **PASS**
+  - Job `Check & Tests (windows-latest)`: [https://github.com/FarrofaDeBacon/eventrent/actions/runs/41852319762/job/126651591488](https://github.com/FarrofaDeBacon/eventrent/actions/runs/41852319762/job/126651591488) — **PASS**
+- **Motivo da falha anterior no CI Windows (Run #4 — `41845880914`)**:
+  - Na etapa `"Lint de Código"` (`pnpm lint`, que executa `prettier --check . && eslint .`), o runner `windows-latest` realiza o checkout com `core.autocrlf=true` por padrão quando não há `.gitattributes`. Isso converteu os finais de linha de 47 arquivos de `LF` para `CRLF` no checkout do Windows, fazendo com que o Prettier (cujo padrão no v3 é `endOfLine: "lf"`) acusasse divergência de estilo (`[warn] Code style issues found in 47 files. Run Prettier with --write to fix.`) e encerrasse com exit code `1`.
+  - **Correção aplicada na raiz**: Adicionado `.gitattributes` com `* text=auto eol=lf`, `.prettierrc` explícito com `"endOfLine": "lf"` e `"plugins": ["prettier-plugin-svelte"]`, e renormalização dos arquivos no Git.
+- **Demais ajustes da Fase 0.1**:
+  - Removidos do repositório os ícones mobile/Appx desnecessários (`src-tauri/icons/android/`, `src-tauri/icons/ios/`, `Square*.png`, `StoreLogo.png`) e a pasta gerada `src-tauri/gen/` (adicionada ao `.gitignore`). Build desktop validado com sucesso via `pnpm tauri build` (gerando instaladores `.msi` e `-setup.exe`).
+  - Workflow `.github/workflows/ci.yml` ajustado para disparar `push` apenas na `main` (`pull_request` cobre branches de PR), configurado `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true` para eliminar avisos de deprecação do Node 20 e adicionado passo de execução do Playwright E2E (`pnpm test:e2e`) no job `ubuntu-latest`.
 
 ---
 
@@ -202,6 +220,11 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 _(Atualizada até o fechamento da branch `fase-0-fundacao`)_
 
 ```
+docs(relatorio): atualiza relatorio da fase 0 com diagnostico e link do CI verde
+ci: ajusta gatilho push, Node 24 para actions e adiciona Playwright no Linux
+chore(repo): remove icones mobile/appx e ignora src-tauri/gen
+fix(ci): normaliza fim de linha LF com .gitattributes e .prettierrc
+ci: remove .npmrc invalido e ativa standalone no pnpm/action-setup
 fix(qualidade): corrige portabilidade SQL, WAL, ESLint, i18n, tokens OKLCH e testes e2e
 docs(relatorio): adiciona relatorio final detalhado da fase 0
 docs: adiciona readme detalhado e padroniza formatacao de docs
