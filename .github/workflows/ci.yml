@@ -2,9 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [main, fase-0-fundacao]
+    branches: [main]
   pull_request:
     branches: [main]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   quality:
@@ -66,6 +69,14 @@ jobs:
 
       - name: Testes Unitários Frontend (Vitest)
         run: pnpm test:run
+
+      - name: Instalar navegador Playwright (Linux)
+        if: runner.os == 'Linux'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Testes E2E (Playwright)
+        if: runner.os == 'Linux'
+        run: pnpm test:e2e
 
       - name: Rustfmt Check
         run: cargo fmt --all --check
