@@ -1,0 +1,17 @@
+[package]
+name = "eventrent-store-sqlite"
+version = "0.1.0"
+edition = "2021"
+authors = ["EventRent Team"]
+description = "SQLite store adapter and migrations for EventRent"
+
+[dependencies]
+eventrent-core = { path = "../core" }
+async-trait = "0.1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros", "chrono", "uuid"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.10", features = ["v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
