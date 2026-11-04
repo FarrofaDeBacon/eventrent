@@ -65,6 +65,8 @@ pnpm tauri dev
 
 Abre a janela nativa do desktop com SQLite integrado no diretório de dados do app.
 
+> **Aviso de Desenvolvimento (Fase 0.2)**: A migração `0001_init_tenant_and_branding.sql` foi ajustada para conter apenas estrutura (DDL), movendo o seed inicial para `ensure_default_tenant`. Caso você tenha executado o aplicativo desktop antes desta atualização, apague o arquivo local `eventrent.db` (e `eventrent.db-wal` / `eventrent.db-shm`) na pasta de dados do app (`%APPDATA%\com.eventrent.app\` no Windows) antes de rodar novamente para evitar divergência de checksum do SQLx.
+
 ---
 
 ## 🧪 Como Executar os Testes e Verificações

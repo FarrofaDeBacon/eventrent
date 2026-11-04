@@ -167,9 +167,14 @@ Running 2 tests using 2 workers
 
 ### E. Formatação, Linter e Testes de Integração do Backend Rust
 
-- **Arquivo do Teste de Integração SQLite em Memória**: `crates/core/src/repository/branding_repository.rs`
-- **Nome Completo do Teste**: `repository::branding_repository::tests::test_branding_repository_in_memory`
-- **Escopo Verificado**: Inicializa um banco SQLite real em memória (`init_db("sqlite::memory:")`), executa automaticamente as migrações (`0001_init_tenant_and_branding.sql`), valida a leitura do tenant/branding padrão inserido na migração, persiste uma atualização completa via `BrandingRepository::save` e recarrega do banco confirmando a gravação.
+- **Teste 1 — Repositório em Memória e `ensure_default_tenant` Idempotente**:
+  - **Arquivo**: `crates/core/src/repository/branding_repository.rs`
+  - **Nome Completo**: `repository::branding_repository::tests::test_branding_repository_in_memory`
+  - **Escopo**: Inicializa banco SQLite em memória (`init_memory_db()`), executa migrações puramente estruturais (`0001_init_tenant_and_branding.sql`), executa `ensure_default_tenant(&pool)` duas vezes validando idempotência, geração de UUID v7 e timestamps reais UTC (RFC 3339), atualiza branding via `BrandingRepository::save` e recarrega do banco.
+- **Teste 2 — Inicialização por `Path` com Espaços e Acentos**:
+  - **Arquivo**: `crates/core/src/db.rs`
+  - **Nome Completo**: `db::tests::test_init_db_with_spaces_and_accents_in_path`
+  - **Escopo**: Inicializa arquivo SQLite via `SqliteConnectOptions::new().filename(db_path)` em diretório temporário contendo espaços, acentos e caracteres especiais (`João Silva & Locação São Paulo/dados de locação áudio & vídeo.db`), valida `ensure_default_tenant` e leitura do branding.
 
 ```
 $ cargo fmt --all --check
@@ -179,22 +184,28 @@ $ cargo clippy --workspace -- -D warnings
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.58s
 
 $ cargo test --workspace
-running 1 test
+running 2 tests
 test repository::branding_repository::tests::test_branding_repository_in_memory ... ok
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test db::tests::test_init_db_with_spaces_and_accents_in_path ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
 ```
 
-### F. CI no GitHub Actions e Correções da Fase 0.1
+### F. CI no GitHub Actions e Correções das Fases 0.1 e 0.2
 
-- **Run Verde do CI (Ubuntu + Windows)**: [https://github.com/FarrofaDeBacon/eventrent/actions/runs/41852319762](https://github.com/FarrofaDeBacon/eventrent/actions/runs/41852319762)
-  - Job `Check & Tests (ubuntu-latest)` (incluindo Playwright E2E): [https://github.com/FarrofaDeBacon/eventrent/actions/runs/41852319762/job/126651590849](https://github.com/FarrofaDeBacon/eventrent/actions/runs/41852319762/job/126651590849) — **PASS**
-  - Job `Check & Tests (windows-latest)`: [https://github.com/FarrofaDeBacon/eventrent/actions/runs/41852319762/job/126651591488](https://github.com/FarrofaDeBacon/eventrent/actions/runs/41852319762/job/126651591488) — **PASS**
+- **Checks do Pull Request #1**: [https://github.com/FarrofaDeBacon/eventrent/pull/1/checks](https://github.com/FarrofaDeBacon/eventrent/pull/1/checks)
+- **Runs Verdes Anteriores (Ubuntu + Windows)**:
+  - Run `41852319762`: [https://github.com/FarrofaDeBacon/eventrent/actions/runs/41852319762](https://github.com/FarrofaDeBacon/eventrent/actions/runs/41852319762) (Ubuntu [Job 126651590849](https://github.com/FarrofaDeBacon/eventrent/actions/runs/41852319762/job/126651590849) **PASS** | Windows [Job 126651591488](https://github.com/FarrofaDeBacon/eventrent/actions/runs/41852319762/job/126651591488) **PASS**)
+  - Run `41863195867`: [https://github.com/FarrofaDeBacon/eventrent/actions/runs/41863195867](https://github.com/FarrofaDeBacon/eventrent/actions/runs/41863195867) (Ubuntu [Job 126690445766](https://github.com/FarrofaDeBacon/eventrent/actions/runs/41863195867/job/126690445766) **PASS** | Windows [Job 126690445440](https://github.com/FarrofaDeBacon/eventrent/actions/runs/41863195867/job/126690445440) **PASS**)
 - **Motivo da falha anterior no CI Windows (Run #4 — `41845880914`)**:
   - Na etapa `"Lint de Código"` (`pnpm lint`, que executa `prettier --check . && eslint .`), o runner `windows-latest` realiza o checkout com `core.autocrlf=true` por padrão quando não há `.gitattributes`. Isso converteu os finais de linha de 47 arquivos de `LF` para `CRLF` no checkout do Windows, fazendo com que o Prettier (cujo padrão no v3 é `endOfLine: "lf"`) acusasse divergência de estilo (`[warn] Code style issues found in 47 files. Run Prettier with --write to fix.`) e encerrasse com exit code `1`.
-  - **Correção aplicada na raiz**: Adicionado `.gitattributes` com `* text=auto eol=lf`, `.prettierrc` explícito com `"endOfLine": "lf"` e `"plugins": ["prettier-plugin-svelte"]`, e renormalização dos arquivos no Git.
-- **Demais ajustes da Fase 0.1**:
-  - Removidos do repositório os ícones mobile/Appx desnecessários (`src-tauri/icons/android/`, `src-tauri/icons/ios/`, `Square*.png`, `StoreLogo.png`) e a pasta gerada `src-tauri/gen/` (adicionada ao `.gitignore`). Build desktop validado com sucesso via `pnpm tauri build` (gerando instaladores `.msi` e `-setup.exe`).
-  - Workflow `.github/workflows/ci.yml` ajustado para disparar `push` apenas na `main` (`pull_request` cobre branches de PR), configurado `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true` para eliminar avisos de deprecação do Node 20 e adicionado passo de execução do Playwright E2E (`pnpm test:e2e`) no job `ubuntu-latest`.
+  - **Correção aplicada na raiz (Fase 0.1)**: Adicionado `.gitattributes` com `* text=auto eol=lf`, `.prettierrc` explícito com `"endOfLine": "lf"` e `"plugins": ["prettier-plugin-svelte"]`, e renormalização dos arquivos no Git.
+- **Correções da Fase 0.2 (Robustez Desktop e Governança de Migrações)**:
+  1. `src-tauri/src/lib.rs`: Removidos fallbacks silenciosos de `app_data_dir()` e `create_dir_all()`. Falhas na inicialização exibem diálogo nativo de erro (`tauri-plugin-dialog`) informando o motivo e o caminho do log, encerrando de forma controlada.
+  2. Logs: Configurado `tracing-appender` com rotação diária em `<app_data_dir>/logs/eventrent.log` (além de `stdout` em modo dev).
+  3. `crates/core/src/db.rs`: `init_db(db_path: &Path)` agora utiliza `SqliteConnectOptions::new().filename(db_path)` (sem montar URL de texto), com `init_memory_db()` dedicado para testes e teste explícito com caminho contendo espaços e acentuação.
+  4. `0001_init_tenant_and_branding.sql`: Removidos os `INSERT`s de seed da migração (mantendo apenas DDL). Criada função idempotente `ensure_default_tenant(&pool)` chamada na inicialização do desktop com UUID v7 gerados e timestamps UTC reais.
+  5. `tauri-plugin-single-instance`: Adicionado para impedir múltiplas instâncias simultâneas abrindo o mesmo banco SQLite e focar a janela existente.
+  6. `AGENTS.md`: Adicionadas as regras de índices únicos parciais (`WHERE deleted_at IS NULL`) para tabelas com exclusão lógica e proibição de dados de negócio em migrações.
 
 ---
 
@@ -204,6 +215,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 2. **ADR-0002: Persistência Local com SQLite via SQLx e Crate Core Isolada**
 3. **ADR-0003: Design Tokens em Espaço OKLCH e Estratégia White Label**
 4. **ADR-0004: Dependências Auxiliares do Ecossistema Rust e Frontend**
+5. **ADR-0005: Logs em Arquivo com Rotação Diária, Diálogo Nativo de Erro e Instância Única**
 
 ---
 
