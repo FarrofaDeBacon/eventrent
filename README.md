@@ -21,9 +21,10 @@ Desenvolvido com arquitetura **Desktop First** baseada em **Tauri 2**, frontend 
 ### Backend & Persistência
 
 - **Linguagem**: Rust (Cargo Workspace).
-- **`crates/core`**: Modelos de domínio, entidades, regras de negócio e repositórios SQLx. **Sem acoplamento com Tauri**.
-- **`src-tauri`**: Aplicação Desktop Tauri 2; comandos finos de IPC.
-- **Banco de Dados**: SQLite com migrações automáticas embutidas (`sqlx::migrate!`). SQL portável preparado para PostgreSQL.
+- **`crates/core`**: Modelos de domínio, entidades, regras de negócio (`CoreServices`), RBAC, Argon2id e traits assíncronas de persistência (`TenantStore`, `BrandingStore`, `RoleStore`, `UserStore`, `AuditStore`). **Zero dependência de `sqlx` ou Tauri**.
+- **`crates/store-sqlite`**: Implementação concreta das traits de persistência para SQLite via SQLx, migrações embutidas e execução da suíte de contrato (`run_store_contract_suite`).
+- **`src-tauri`**: Aplicação Desktop Tauri 2; leitura pré-banco de `config.json` e comandos finos de IPC.
+- **Banco de Dados**: SQLite (modo Local) com migrações automáticas embutidas (`sqlx::migrate!`) e índices únicos parciais (`WHERE deleted_at IS NULL`) compatíveis com PostgreSQL (modo Nuvem na Fase 2.5).
 
 ---
 
@@ -65,7 +66,7 @@ pnpm tauri dev
 
 Abre a janela nativa do desktop com SQLite integrado no diretório de dados do app.
 
-> **Aviso de Desenvolvimento (Fase 0.2)**: A migração `0001_init_tenant_and_branding.sql` foi ajustada para conter apenas estrutura (DDL), movendo o seed inicial para `ensure_default_tenant`. Caso você tenha executado o aplicativo desktop antes desta atualização, apague o arquivo local `eventrent.db` (e `eventrent.db-wal` / `eventrent.db-shm`) na pasta de dados do app (`%APPDATA%\com.eventrent.app\` no Windows) antes de rodar novamente para evitar divergência de checksum do SQLx.
+> **Aviso de Desenvolvimento (Fase 1A)**: A migração `0001_init_tenant_and_branding.sql` foi movida para `crates/store-sqlite/migrations/` e ajustada para substituir `UNIQUE` em linha por índices únicos parciais (`WHERE deleted_at IS NULL`), além da inclusão da migração `0002_users_roles_and_audit.sql`. Bancos locais de desenvolvimento criados na Fase 0 (`eventrent.db`, `eventrent.db-wal`, `eventrent.db-shm` e `config.json` em `%APPDATA%\com.eventrent.app\` no Windows ou `~/.local/share/com.eventrent.app/` no Linux) **devem ser apagados** antes de executar o aplicativo para evitar divergência de checksum do SQLx.
 
 ---
 
@@ -141,7 +142,8 @@ eventrent/
     05-roadmap.md                   # Fases de evolução do produto
     decisions/                      # Architecture Decision Records (ADRs)
     relatorios/                     # Relatórios de entrega de cada fase
-  crates/core/                      # Domínio, persistência SQLx, migrations e testes
+  crates/core/                      # Domínio, CoreServices, RBAC, traits de store e suíte de contrato
+  crates/store-sqlite/              # Implementação SQLite (SQLx) das traits e migrações SQL
   src-tauri/                        # App Tauri 2 e comandos finos IPC
   src/                              # Frontend SvelteKit 2
     lib/data/                       # Interfaces de repositório e transporte abstrato
