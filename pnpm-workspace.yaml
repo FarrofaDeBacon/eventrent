@@ -1,3 +1,6 @@
+onlyBuiltDependencies:
+  - es5-ext
+  - esbuild
 allowBuilds:
   es5-ext: true
   esbuild: true
