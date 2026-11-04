@@ -14,6 +14,7 @@ export * from "./branding-repository";
 export * from "./mock-auth-repository";
 export * from "./mock-branding-repository";
 export * from "./mock-user-repository";
+export * from "./session.svelte";
 export * from "./tauri-auth-repository";
 export * from "./tauri-branding-repository";
 export * from "./tauri-user-repository";

@@ -5,11 +5,19 @@
     CalendarDays,
     Speaker,
     Users,
+    UserCog,
+    Shield,
     Palette,
     ChevronLeft,
     ChevronRight,
   } from "lucide-svelte";
   import { page } from "$app/state";
+  import {
+    appSession,
+    DEFAULT_COMPANY_NAME,
+    hasPermission,
+    PERMISSIONS,
+  } from "$lib/data";
   import { _ } from "$lib/i18n";
   import { cn } from "$lib/ui/utils";
 
@@ -22,13 +30,18 @@
 
   let {
     collapsed = $bindable(false),
-    companyName = "EventRent",
+    companyName = DEFAULT_COMPANY_NAME,
     logoUrl = null,
     onToggleCollapse,
   }: Props = $props();
 
-  const navItems = [
-    { labelKey: "nav.dashboard", href: "/", icon: LayoutDashboard },
+  const allNavItems = [
+    {
+      labelKey: "nav.dashboard",
+      href: "/",
+      icon: LayoutDashboard,
+      permission: PERMISSIONS.DASHBOARD_VIEW,
+    },
     {
       labelKey: "nav.quotes",
       href: "#quotes",
@@ -54,11 +67,31 @@
       disabled: true,
     },
     {
+      labelKey: "nav.users",
+      href: "/configuracoes/usuarios",
+      icon: UserCog,
+      permission: PERMISSIONS.USERS_VIEW,
+    },
+    {
+      labelKey: "nav.roles",
+      href: "/configuracoes/perfis",
+      icon: Shield,
+      permission: PERMISSIONS.ROLES_VIEW,
+    },
+    {
       labelKey: "nav.appearance",
       href: "/configuracoes/aparencia",
       icon: Palette,
+      permission: PERMISSIONS.BRANDING_VIEW,
     },
   ];
+
+  let visibleNavItems = $derived(
+    allNavItems.filter(
+      (item) =>
+        !item.permission || hasPermission(appSession.session, item.permission),
+    ),
+  );
 </script>
 
 <aside
@@ -98,7 +131,7 @@
   </div>
 
   <nav class="flex-1 space-y-1.5 p-3 overflow-y-auto">
-    {#each navItems as item (item.labelKey)}
+    {#each visibleNavItems as item (item.labelKey)}
       {@const isActive = page.url.pathname === item.href}
       <a
         href={item.disabled ? undefined : item.href}

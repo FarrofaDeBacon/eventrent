@@ -5,7 +5,9 @@
     Palette,
     Database,
     ArrowRight,
+    UserCog,
   } from "lucide-svelte";
+  import { appSession, hasPermission, PERMISSIONS } from "$lib/data";
   import { Card, CardHeader, CardTitle, CardContent } from "$lib/ui/card";
   import { Button } from "$lib/ui/button";
   import { Badge } from "$lib/ui/badge";
@@ -34,6 +36,13 @@
           {$_("dashboard.ctaAppearance")}
           <ArrowRight class="h-4 w-4" />
         </Button>
+
+        {#if hasPermission(appSession.session, PERMISSIONS.USERS_VIEW)}
+          <Button variant="outline" href="/configuracoes/usuarios">
+            <UserCog class="h-4 w-4" />
+            {$_("dashboard.ctaUsers")}
+          </Button>
+        {/if}
       </div>
     </div>
   </div>
