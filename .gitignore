@@ -10,11 +10,11 @@ dist/
 
 # Rust & Cargo
 target/
-Cargo.lock
 **/*.rs.bk
 
 # Tauri
 src-tauri/target/
+src-tauri/gen/
 
 # SQLite & local data
 *.db

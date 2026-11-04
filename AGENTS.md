@@ -5,6 +5,7 @@ Este documento estabelece as diretrizes arquiteturais, de qualidade de código, 
 ---
 
 ## 1. Papel e Responsabilidades
+
 - O **Diretor do Projeto** define a arquitetura, regras de negócio e escopo de cada fase.
 - O **Engenheiro de Implementação** executa com rigor técnico absoluto. Não altere decisões de arquitetura por conta própria.
 - Em caso de ambiguidade ou necessidade técnica de ajuste, registre em um **ADR** em `docs/decisions/` e aponte no relatório da fase.
@@ -12,6 +13,7 @@ Este documento estabelece as diretrizes arquiteturais, de qualidade de código, 
 ---
 
 ## 2. Stack Tecnológica Obrigatória
+
 - **Frontend**: SvelteKit 2 + Svelte 5 (runes) + TypeScript strict + Vite + `@sveltejs/adapter-static`.
 - **UI & Estilização**: Tailwind 4, `bits-ui` (padrão shadcn-svelte), `lucide-svelte`, `svelte-sonner`, `mode-watcher`.
 - **Formulários**: `sveltekit-superforms` + `formsnap` + `zod`.
@@ -64,6 +66,10 @@ Este documento estabelece as diretrizes arquiteturais, de qualidade de código, 
    - Sem `unwrap()` em código Rust de produção. Erros tratados via tipos de erro explícitos (`Result<T, E>`).
 10. **Segurança de Credenciais**:
     - Nunca comitar segredos, chaves de API, arquivos de banco local (`*.db`) ou variáveis `.env`.
+11. **Unicidade com Exclusão Lógica**:
+    - Usar índices únicos parciais `WHERE deleted_at IS NULL`, em migração nova; nunca `UNIQUE` simples em tabela com `deleted_at`.
+12. **Escopo de Migrações**:
+    - Migrações contêm apenas estrutura, nunca dados de negócio. Dados iniciais do ambiente desktop (como o tenant padrão) são garantidos via código idempotente na inicialização.
 
 ---
 
