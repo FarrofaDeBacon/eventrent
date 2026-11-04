@@ -14,6 +14,7 @@ target/
 
 # Tauri
 src-tauri/target/
+src-tauri/gen/
 
 # SQLite & local data
 *.db
