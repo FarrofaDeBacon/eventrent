@@ -1,18 +1,17 @@
 <script lang="ts">
-  import type { HTMLAttributes } from 'svelte/elements';
-  import type { Snippet } from 'svelte';
-  import { cn } from '../utils';
+  import type { HTMLAttributes } from "svelte/elements";
+  import type { Snippet } from "svelte";
+  import { cn } from "../utils";
 
   interface Props extends HTMLAttributes<HTMLDivElement> {
     children?: Snippet;
   }
 
-  let { class: className = '', children, ...restProps }: Props = $props();
+  let { class: className = "", children, ...restProps }: Props = $props();
 </script>
 
-<div class={cn('flex flex-col space-y-1.5 p-6', className)} {...restProps}>
+<div class={cn("flex flex-col space-y-1.5 p-6", className)} {...restProps}>
   {#if children}
     {@render children()}
   {/if}
 </div>
-

@@ -1,16 +1,16 @@
 <script lang="ts">
-  import '../app.css';
-  import { onMount } from 'svelte';
-  import type { Snippet } from 'svelte';
-  import { ModeWatcher } from 'mode-watcher';
-  import { Toaster } from 'svelte-sonner';
-  import { setupI18n } from '$lib/i18n';
-  import { getBrandingRepository } from '$lib/data';
-  import { applyBranding } from '$lib/theme/branding';
-  import type { BrandingConfig } from '$lib/theme/tokens';
-  import Sidebar from '$lib/components/sidebar.svelte';
-  import Header from '$lib/components/header.svelte';
-  import CommandPalette from '$lib/components/command-palette.svelte';
+  import "../app.css";
+  import { onMount } from "svelte";
+  import type { Snippet } from "svelte";
+  import { ModeWatcher } from "mode-watcher";
+  import { Toaster } from "svelte-sonner";
+  import { setupI18n } from "$lib/i18n";
+  import { getBrandingRepository } from "$lib/data";
+  import { applyBranding } from "$lib/theme/branding";
+  import type { BrandingConfig } from "$lib/theme/tokens";
+  import Sidebar from "$lib/components/sidebar.svelte";
+  import Header from "$lib/components/header.svelte";
+  import CommandPalette from "$lib/components/command-palette.svelte";
 
   interface Props {
     children: Snippet;
@@ -20,7 +20,7 @@
 
   let sidebarCollapsed = $state(false);
   let commandPaletteOpen = $state(false);
-  let companyName = $state('EventRent Audiovisual');
+  let companyName = $state("EventRent Audiovisual");
   let logoUrl = $state<string | null>(null);
 
   setupI18n();
@@ -34,12 +34,12 @@
       }
     };
 
-    window.addEventListener('eventrent:branding', handleBrandingEvent);
+    window.addEventListener("eventrent:branding", handleBrandingEvent);
 
     (async () => {
       try {
         const repo = getBrandingRepository();
-        const defaultTenantId = '018f0000-0000-7000-8000-000000000001';
+        const defaultTenantId = "018f0000-0000-7000-8000-000000000001";
         const branding = await repo.getBranding(defaultTenantId);
 
         if (branding) {
@@ -48,12 +48,12 @@
           applyBranding(branding);
         }
       } catch (err) {
-        console.error('Falha ao inicializar branding:', err);
+        console.error("Falha ao inicializar branding:", err);
       }
     })();
 
     return () => {
-      window.removeEventListener('eventrent:branding', handleBrandingEvent);
+      window.removeEventListener("eventrent:branding", handleBrandingEvent);
     };
   });
 </script>
@@ -62,7 +62,9 @@
 <Toaster position="top-right" richColors />
 <CommandPalette bind:open={commandPaletteOpen} />
 
-<div class="flex h-screen w-screen overflow-hidden bg-background text-foreground">
+<div
+  class="flex h-screen w-screen overflow-hidden bg-background text-foreground"
+>
   <Sidebar
     bind:collapsed={sidebarCollapsed}
     {companyName}
