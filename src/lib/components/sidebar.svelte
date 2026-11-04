@@ -5,7 +5,6 @@
     CalendarDays,
     Speaker,
     Users,
-    Settings,
     Palette,
     ChevronLeft,
     ChevronRight
@@ -44,7 +43,6 @@
     collapsed ? 'w-18' : 'w-64'
   )}
 >
-  <!-- Cabeçalho do App/Tenant -->
   <div class="flex h-16 items-center gap-3 border-b border-border px-4 overflow-hidden">
     {#if logoUrl}
       <img src={logoUrl} alt={companyName} class="h-8 w-8 object-contain rounded-sm shrink-0" />
@@ -62,9 +60,8 @@
     {/if}
   </div>
 
-  <!-- Links de Navegação -->
   <nav class="flex-1 space-y-1.5 p-3 overflow-y-auto">
-    {#each navItems as item}
+    {#each navItems as item (item.labelKey)}
       {@const isActive = page.url.pathname === item.href}
       <a
         href={item.disabled ? undefined : item.href}
@@ -82,14 +79,15 @@
         {#if !collapsed}
           <span class="truncate">{$_(item.labelKey)}</span>
           {#if item.disabled}
-            <span class="ml-auto text-[10px] uppercase tracking-wider bg-muted text-muted-foreground px-1.5 py-0.5 rounded-xs">Breve</span>
+            <span class="ml-auto text-[10px] uppercase tracking-wider bg-muted text-muted-foreground px-1.5 py-0.5 rounded-xs">
+              {$_('nav.soonBadge')}
+            </span>
           {/if}
         {/if}
       </a>
     {/each}
   </nav>
 
-  <!-- Rodapé / Botão de Recolher -->
   <div class="border-t border-border p-3">
     <button
       type="button"

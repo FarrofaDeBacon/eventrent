@@ -1,4 +1,4 @@
--- Migração 0001: Criação das tabelas tenant e tenant_branding
+-- Migração 0001: Criação das tabelas tenant e tenant_branding (SQL portável SQLite / PostgreSQL)
 
 CREATE TABLE IF NOT EXISTS tenant (
     id TEXT PRIMARY KEY NOT NULL,
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS tenant_branding (
 );
 
 -- Inserção do tenant inicial para operação Desktop se não existir
-INSERT OR IGNORE INTO tenant (id, tenant_id, name, slug, document_number, created_at, updated_at, deleted_at, created_by)
+INSERT INTO tenant (id, tenant_id, name, slug, document_number, created_at, updated_at, deleted_at, created_by)
 VALUES (
     '018f0000-0000-7000-8000-000000000001',
     '018f0000-0000-7000-8000-000000000001',
@@ -40,9 +40,10 @@ VALUES (
     '2026-01-01T00:00:00Z',
     NULL,
     NULL
-);
+)
+ON CONFLICT (id) DO NOTHING;
 
-INSERT OR IGNORE INTO tenant_branding (id, tenant_id, company_name, primary_color, secondary_color, accent_color, logo_url, favicon_url, created_at, updated_at, deleted_at, created_by)
+INSERT INTO tenant_branding (id, tenant_id, company_name, primary_color, secondary_color, accent_color, logo_url, favicon_url, created_at, updated_at, deleted_at, created_by)
 VALUES (
     '018f0000-0000-7000-8000-000000000002',
     '018f0000-0000-7000-8000-000000000001',
@@ -56,4 +57,5 @@ VALUES (
     '2026-01-01T00:00:00Z',
     NULL,
     NULL
-);
+)
+ON CONFLICT (id) DO NOTHING;

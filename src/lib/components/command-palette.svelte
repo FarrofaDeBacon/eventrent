@@ -16,8 +16,8 @@
 
   interface CommandItem {
     id: string;
-    label: string;
-    category: string;
+    labelKey: string;
+    categoryKey: string;
     icon: typeof LayoutDashboard;
     action: () => void;
   }
@@ -25,8 +25,8 @@
   const commands: CommandItem[] = [
     {
       id: 'dashboard',
-      label: 'Ir para o Painel Principal',
-      category: 'Navegação',
+      labelKey: 'command.goToDashboard',
+      categoryKey: 'command.navigation',
       icon: LayoutDashboard,
       action: () => {
         open = false;
@@ -35,8 +35,8 @@
     },
     {
       id: 'appearance',
-      label: 'Configurações de Aparência & Cores',
-      category: 'Navegação',
+      labelKey: 'command.goToAppearance',
+      categoryKey: 'command.navigation',
       icon: Palette,
       action: () => {
         open = false;
@@ -45,8 +45,8 @@
     },
     {
       id: 'theme',
-      label: 'Alternar Tema Claro / Escuro',
-      category: 'Ações Rápidas',
+      labelKey: 'command.toggleTheme',
+      categoryKey: 'command.actions',
       icon: SunMoon,
       action: () => {
         open = false;
@@ -58,14 +58,14 @@
   let filteredCommands = $derived(
     query.trim() === ''
       ? commands
-      : commands.filter((cmd) =>
-          cmd.label.toLowerCase().includes(query.toLowerCase()) ||
-          cmd.category.toLowerCase().includes(query.toLowerCase())
+      : commands.filter(
+          (cmd) =>
+            $_(cmd.labelKey).toLowerCase().includes(query.toLowerCase()) ||
+            $_(cmd.categoryKey).toLowerCase().includes(query.toLowerCase())
         )
   );
 
   function handleKeyDown(event: KeyboardEvent) {
-    // Abrir/Fechar com Ctrl+K ou Cmd+K
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
       event.preventDefault();
       open = !open;
@@ -79,7 +79,8 @@
       selectedIndex = (selectedIndex + 1) % Math.max(1, filteredCommands.length);
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
-      selectedIndex = (selectedIndex - 1 + filteredCommands.length) % Math.max(1, filteredCommands.length);
+      selectedIndex =
+        (selectedIndex - 1 + filteredCommands.length) % Math.max(1, filteredCommands.length);
     } else if (event.key === 'Enter') {
       event.preventDefault();
       const selected = filteredCommands[selectedIndex];
@@ -97,25 +98,24 @@
 
 <Dialog bind:open>
   <div class="flex flex-col gap-3 -mt-2">
-    <!-- Campo de Busca -->
     <div class="flex items-center gap-3 border-b border-border pb-3 px-1">
       <Search class="h-4 w-4 text-muted-foreground shrink-0" />
       <input
         type="text"
         bind:value={query}
         placeholder={$_('command.placeholder')}
+        aria-label={$_('command.placeholder')}
         class="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
       />
     </div>
 
-    <!-- Lista de Resultados -->
     <div class="max-h-72 overflow-y-auto space-y-1">
       {#if filteredCommands.length === 0}
         <div class="py-6 text-center text-sm text-muted-foreground">
           {$_('command.noResults')}
         </div>
       {:else}
-        {#each filteredCommands as item, idx}
+        {#each filteredCommands as item, idx (item.id)}
           {@const isSelected = idx === selectedIndex}
           <button
             type="button"
@@ -124,10 +124,12 @@
           >
             <div class="flex items-center gap-3">
               <item.icon class="h-4 w-4 shrink-0" />
-              <span>{item.label}</span>
+              <span>{$_(item.labelKey)}</span>
             </div>
             <div class="flex items-center gap-2">
-              <span class="text-[11px] {isSelected ? 'text-primary-foreground/80' : 'text-muted-foreground'}">{item.category}</span>
+              <span class="text-[11px] {isSelected ? 'text-primary-foreground/80' : 'text-muted-foreground'}">
+                {$_(item.categoryKey)}
+              </span>
               <ArrowRight class="h-3.5 w-3.5 opacity-60" />
             </div>
           </button>
@@ -135,10 +137,9 @@
       {/if}
     </div>
 
-    <!-- Dica de Teclado -->
     <div class="flex items-center justify-between border-t border-border pt-2 text-[11px] text-muted-foreground px-1">
-      <span>Navegue com as setas ↑ ↓</span>
-      <span>Pressione Enter para selecionar</span>
+      <span>{$_('command.hintArrows')}</span>
+      <span>{$_('command.hintEnter')}</span>
     </div>
   </div>
 </Dialog>

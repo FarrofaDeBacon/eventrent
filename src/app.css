@@ -29,6 +29,11 @@
     --success: oklch(0.62 0.19 145);
     --success-foreground: oklch(0.99 0 0);
 
+    --warning: oklch(0.75 0.18 75);
+    --warning-foreground: oklch(0.15 0 0);
+
+    --overlay: oklch(0.145 0.015 260 / 0.6);
+
     --border: oklch(0.91 0.005 260);
     --input: oklch(0.91 0.005 260);
     --ring: oklch(0.55 0.22 260);
@@ -64,6 +69,11 @@
     --success: oklch(0.65 0.18 145);
     --success-foreground: oklch(0.1 0.02 260);
 
+    --warning: oklch(0.78 0.17 75);
+    --warning-foreground: oklch(0.15 0 0);
+
+    --overlay: oklch(0.08 0.01 260 / 0.7);
+
     --border: oklch(0.26 0.015 260);
     --input: oklch(0.26 0.015 260);
     --ring: oklch(0.65 0.2 260);
@@ -89,6 +99,9 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-overlay: var(--overlay);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -106,4 +119,15 @@ body {
   background-color: var(--background);
   color: var(--foreground);
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

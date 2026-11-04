@@ -1,11 +1,11 @@
 import type { BrandingConfig } from "./tokens";
 
 /**
- * Converte cor HEX (#RRGGBB) para luminância estimada e define cor de texto de alto contraste.
+ * Converte cor HEX (#RRGGBB) para luminância estimada e define token de cor de texto em OKLCH.
  */
 function getContrastForeground(hex: string): string {
   const cleanHex = hex.replace("#", "");
-  if (cleanHex.length !== 6) return "#ffffff";
+  if (cleanHex.length !== 6) return "oklch(0.99 0 0)";
 
   const r = parseInt(cleanHex.substring(0, 2), 16);
   const g = parseInt(cleanHex.substring(2, 4), 16);
@@ -13,7 +13,7 @@ function getContrastForeground(hex: string): string {
 
   // Fórmula de luminância relativa WCAG
   const yiq = (r * 299 + g * 587 + b * 114) / 1000;
-  return yiq >= 128 ? "#0f172a" : "#ffffff";
+  return yiq >= 128 ? "oklch(0.145 0.015 260)" : "oklch(0.99 0 0)";
 }
 
 /**
@@ -42,5 +42,11 @@ export function applyBranding(branding: BrandingConfig): void {
     root.style.setProperty("--accent", branding.accent_color);
     const accentFg = getContrastForeground(branding.accent_color);
     root.style.setProperty("--accent-foreground", accentFg);
+  }
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("eventrent:branding", { detail: branding }),
+    );
   }
 }
