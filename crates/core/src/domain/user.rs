@@ -13,6 +13,10 @@ pub struct UserRecord {
     pub last_login_at: Option<String>,
     pub failed_attempts: i32,
     pub locked_until: Option<String>,
+    /// Tentativas falhas de uso da chave de recuperação (bloqueio separado do login).
+    pub recovery_failed_attempts: i32,
+    /// Bloqueio temporário da chave de recuperação (backoff exponencial).
+    pub recovery_locked_until: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
@@ -64,6 +68,14 @@ pub struct RecoverPasswordInput {
     pub email: String,
     pub recovery_key: String,
     pub new_password: String,
+}
+
+/// Resultado de uma recuperação de senha bem-sucedida.
+/// A nova chave de recuperação deve ser exibida ao usuário UMA ÚNICA VEZ e nunca armazenada em texto plano.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecoverPasswordResult {
+    /// Nova chave de recuperação em texto plano — exibir uma vez, depois descartar.
+    pub new_recovery_key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

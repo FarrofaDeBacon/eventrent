@@ -1,15 +1,15 @@
 use crate::domain::{
     AuditLogEntry, CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput,
-    OperationMode, RecoverPasswordInput, ResetPasswordInput, Role, RoleWithPermissions,
-    SessionInfo, Tenant, TenantBranding, UpdateBrandingInput, UpdateUserInput, UserRecord,
-    UserWithRole, PERM_BRANDING_MANAGE, PERM_ROLE_READ, PERM_USER_MANAGE, PERM_USER_READ,
-    ROLE_SLUG_OWNER, SYSTEM_ROLES,
+    OperationMode, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput, Role,
+    RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput, UpdateUserInput,
+    UserRecord, UserWithRole, PERM_BRANDING_MANAGE, PERM_ROLE_READ, PERM_USER_MANAGE,
+    PERM_USER_READ, ROLE_SLUG_OWNER, SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{BrandingStore, RoleStore, StoreBundle, TenantStore};
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
-use argon2::Argon2;
+use argon2::{Algorithm, Argon2, Params, Version};
 use chrono::{DateTime, Duration, Utc};
 use rand::Rng;
 use uuid::Uuid;
@@ -18,28 +18,65 @@ pub const DEFAULT_COMPANY_NAME: &str = "Minha empresa";
 pub const MAX_FAILED_LOGIN_ATTEMPTS: i32 = 5;
 pub const MIN_PASSWORD_LEN: usize = 8;
 
-/// Hash de senha ou chave de recuperação utilizando Argon2id com salt criptográfico aleatório.
-/// Nunca registra a entrada ou o hash em logs.
-pub fn hash_secret(plain: &str) -> Result<String> {
-    let salt = SaltString::generate(&mut OsRng);
-    let argon2 = Argon2::default();
-    argon2
-        .hash_password(plain.as_bytes(), &salt)
-        .map(|h| h.to_string())
-        .map_err(|_| CoreError::Internal("Falha ao processar hash criptográfico.".to_string()))
+/// Configuração recomendada pelo OWASP Password Storage Cheat Sheet para Argon2id:
+/// - Memória (m): 19 MiB (19.456 KiB = 19 * 1024)
+/// - Iterações de tempo (t): 2 passes
+/// - Paralelismo (p): 1 thread (lançado em tokio::task::spawn_blocking)
+/// - Tamanho do Hash (output): padrão de 32 bytes
+pub fn create_owasp_argon2() -> Result<Argon2<'static>> {
+    let params = Params::new(19 * 1024, 2, 1, None)
+        .map_err(|e| CoreError::Internal(format!("Parâmetros Argon2id inválidos: {e}")))?;
+    Ok(Argon2::new(Algorithm::Argon2id, Version::V0x13, params))
+}
+
+/// Hash de senha ou chave de recuperação utilizando Argon2id com parâmetros OWASP (m=19 MiB, t=2, p=1).
+/// Executa estritamente dentro de `tokio::task::spawn_blocking` para não bloquear a thread
+/// do runtime assíncrono nem congelar a interface do Tauri.
+pub async fn hash_secret(plain: &str) -> Result<String> {
+    let plain = plain.to_string();
+    tokio::task::spawn_blocking(move || {
+        let salt = SaltString::generate(&mut OsRng);
+        let argon2 = create_owasp_argon2()?;
+        argon2
+            .hash_password(plain.as_bytes(), &salt)
+            .map(|h| h.to_string())
+            .map_err(|_| CoreError::Internal("Falha ao processar hash criptográfico.".to_string()))
+    })
+    .await
+    .map_err(|e| CoreError::Internal(format!("Falha ao despachar spawn_blocking para hash: {e}")))?
 }
 
 /// Verifica uma senha ou chave de recuperação contra um hash Argon2id.
-pub fn verify_secret(plain: &str, password_hash: &str) -> bool {
-    let Ok(parsed_hash) = PasswordHash::new(password_hash) else {
-        return false;
-    };
-    Argon2::default()
-        .verify_password(plain.as_bytes(), &parsed_hash)
-        .is_ok()
+/// Executa estritamente dentro de `tokio::task::spawn_blocking` para manter a thread assíncrona responsiva.
+pub async fn verify_secret(plain: &str, password_hash: &str) -> Result<bool> {
+    let plain = plain.to_string();
+    let hash = password_hash.to_string();
+    tokio::task::spawn_blocking(move || {
+        let Ok(parsed_hash) = PasswordHash::new(&hash) else {
+            return Ok(false);
+        };
+        let argon2 = match create_owasp_argon2() {
+            Ok(a) => a,
+            Err(_) => Argon2::default(),
+        };
+        Ok(argon2.verify_password(plain.as_bytes(), &parsed_hash).is_ok())
+    })
+    .await
+    .map_err(|e| CoreError::Internal(format!("Falha ao despachar spawn_blocking para verificação: {e}")))?
 }
 
 /// Gera uma chave de recuperação de alta entropia no formato `ER-XXXX-XXXX-XXXX-XXXX`.
+///
+/// ### Modelo de Entropia e Alfabeto Criptográfico:
+/// - Alfabeto: 32 caracteres seguros (`ABCDEFGHJKLMNPQRSTUVWXYZ23456789`), excluindo
+///   os caracteres ambíguos `0`, `O`, `1` e `I` para prevenir confusão visual em anotações.
+/// - Comprimento: 4 blocos de 4 caracteres = 16 símbolos aleatórios independentes gerados via `OsRng`.
+/// - Entropia por símbolo: $\log_2(32) = 5$ bits.
+/// - Entropia total: $16 \times 5 = 80$ bits de entropia criptográfica pura.
+/// - Proteção adicional: Com o bloqueio progressivo exponencial por usuário (teto de 1 hora
+///   após 8 tentativas), um ataque de força bruta contra 80 bits de entropia exigiria
+///   aproximadamente $2^{79}$ tentativas (bilhões de anos), tornando o canal offline
+///   totalmente imune a adivinhação.
 pub fn generate_recovery_key() -> String {
     const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     let mut rng = OsRng;
@@ -301,8 +338,8 @@ impl CoreServices {
             })?;
 
         let recovery_key = generate_recovery_key();
-        let password_hash = hash_secret(&input.owner_password)?;
-        let recovery_key_hash = hash_secret(&normalize_recovery_key(&recovery_key))?;
+        let password_hash = hash_secret(&input.owner_password).await?;
+        let recovery_key_hash = hash_secret(&normalize_recovery_key(&recovery_key)).await?;
 
         let owner_id = Uuid::now_v7().to_string();
         let owner_record = UserRecord {
@@ -317,6 +354,8 @@ impl CoreServices {
             last_login_at: Some(now.clone()),
             failed_attempts: 0,
             locked_until: None,
+            recovery_failed_attempts: 0,
+            recovery_locked_until: None,
             created_at: now.clone(),
             updated_at: now.clone(),
             deleted_at: None,
@@ -400,7 +439,7 @@ impl CoreServices {
             }
         }
 
-        if !verify_secret(&input.password, &user.password_hash) {
+        if !verify_secret(&input.password, &user.password_hash).await? {
             let new_failures = user.failed_attempts + 1;
             let lockout_secs = calculate_lockout_seconds(new_failures);
             let locked_until = if lockout_secs > 0 {
@@ -490,11 +529,17 @@ impl CoreServices {
     }
 
     /// Redefine a senha do proprietário usando a Chave de Recuperação offline.
+    ///
+    /// Políticas de segurança reforçadas (Fase 1A.1):
+    /// - Limite de tentativas com backoff progressivo persistido em banco (`recovery_failed_attempts` e `recovery_locked_until`).
+    /// - Gravação obrigatória em `audit_log` para falhas e sucessos.
+    /// - Rotação obrigatória: a chave usada é invalidada e uma NOVA chave (80 bits) é gerada e retornada para exibição única.
+    /// - Verificação criptográfica sempre via Argon2id em `tokio::task::spawn_blocking`.
     pub async fn recover_password(
         &self,
         tenant_id: &str,
         input: &RecoverPasswordInput,
-    ) -> Result<()> {
+    ) -> Result<RecoverPasswordResult> {
         let email = input.email.trim().to_lowercase();
         let normalized_key = normalize_recovery_key(&input.recovery_key);
 
@@ -512,24 +557,82 @@ impl CoreServices {
             return Err(CoreError::InvalidCredentials);
         };
 
-        if !verify_secret(&normalized_key, key_hash) {
+        let now = Utc::now();
+        let now_str = now.to_rfc3339();
+
+        if let Some(ref locked_str) = user.recovery_locked_until {
+            if let Ok(locked_dt) = DateTime::parse_from_rfc3339(locked_str) {
+                if locked_dt.with_timezone(&Utc) > now {
+                    return Err(CoreError::AccountLocked {
+                        locked_until: locked_str.clone(),
+                    });
+                }
+            }
+        }
+
+        if !verify_secret(&normalized_key, key_hash).await? {
+            let new_failures = user.recovery_failed_attempts + 1;
+            let lockout_secs = calculate_lockout_seconds(new_failures);
+            let locked_until = if lockout_secs > 0 {
+                Some((now + Duration::seconds(lockout_secs)).to_rfc3339())
+            } else {
+                None
+            };
+
+            self.stores
+                .users
+                .record_recovery_failure(
+                    tenant_id,
+                    &user.id,
+                    new_failures,
+                    locked_until.as_deref(),
+                    &now_str,
+                )
+                .await?;
+
+            if let Some(ref until) = locked_until {
+                self.record_audit(
+                    tenant_id,
+                    Some(&user.id),
+                    "auth.recovery_locked",
+                    "user",
+                    &user.id,
+                    &format!(
+                        "Chave de recuperação bloqueada temporariamente após {new_failures} falhas consecutivas"
+                    ),
+                )
+                .await?;
+                return Err(CoreError::AccountLocked {
+                    locked_until: until.clone(),
+                });
+            }
+
             self.record_audit(
                 tenant_id,
                 Some(&user.id),
-                "user.recovery_failed",
+                "auth.recovery_failed",
                 "user",
                 &user.id,
-                &format!("Tentativa inválida de chave de recuperação para {email}"),
+                &format!("Tentativa inválida de chave de recuperação ({new_failures}) para {email}"),
             )
             .await?;
+
             return Err(CoreError::InvalidCredentials);
         }
 
-        let now = Utc::now().to_rfc3339();
-        let new_hash = hash_secret(&input.new_password)?;
+        let new_recovery_key = generate_recovery_key();
+        let new_recovery_key_hash = hash_secret(&normalize_recovery_key(&new_recovery_key)).await?;
+        let new_password_hash = hash_secret(&input.new_password).await?;
+
         self.stores
             .users
-            .update_password(tenant_id, &user.id, &new_hash, &now)
+            .update_password_and_recovery_key(
+                tenant_id,
+                &user.id,
+                &new_password_hash,
+                &new_recovery_key_hash,
+                &now_str,
+            )
             .await?;
 
         self.record_audit(
@@ -538,11 +641,21 @@ impl CoreServices {
             "user.password_recovered",
             "user",
             &user.id,
-            &format!("Senha redefinida via chave de recuperação para {email}"),
+            &format!("Senha redefinida com sucesso via chave de recuperação para {email}"),
         )
         .await?;
 
-        Ok(())
+        self.record_audit(
+            tenant_id,
+            Some(&user.id),
+            "auth.recovery_key_rotated",
+            "user",
+            &user.id,
+            &format!("Chave de recuperação rotacionada com 80 bits de entropia para {email}"),
+        )
+        .await?;
+
+        Ok(RecoverPasswordResult { new_recovery_key })
     }
 
     pub async fn list_users(&self, session: &SessionInfo) -> Result<Vec<UserWithRole>> {
@@ -599,7 +712,7 @@ impl CoreServices {
             .ok_or_else(|| CoreError::NotFound("Perfil de acesso não encontrado.".to_string()))?;
 
         let now = Utc::now().to_rfc3339();
-        let password_hash = hash_secret(&input.password)?;
+        let password_hash = hash_secret(&input.password).await?;
 
         let record = UserRecord {
             id: Uuid::now_v7().to_string(),
@@ -613,6 +726,8 @@ impl CoreServices {
             last_login_at: None,
             failed_attempts: 0,
             locked_until: None,
+            recovery_failed_attempts: 0,
+            recovery_locked_until: None,
             created_at: now.clone(),
             updated_at: now,
             deleted_at: None,
@@ -812,7 +927,7 @@ impl CoreServices {
             .ok_or_else(|| CoreError::NotFound("Usuário não encontrado.".to_string()))?;
 
         let now = Utc::now().to_rfc3339();
-        let password_hash = hash_secret(&input.new_password)?;
+        let password_hash = hash_secret(&input.new_password).await?;
         self.stores
             .users
             .update_password(&session.tenant_id, user_id, &password_hash, &now)

@@ -556,6 +556,7 @@ impl UserStore for SqliteStore {
             r#"
             SELECT id, tenant_id, name, email, password_hash, recovery_key_hash,
                    role_id, active, last_login_at, failed_attempts, locked_until,
+                   recovery_failed_attempts, recovery_locked_until,
                    created_at, updated_at, deleted_at, created_by
             FROM user
             WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
@@ -582,6 +583,8 @@ impl UserStore for SqliteStore {
                 last_login_at: r.get("last_login_at"),
                 failed_attempts: r.get("failed_attempts"),
                 locked_until: r.get("locked_until"),
+                recovery_failed_attempts: r.get("recovery_failed_attempts"),
+                recovery_locked_until: r.get("recovery_locked_until"),
                 created_at: r.get("created_at"),
                 updated_at: r.get("updated_at"),
                 deleted_at: r.get("deleted_at"),
@@ -595,6 +598,7 @@ impl UserStore for SqliteStore {
             r#"
             SELECT id, tenant_id, name, email, password_hash, recovery_key_hash,
                    role_id, active, last_login_at, failed_attempts, locked_until,
+                   recovery_failed_attempts, recovery_locked_until,
                    created_at, updated_at, deleted_at, created_by
             FROM user
             WHERE tenant_id = ? AND email = ? AND deleted_at IS NULL
@@ -621,6 +625,8 @@ impl UserStore for SqliteStore {
                 last_login_at: r.get("last_login_at"),
                 failed_attempts: r.get("failed_attempts"),
                 locked_until: r.get("locked_until"),
+                recovery_failed_attempts: r.get("recovery_failed_attempts"),
+                recovery_locked_until: r.get("recovery_locked_until"),
                 created_at: r.get("created_at"),
                 updated_at: r.get("updated_at"),
                 deleted_at: r.get("deleted_at"),
@@ -765,8 +771,9 @@ impl UserStore for SqliteStore {
             INSERT INTO user (
                 id, tenant_id, name, email, password_hash, recovery_key_hash,
                 role_id, active, last_login_at, failed_attempts, locked_until,
+                recovery_failed_attempts, recovery_locked_until,
                 created_at, updated_at, deleted_at, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&user.id)
@@ -780,6 +787,8 @@ impl UserStore for SqliteStore {
         .bind(&user.last_login_at)
         .bind(user.failed_attempts)
         .bind(&user.locked_until)
+        .bind(user.recovery_failed_attempts)
+        .bind(&user.recovery_locked_until)
         .bind(&user.created_at)
         .bind(&user.updated_at)
         .bind(&user.deleted_at)
@@ -917,6 +926,66 @@ impl UserStore for SqliteStore {
         )
         .bind(failed_attempts)
         .bind(locked_until)
+        .bind(updated_at)
+        .bind(tenant_id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_err)?;
+
+        Ok(())
+    }
+
+    async fn record_recovery_failure(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+        recovery_failed_attempts: i32,
+        recovery_locked_until: Option<&str>,
+        updated_at: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE user
+            SET recovery_failed_attempts = ?, recovery_locked_until = ?, updated_at = ?
+            WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+            "#,
+        )
+        .bind(recovery_failed_attempts)
+        .bind(recovery_locked_until)
+        .bind(updated_at)
+        .bind(tenant_id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_err)?;
+
+        Ok(())
+    }
+
+    async fn update_password_and_recovery_key(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+        password_hash: &str,
+        recovery_key_hash: &str,
+        updated_at: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE user
+            SET password_hash = ?,
+                recovery_key_hash = ?,
+                failed_attempts = 0,
+                locked_until = NULL,
+                recovery_failed_attempts = 0,
+                recovery_locked_until = NULL,
+                updated_at = ?
+            WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+            "#,
+        )
+        .bind(password_hash)
+        .bind(recovery_key_hash)
         .bind(updated_at)
         .bind(tenant_id)
         .bind(user_id)

@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS user (
     last_login_at TEXT,
     failed_attempts INTEGER NOT NULL DEFAULT 0,
     locked_until TEXT,
+    recovery_failed_attempts INTEGER NOT NULL DEFAULT 0,
+    recovery_locked_until TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     deleted_at TEXT,

@@ -15,6 +15,7 @@ uuid = { version = "1.10", features = ["v7", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2.0"
 tracing = "0.1"
+tokio = { version = "1", features = ["rt"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

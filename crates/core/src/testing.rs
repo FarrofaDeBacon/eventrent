@@ -242,7 +242,7 @@ where
     assert!(unlocked_login.is_ok());
 
     // 8. Recuperação de senha do proprietário usando a Chave de Recuperação
-    services
+    let recovery_res = services
         .recover_password(
             &tenant_id,
             &RecoverPasswordInput {
@@ -253,6 +253,9 @@ where
         )
         .await
         .expect("Recuperação via chave de recuperação deve funcionar");
+
+    assert!(recovery_res.new_recovery_key.starts_with("ER-"));
+    assert_ne!(recovery_res.new_recovery_key, setup_result.recovery_key);
 
     let owner_relogin = services
         .login(
@@ -284,12 +287,44 @@ mod unit_tests {
         calculate_lockout_seconds, generate_recovery_key, hash_secret, verify_secret,
     };
 
-    #[test]
-    fn test_argon2id_hash_and_verify() {
-        let hash = hash_secret("MinhaSenhaSegura!123").expect("Falha ao gerar hash Argon2id");
+    #[tokio::test]
+    async fn test_argon2id_hash_and_verify() {
+        let hash = hash_secret("MinhaSenhaSegura!123")
+            .await
+            .expect("Falha ao gerar hash Argon2id");
         assert!(hash.starts_with("$argon2id$"));
-        assert!(verify_secret("MinhaSenhaSegura!123", &hash));
-        assert!(!verify_secret("SenhaIncorreta", &hash));
+        assert!(verify_secret("MinhaSenhaSegura!123", &hash).await.unwrap());
+        assert!(!verify_secret("SenhaIncorreta", &hash).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_argon2id_spawn_blocking_does_not_block_async_runtime() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+
+        // Tarefa em background que incrementa o contador continuamente
+        let background_worker = tokio::spawn(async move {
+            for _ in 0..100 {
+                counter_clone.fetch_add(1, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+            }
+        });
+
+        // Executa hash Argon2id de 19 MiB com parâmetros OWASP
+        let hash = hash_secret("TesteConcorrenciaTokio#2026").await.unwrap();
+        assert!(hash.starts_with("$argon2id$"));
+
+        // Garante que o worker concorrente conseguiu rodar e progredir no runtime Tokio
+        let count = counter.load(Ordering::SeqCst);
+        assert!(
+            count > 0,
+            "A thread assíncrona não deve ser bloqueada pelo Argon2id"
+        );
+
+        let _ = background_worker.await;
     }
 
     #[test]

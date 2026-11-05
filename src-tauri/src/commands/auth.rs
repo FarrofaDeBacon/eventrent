@@ -1,5 +1,5 @@
 use crate::AppState;
-use eventrent_core::{LoginInput, RecoverPasswordInput, SessionInfo};
+use eventrent_core::{LoginInput, RecoverPasswordInput, RecoverPasswordResult, SessionInfo};
 use tauri::State;
 
 #[tauri::command]
@@ -36,7 +36,7 @@ pub async fn get_current_session(
 pub async fn recover_password(
     state: State<'_, AppState>,
     input: RecoverPasswordInput,
-) -> Result<(), String> {
+) -> Result<RecoverPasswordResult, String> {
     state
         .services
         .recover_password(&state.default_tenant_id, &input)

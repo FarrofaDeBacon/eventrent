@@ -89,6 +89,24 @@ pub trait UserStore: Send + Sync {
         locked_until: Option<&str>,
         updated_at: &str,
     ) -> Result<()>;
+    /// Registra falha de uso da chave de recuperação com backoff exponencial separado do login.
+    async fn record_recovery_failure(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+        recovery_failed_attempts: i32,
+        recovery_locked_until: Option<&str>,
+        updated_at: &str,
+    ) -> Result<()>;
+    /// Atualiza senha, zera contadores de bloqueio (login e recuperação) e grava novo hash da chave de recuperação.
+    async fn update_password_and_recovery_key(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+        password_hash: &str,
+        recovery_key_hash: &str,
+        updated_at: &str,
+    ) -> Result<()>;
 }
 
 #[async_trait]
