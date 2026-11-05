@@ -198,7 +198,9 @@ mod tests {
             base_time + Duration::minutes(31),
         );
         assert!(expired_check.is_err());
-        assert!(expired_check.unwrap_err().contains("expirada por inatividade"));
+        assert!(expired_check
+            .unwrap_err()
+            .contains("expirada por inatividade"));
     }
 
     #[test]

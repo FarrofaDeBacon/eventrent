@@ -55,14 +55,17 @@ pub async fn verify_secret(plain: &str, password_hash: &str) -> Result<bool> {
         let Ok(parsed_hash) = PasswordHash::new(&hash) else {
             return Ok(false);
         };
-        let argon2 = match create_owasp_argon2() {
-            Ok(a) => a,
-            Err(_) => Argon2::default(),
-        };
-        Ok(argon2.verify_password(plain.as_bytes(), &parsed_hash).is_ok())
+        let argon2 = create_owasp_argon2().unwrap_or_default();
+        Ok(argon2
+            .verify_password(plain.as_bytes(), &parsed_hash)
+            .is_ok())
     })
     .await
-    .map_err(|e| CoreError::Internal(format!("Falha ao despachar spawn_blocking para verificação: {e}")))?
+    .map_err(|e| {
+        CoreError::Internal(format!(
+            "Falha ao despachar spawn_blocking para verificação: {e}"
+        ))
+    })?
 }
 
 /// Gera uma chave de recuperação de alta entropia no formato `ER-XXXX-XXXX-XXXX-XXXX`.
@@ -613,7 +616,9 @@ impl CoreServices {
                 "auth.recovery_failed",
                 "user",
                 &user.id,
-                &format!("Tentativa inválida de chave de recuperação ({new_failures}) para {email}"),
+                &format!(
+                    "Tentativa inválida de chave de recuperação ({new_failures}) para {email}"
+                ),
             )
             .await?;
 

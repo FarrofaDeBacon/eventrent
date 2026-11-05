@@ -80,7 +80,9 @@
       users = loadedUsers;
       roles = loadedRoles;
       if (!createRoleId && loadedRoles.length > 0) {
-        const comercial = loadedRoles.find((r) => r.slug === ROLE_SLUGS.COMMERCIAL);
+        const comercial = loadedRoles.find(
+          (r) => r.slug === ROLE_SLUGS.COMMERCIAL,
+        );
         createRoleId = (comercial ?? loadedRoles[0]).id;
       }
     } catch (err) {

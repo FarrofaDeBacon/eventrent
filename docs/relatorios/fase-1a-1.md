@@ -19,11 +19,13 @@
 ## 2. Resumo das Correções Implementadas (Itens 1 a 7)
 
 ### Item 1 — `EVENTRENT_FORCE_DB_PATH` Estritamente Isolado em Desenvolvimento
+
 - **Arquivo**: `src-tauri/src/lib.rs` (função `resolve_db_path`).
 - **Implementação**: A variável de ambiente é lida exclusivamente sob `#[cfg(debug_assertions)]`. Em compilações de release (`cargo build --release` ou `pnpm tauri build`), o bloco condicional é completamente eliminado em tempo de compilação pelo compilador Rust, sendo impossível redirecionar o banco em produção.
 - **Commit**: `42b4c6d fix(seguranca): restringe EVENTRENT_FORCE_DB_PATH a builds de desenvolvimento`.
 
 ### Item 2 — Chave de Recuperação Reforçada (80 bits, Rotação e Bloqueio)
+
 - **Arquivos**: `crates/core/src/domain/user.rs`, `crates/core/src/services/mod.rs`, `crates/store-sqlite/migrations/0002_users_roles_and_audit.sql`, `crates/store-sqlite/src/lib.rs`.
 - **Implementação**:
   1. **Entropia e Alfabeto**: Formato `ER-XXXX-XXXX-XXXX-XXXX` utilizando 32 caracteres seguros (`ABCDEFGHJKLMNPQRSTUVWXYZ23456789`), excluindo ambiguidades visuais (`0`, `O`, `1`, `I`). Cada caractere provê 5 bits, totalizando $16 \times 5 = 80$ bits de entropia gerados com `OsRng`.
@@ -33,6 +35,7 @@
   5. **Verificação Argon2id**: Todas as comparações são feitas exclusivamente contra o hash Argon2id da chave normalizada.
 
 ### Item 3 — Guarda Central de Permissões no Tauri e Testes Automatizados
+
 - **Arquivos**: `src-tauri/src/guards.rs`, `src-tauri/src/lib.rs`, `src-tauri/src/commands/users.rs`, `src-tauri/src/commands/branding.rs`.
 - **Implementação**:
   1. Criação da função central `require_session_and_permission(&state, required_permission) -> Result<SessionInfo, String>`.
@@ -42,6 +45,7 @@
   5. **Expiração sem Sleep (Relógio Injetável)**: A função `evaluate_session_inactivity` foi testada com relógio simulado injetado (`test_session_inactivity_expiration_with_injectable_clock`), validando expiração aos 31 minutos sem necessidade de espera real.
 
 ### Item 4 — Argon2id com Parâmetros OWASP em `spawn_blocking`
+
 - **Arquivos**: `crates/core/src/services/mod.rs`, `crates/core/src/testing.rs`.
 - **Implementação**:
   1. Parâmetros configurados conforme recomendação do OWASP: $m = 19\text{ MiB}$ ($19.456\text{ KiB}$), $t = 2$ passes, $p = 1$ thread, salt criptográfico aleatório por hash.
@@ -49,6 +53,7 @@
   3. **Teste de Responsividade Assíncrona**: O teste `test_argon2id_spawn_blocking_does_not_block_async_runtime` comprova que enquanto o hash de 19 MiB é calculado, workers assíncronos no runtime Tokio continuam avançando e processando tarefas sem bloqueio perceptível.
 
 ### Item 5 — Divisão da Suíte de Contrato em Testes Granulares
+
 - **Arquivos**: `crates/core/src/testing.rs`, `crates/store-sqlite/src/lib.rs`.
 - **Implementação**: A suíte monolítica foi desmembrada em 10 funções contratuais granulares e independentes, cada uma executada por um `#[tokio::test]` próprio sobre banco SQLite em memória isolado:
   1. `test_contract_default_seeds`: idempotência de tenant padrão e marca inicial;
@@ -64,6 +69,7 @@
   11. `test_sqlite_store_contract_suite`: teste agregador preservado para futuras execuções com `store-postgres`.
 
 ### Item 6 — Documentação de Modelo de Ameaças e Limites do SQLite
+
 - **Arquivo**: `docs/seguranca.md`.
 - **Implementação**: Registro honesto de que o banco SQLite local não é criptografado em repouso, documentando o que a autenticação protege (uso da aplicação, isolamento de papéis RBAC, força bruta online, senhas com Argon2id) e o que ela não protege (acesso físico direto ao arquivo `.db`, administrador do SO), registrando o SQLCipher como pendência futura no roadmap.
 
@@ -72,6 +78,7 @@
 ## 3. Resultados dos Testes Automatizados
 
 ### Backend Rust (`cargo test --workspace`)
+
 ```text
 running 4 tests (eventrent-core)
 test testing::unit_tests::test_lockout_backoff_progression ... ok
@@ -102,19 +109,23 @@ test guards::tests::test_session_inactivity_expiration_with_injectable_clock ...
 test guards::tests::test_command_source_files_use_central_guard ... ok
 test result: ok. 4 passed; 0 failed
 ```
+
 **Total Backend: 20 testes Rust aprovados com sucesso.**
 
 ### Frontend (`pnpm run test:run`)
+
 ```text
 Test Files  2 passed (2)
      Tests  7 passed (7)
   Duration  13.85s
 ```
+
 **Total Frontend: 7 testes Vitest aprovados com sucesso.**
 
 ---
 
 ## 4. Histórico de Commits da Fase 1A.1
+
 ```text
 7044094 docs(seguranca): documenta modelo de ameacas, limites do sqlite local e criptografia em repouso
 0f9a754 test(store): divide suite de contrato em testes isolados por comportamento

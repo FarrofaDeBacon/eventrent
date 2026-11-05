@@ -33,7 +33,7 @@
   let isLoading = $state(true);
   let isSaving = $state(false);
   let canEdit = $derived(
-    hasPermission(appSession.session, PERMISSIONS.BRANDING_EDIT),
+    hasPermission(appSession.session, PERMISSIONS.BRANDING_MANAGE),
   );
 
   let companyName = $state(DEFAULT_COMPANY_NAME);

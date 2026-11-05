@@ -24,10 +24,10 @@ A camada de segurança da aplicação (composta pelo runtime Tauri, traits do Co
 
 2. **Isolamento de Papéis e Privilégios (RBAC)**:
    - Todos os comandos não públicos passam obrigatoriamente pela guarda central (`require_session_and_permission`).
-   - Um usuário com perfil *Comercial*, *Estoque*, *Técnico* ou *Financeiro* não consegue criar usuários, alterar perfis de sistema ou modificar configurações administrativas da empresa via interface.
+   - Um usuário com perfil _Comercial_, _Estoque_, _Técnico_ ou _Financeiro_ não consegue criar usuários, alterar perfis de sistema ou modificar configurações administrativas da empresa via interface.
 
 3. **Proteção Contra Força Bruta Online**:
-   - Políticas progressivas de bloqueio temporário (*lockout* exponencial):
+   - Políticas progressivas de bloqueio temporário (_lockout_ exponencial):
      - 1 a 4 falhas: aviso de credenciais inválidas em tempo constante.
      - 5 falhas consecutivas: bloqueio temporário de 5 minutos.
      - 6 falhas consecutivas: 10 minutos.
@@ -65,6 +65,7 @@ A camada de segurança da aplicação (composta pelo runtime Tauri, traits do Co
 ## 4. Recomendações aos Usuários no Modo Local
 
 Enquanto a aplicação opera no modo local:
+
 1. Utilizar a criptografia de disco nativa do sistema operacional (**BitLocker** no Windows, **FileVault** no macOS, **LUKS** no Linux).
 2. Manter contas de usuário separadas no sistema operacional caso múltiplos funcionários usem o mesmo computador físico.
 3. Guardar a Chave de Recuperação impressa ou em cofre de senhas corporativo seguro fora do próprio computador.
@@ -74,6 +75,7 @@ Enquanto a aplicação opera no modo local:
 ## 5. Roadmap: Criptografia em Repouso (SQLCipher)
 
 A implementação de criptografia transparente em repouso no banco SQLite foi mapeada como item de arquitetura para decisões futuras:
+
 - **Pendência Registrada**: Avaliação de integração com **SQLCipher** (via `sqlx` com feature de encriptação ou biblioteca sidecar).
 - **Desafios a serem resolvidos**:
   - Gerenciamento seguro da chave mestra de decodificação no cliente desktop (armazenamento em TPM / Windows Credential Manager / macOS Keychain / Linux Secret Service);

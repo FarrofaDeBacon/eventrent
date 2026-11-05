@@ -1140,13 +1140,8 @@ mod tests {
         let (user, _session) =
             contract_user_creation_and_rbac(&services, &setup.session, &tenant_id).await;
         contract_user_lockout(&services, &tenant_id).await;
-        contract_password_reset_clears_lockout(
-            &services,
-            &setup.session,
-            &tenant_id,
-            &user.id,
-        )
-        .await;
+        contract_password_reset_clears_lockout(&services, &setup.session, &tenant_id, &user.id)
+            .await;
     }
 
     #[tokio::test]
@@ -1155,7 +1150,8 @@ mod tests {
         let tenant_id = contract_default_seeds(&store).await;
         contract_system_roles(&store, &tenant_id).await;
         let (setup, services) = contract_initial_setup_and_recovery_key(&store, &tenant_id).await;
-        contract_recovery_key_rotation_and_lockout(&services, &tenant_id, &setup.recovery_key).await;
+        contract_recovery_key_rotation_and_lockout(&services, &tenant_id, &setup.recovery_key)
+            .await;
     }
 
     #[tokio::test]
@@ -1167,14 +1163,10 @@ mod tests {
         let (user, _session) =
             contract_user_creation_and_rbac(&services, &setup.session, &tenant_id).await;
         contract_user_lockout(&services, &tenant_id).await;
-        contract_password_reset_clears_lockout(
-            &services,
-            &setup.session,
-            &tenant_id,
-            &user.id,
-        )
-        .await;
-        contract_recovery_key_rotation_and_lockout(&services, &tenant_id, &setup.recovery_key).await;
+        contract_password_reset_clears_lockout(&services, &setup.session, &tenant_id, &user.id)
+            .await;
+        contract_recovery_key_rotation_and_lockout(&services, &tenant_id, &setup.recovery_key)
+            .await;
         contract_audit_log(&store, &tenant_id).await;
     }
 

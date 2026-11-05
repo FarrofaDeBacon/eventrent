@@ -168,9 +168,7 @@ export class MockUserRepository implements UserRepository {
   }
 
   async setUserActive(userId: string, active: boolean): Promise<UserWithRole> {
-    const { state, session } = requireMockPermission(
-      PERMISSIONS.USER_MANAGE,
-    );
+    const { state, session } = requireMockPermission(PERMISSIONS.USER_MANAGE);
     if (!active && session.user_id === userId) {
       throw new Error("Você não pode desativar sua própria conta.");
     }

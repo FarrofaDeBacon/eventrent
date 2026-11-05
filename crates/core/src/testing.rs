@@ -17,10 +17,9 @@ pub async fn contract_default_seeds(stores: &StoreBundle) -> String {
         .await
         .expect("Falha em ensure_default_tenant");
 
-    let tenant_id_again =
-        ensure_default_tenant(stores.tenants.as_ref(), stores.branding.as_ref())
-            .await
-            .expect("Segunda chamada a ensure_default_tenant falhou");
+    let tenant_id_again = ensure_default_tenant(stores.tenants.as_ref(), stores.branding.as_ref())
+        .await
+        .expect("Segunda chamada a ensure_default_tenant falhou");
     assert_eq!(tenant_id, tenant_id_again);
 
     let initial_branding = stores
@@ -388,7 +387,11 @@ pub async fn contract_unique_partial_indexes(stores: &StoreBundle, tenant_id: &s
         deleted_at: None,
         created_by: None,
     };
-    stores.users.create(&user1).await.expect("User 1 deve criar");
+    stores
+        .users
+        .create(&user1)
+        .await
+        .expect("User 1 deve criar");
 
     // Tentativa de criar outro usuário ativo com o mesmo e-mail deve falhar por unicidade
     let user2 = UserRecord {
@@ -411,7 +414,10 @@ pub async fn contract_unique_partial_indexes(stores: &StoreBundle, tenant_id: &s
         created_by: None,
     };
     let duplicate_result = stores.users.create(&user2).await;
-    assert!(duplicate_result.is_err(), "Índice único parcial deve impedir e-mails ativos duplicados");
+    assert!(
+        duplicate_result.is_err(),
+        "Índice único parcial deve impedir e-mails ativos duplicados"
+    );
 }
 
 /// Suíte genérica agregadora de testes de contrato.
@@ -444,12 +450,8 @@ where
     )
     .await;
 
-    contract_recovery_key_rotation_and_lockout(
-        &services,
-        &tenant_id,
-        &setup_result.recovery_key,
-    )
-    .await;
+    contract_recovery_key_rotation_and_lockout(&services, &tenant_id, &setup_result.recovery_key)
+        .await;
 
     contract_audit_log(&stores, &tenant_id).await;
     contract_unique_partial_indexes(&stores, &tenant_id).await;
