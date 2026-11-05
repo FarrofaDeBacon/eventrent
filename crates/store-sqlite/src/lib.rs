@@ -1066,7 +1066,125 @@ impl AuditStore for SqliteStore {
 mod tests {
     use super::*;
     use eventrent_core::services::ensure_default_tenant;
-    use eventrent_core::testing::run_store_contract_suite;
+    use eventrent_core::testing::{
+        contract_audit_log, contract_default_seeds, contract_initial_setup_and_recovery_key,
+        contract_last_owner_protection, contract_password_reset_clears_lockout,
+        contract_recovery_key_rotation_and_lockout, contract_system_roles,
+        contract_unique_partial_indexes, contract_user_creation_and_rbac, contract_user_lockout,
+        run_store_contract_suite,
+    };
+
+    async fn create_isolated_store() -> StoreBundle {
+        let pool = init_memory_db()
+            .await
+            .expect("Falha ao criar banco SQLite em memória isolado");
+        SqliteStore::new(pool).into_bundle()
+    }
+
+    #[tokio::test]
+    async fn test_contract_default_seeds() {
+        let store = create_isolated_store().await;
+        contract_default_seeds(&store).await;
+    }
+
+    #[tokio::test]
+    async fn test_contract_system_roles() {
+        let store = create_isolated_store().await;
+        let tenant_id = contract_default_seeds(&store).await;
+        contract_system_roles(&store, &tenant_id).await;
+    }
+
+    #[tokio::test]
+    async fn test_contract_initial_setup_and_recovery_key() {
+        let store = create_isolated_store().await;
+        let tenant_id = contract_default_seeds(&store).await;
+        contract_system_roles(&store, &tenant_id).await;
+        contract_initial_setup_and_recovery_key(&store, &tenant_id).await;
+    }
+
+    #[tokio::test]
+    async fn test_contract_last_owner_protection() {
+        let store = create_isolated_store().await;
+        let tenant_id = contract_default_seeds(&store).await;
+        contract_system_roles(&store, &tenant_id).await;
+        let (setup, services) = contract_initial_setup_and_recovery_key(&store, &tenant_id).await;
+        contract_last_owner_protection(&services, &setup.session, &tenant_id).await;
+    }
+
+    #[tokio::test]
+    async fn test_contract_user_creation_and_rbac() {
+        let store = create_isolated_store().await;
+        let tenant_id = contract_default_seeds(&store).await;
+        contract_system_roles(&store, &tenant_id).await;
+        let (setup, services) = contract_initial_setup_and_recovery_key(&store, &tenant_id).await;
+        contract_user_creation_and_rbac(&services, &setup.session, &tenant_id).await;
+    }
+
+    #[tokio::test]
+    async fn test_contract_user_lockout() {
+        let store = create_isolated_store().await;
+        let tenant_id = contract_default_seeds(&store).await;
+        contract_system_roles(&store, &tenant_id).await;
+        let (setup, services) = contract_initial_setup_and_recovery_key(&store, &tenant_id).await;
+        let (_user, _session) =
+            contract_user_creation_and_rbac(&services, &setup.session, &tenant_id).await;
+        contract_user_lockout(&services, &tenant_id).await;
+    }
+
+    #[tokio::test]
+    async fn test_contract_password_reset_clears_lockout() {
+        let store = create_isolated_store().await;
+        let tenant_id = contract_default_seeds(&store).await;
+        contract_system_roles(&store, &tenant_id).await;
+        let (setup, services) = contract_initial_setup_and_recovery_key(&store, &tenant_id).await;
+        let (user, _session) =
+            contract_user_creation_and_rbac(&services, &setup.session, &tenant_id).await;
+        contract_user_lockout(&services, &tenant_id).await;
+        contract_password_reset_clears_lockout(
+            &services,
+            &setup.session,
+            &tenant_id,
+            &user.id,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_contract_recovery_key_rotation_and_lockout() {
+        let store = create_isolated_store().await;
+        let tenant_id = contract_default_seeds(&store).await;
+        contract_system_roles(&store, &tenant_id).await;
+        let (setup, services) = contract_initial_setup_and_recovery_key(&store, &tenant_id).await;
+        contract_recovery_key_rotation_and_lockout(&services, &tenant_id, &setup.recovery_key).await;
+    }
+
+    #[tokio::test]
+    async fn test_contract_audit_log() {
+        let store = create_isolated_store().await;
+        let tenant_id = contract_default_seeds(&store).await;
+        contract_system_roles(&store, &tenant_id).await;
+        let (setup, services) = contract_initial_setup_and_recovery_key(&store, &tenant_id).await;
+        let (user, _session) =
+            contract_user_creation_and_rbac(&services, &setup.session, &tenant_id).await;
+        contract_user_lockout(&services, &tenant_id).await;
+        contract_password_reset_clears_lockout(
+            &services,
+            &setup.session,
+            &tenant_id,
+            &user.id,
+        )
+        .await;
+        contract_recovery_key_rotation_and_lockout(&services, &tenant_id, &setup.recovery_key).await;
+        contract_audit_log(&store, &tenant_id).await;
+    }
+
+    #[tokio::test]
+    async fn test_contract_unique_partial_indexes() {
+        let store = create_isolated_store().await;
+        let tenant_id = contract_default_seeds(&store).await;
+        contract_system_roles(&store, &tenant_id).await;
+        contract_unique_partial_indexes(&store, &tenant_id).await;
+    }
 
     #[tokio::test]
     async fn test_sqlite_store_contract_suite() {
