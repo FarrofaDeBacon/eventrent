@@ -75,11 +75,9 @@ pub async fn verify_secret(plain: &str, password_hash: &str) -> Result<bool> {
 ///   os caracteres ambíguos `0`, `O`, `1` e `I` para prevenir confusão visual em anotações.
 /// - Comprimento: 4 blocos de 4 caracteres = 16 símbolos aleatórios independentes gerados via `OsRng`.
 /// - Entropia por símbolo: $\log_2(32) = 5$ bits.
-/// - Entropia total: $16 \times 5 = 80$ bits de entropia criptográfica pura.
-/// - Proteção adicional: Com o bloqueio progressivo exponencial por usuário (teto de 1 hora
-///   após 8 tentativas), um ataque de força bruta contra 80 bits de entropia exigiria
-///   aproximadamente $2^{79}$ tentativas (bilhões de anos), tornando o canal offline
-///   totalmente imune a adivinhação.
+/// - Entropia total: $16 \times 5 = 80$ bits de entropia criptográfica.
+/// - Camadas complementares: Hash persistido com Argon2id (parâmetros OWASP) e bloqueio
+///   progressivo com backoff exponencial por usuário mitigam tentativas automatizadas.
 pub fn generate_recovery_key() -> String {
     const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     let mut rng = OsRng;
