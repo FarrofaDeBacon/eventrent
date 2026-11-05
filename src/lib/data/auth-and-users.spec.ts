@@ -146,15 +146,9 @@ describe("AuthRepository & UserRepository (Regras de Domínio e Guards)", () => 
 
     // Comercial tem acesso ao dashboard e à aparência (branding:read), mas não a usuários/perfis
     expect(canAccessRoute(comercialSession, "/")).toBe(true);
-    expect(canAccessRoute(comercialSession, "/configuracoes/aparencia")).toBe(
-      true,
-    );
-    expect(canAccessRoute(comercialSession, "/configuracoes/usuarios")).toBe(
-      false,
-    );
-    expect(canAccessRoute(comercialSession, "/configuracoes/perfis")).toBe(
-      false,
-    );
+    expect(canAccessRoute(comercialSession, "/settings/appearance")).toBe(true);
+    expect(canAccessRoute(comercialSession, "/settings/users")).toBe(false);
+    expect(canAccessRoute(comercialSession, "/settings/roles")).toBe(false);
 
     await expect(userRepo.listUsers()).rejects.toThrow(
       /Permissão insuficiente/i,

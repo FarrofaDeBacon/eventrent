@@ -32,13 +32,13 @@
         {$_("dashboard.description")}
       </p>
       <div class="pt-2 flex flex-wrap gap-3">
-        <Button href="/configuracoes/aparencia">
+        <Button href="/settings/appearance">
           {$_("dashboard.ctaAppearance")}
           <ArrowRight class="h-4 w-4" />
         </Button>
 
         {#if hasPermission(appSession.session, PERMISSIONS.USER_READ)}
-          <Button variant="outline" href="/configuracoes/usuarios">
+          <Button variant="outline" href="/settings/users">
             <UserCog class="h-4 w-4" />
             {$_("dashboard.ctaUsers")}
           </Button>

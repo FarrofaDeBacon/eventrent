@@ -69,9 +69,9 @@ test.describe("Fluxo E2E — EventRent (Fase 1A)", () => {
       "Ana Paula Proprietária",
     );
 
-    // 6. Navega para Usuários (/configuracoes/usuarios) e cria um novo usuário
+    // 6. Navega para Usuários (/settings/users) e cria um novo usuário
     await page.getByRole("link", { name: "Usuários", exact: true }).click();
-    await expect(page).toHaveURL(/\/configuracoes\/usuarios$/);
+    await expect(page).toHaveURL(/\/settings\/users$/);
 
     await page.getByTestId("new-user-btn").click();
     await page.getByLabel("Nome Completo").fill("Carlos Comercial");
@@ -87,20 +87,20 @@ test.describe("Fluxo E2E — EventRent (Fase 1A)", () => {
     await expect(page.getByText("Carlos Comercial")).toBeVisible();
     await expect(page.getByText("carlos@palcoeluz.com.br")).toBeVisible();
 
-    // 7. Navega para Perfis de Acesso (/configuracoes/perfis)
+    // 7. Navega para Perfis de Acesso (/settings/roles)
     await page
       .getByRole("link", { name: "Perfis de Acesso", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/configuracoes\/perfis$/);
-    await expect(page.getByTestId("role-card-proprietario")).toBeVisible();
-    await expect(page.getByTestId("role-card-comercial")).toBeVisible();
-    await expect(page.getByTestId("role-card-estoque")).toBeVisible();
-    await expect(page.getByTestId("role-card-tecnico")).toBeVisible();
-    await expect(page.getByTestId("role-card-financeiro")).toBeVisible();
+    await expect(page).toHaveURL(/\/settings\/roles$/);
+    await expect(page.getByTestId("role-card-owner")).toBeVisible();
+    await expect(page.getByTestId("role-card-commercial")).toBeVisible();
+    await expect(page.getByTestId("role-card-warehouse")).toBeVisible();
+    await expect(page.getByTestId("role-card-technician")).toBeVisible();
+    await expect(page.getByTestId("role-card-finance")).toBeVisible();
 
-    // 8. Navega para Aparência (/configuracoes/aparencia) e altera o nome da empresa
+    // 8. Navega para Aparência (/settings/appearance) e altera o nome da empresa
     await page.getByRole("link", { name: "Aparência", exact: true }).click();
-    await expect(page).toHaveURL(/\/configuracoes\/aparencia$/);
+    await expect(page).toHaveURL(/\/settings\/appearance$/);
 
     const nameInput = page.getByLabel("Nome da Empresa");
     await nameInput.fill("Luz & Som Master");

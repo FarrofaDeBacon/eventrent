@@ -68,19 +68,19 @@
     },
     {
       labelKey: "nav.users",
-      href: "/configuracoes/usuarios",
+      href: "/settings/users",
       icon: UserCog,
       permission: PERMISSIONS.USER_READ,
     },
     {
       labelKey: "nav.roles",
-      href: "/configuracoes/perfis",
+      href: "/settings/roles",
       icon: Shield,
       permission: PERMISSIONS.ROLE_READ,
     },
     {
       labelKey: "nav.appearance",
-      href: "/configuracoes/aparencia",
+      href: "/settings/appearance",
       icon: Palette,
       permission: PERMISSIONS.BRANDING_READ,
     },

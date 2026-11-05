@@ -91,13 +91,13 @@ export function canAccessRoute(
   }
   if (!session) return false;
 
-  if (pathname.startsWith("/configuracoes/usuarios")) {
+  if (pathname.startsWith("/settings/users")) {
     return hasPermission(session, PERMISSIONS.USER_READ);
   }
-  if (pathname.startsWith("/configuracoes/perfis")) {
+  if (pathname.startsWith("/settings/roles")) {
     return hasPermission(session, PERMISSIONS.ROLE_READ);
   }
-  if (pathname.startsWith("/configuracoes/aparencia")) {
+  if (pathname.startsWith("/settings/appearance")) {
     return hasPermission(session, PERMISSIONS.BRANDING_READ);
   }
 

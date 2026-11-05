@@ -54,7 +54,7 @@
       permission: PERMISSIONS.USER_READ,
       action: () => {
         open = false;
-        goto("/configuracoes/usuarios");
+        goto("/settings/users");
       },
     },
     {
@@ -65,7 +65,7 @@
       permission: PERMISSIONS.ROLE_READ,
       action: () => {
         open = false;
-        goto("/configuracoes/perfis");
+        goto("/settings/roles");
       },
     },
     {
@@ -76,7 +76,7 @@
       permission: PERMISSIONS.BRANDING_READ,
       action: () => {
         open = false;
-        goto("/configuracoes/aparencia");
+        goto("/settings/appearance");
       },
     },
     {
