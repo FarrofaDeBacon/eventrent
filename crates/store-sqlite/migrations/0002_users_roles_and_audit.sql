@@ -40,7 +40,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_role_permission_active
     ON role_permission (role_id, permission)
     WHERE deleted_at IS NULL;
 
-CREATE TABLE IF NOT EXISTS user (
+CREATE TABLE IF NOT EXISTS app_user (
     id TEXT PRIMARY KEY NOT NULL,
     tenant_id TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -62,10 +62,15 @@ CREATE TABLE IF NOT EXISTS user (
     FOREIGN KEY (role_id) REFERENCES role(id) ON DELETE RESTRICT
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_user_tenant_email_active
-    ON user (tenant_id, email)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_app_user_tenant_email_active
+    ON app_user (tenant_id, email)
     WHERE deleted_at IS NULL;
 
+CREATE INDEX IF NOT EXISTS idx_app_user_role_id
+    ON app_user (role_id);
+
+-- audit_log: tabela append-only (sem updated_at nem deleted_at).
+-- O trait AuditStore expõe apenas append e list_by_tenant, sem update nem delete.
 CREATE TABLE IF NOT EXISTS audit_log (
     id TEXT PRIMARY KEY NOT NULL,
     tenant_id TEXT NOT NULL,
@@ -75,12 +80,9 @@ CREATE TABLE IF NOT EXISTS audit_log (
     entity_id TEXT NOT NULL,
     summary TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    deleted_at TEXT,
     created_by TEXT,
     FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_tenant_created
-    ON audit_log (tenant_id, created_at DESC)
-    WHERE deleted_at IS NULL;
+    ON audit_log (tenant_id, created_at DESC);

@@ -245,9 +245,7 @@ impl CoreServices {
             entity_type: entity_type.to_string(),
             entity_id: entity_id.to_string(),
             summary: summary.to_string(),
-            created_at: now.clone(),
-            updated_at: now,
-            deleted_at: None,
+            created_at: now,
             created_by: actor_user_id.map(str::to_string),
         };
         self.stores.audit.append(&entry).await
