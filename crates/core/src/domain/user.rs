@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct UserRecord {
     pub id: String,
     pub tenant_id: String,
@@ -23,6 +24,33 @@ pub struct UserRecord {
     pub created_by: Option<String>,
 }
 
+impl fmt::Debug for UserRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UserRecord")
+            .field("id", &self.id)
+            .field("tenant_id", &self.tenant_id)
+            .field("name", &self.name)
+            .field("email", &self.email)
+            .field("password_hash", &"[REDACTED]")
+            .field(
+                "recovery_key_hash",
+                &self.recovery_key_hash.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("role_id", &self.role_id)
+            .field("active", &self.active)
+            .field("last_login_at", &self.last_login_at)
+            .field("failed_attempts", &self.failed_attempts)
+            .field("locked_until", &self.locked_until)
+            .field("recovery_failed_attempts", &self.recovery_failed_attempts)
+            .field("recovery_locked_until", &self.recovery_locked_until)
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .field("deleted_at", &self.deleted_at)
+            .field("created_by", &self.created_by)
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UserWithRole {
     pub id: String,
@@ -43,12 +71,23 @@ pub struct UserWithRole {
     pub created_by: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CreateUserInput {
     pub name: String,
     pub email: String,
     pub password: String,
     pub role_id: String,
+}
+
+impl fmt::Debug for CreateUserInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateUserInput")
+            .field("name", &self.name)
+            .field("email", &self.email)
+            .field("password", &"[REDACTED]")
+            .field("role_id", &self.role_id)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,30 +97,65 @@ pub struct UpdateUserInput {
     pub role_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ResetPasswordInput {
     pub new_password: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl fmt::Debug for ResetPasswordInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ResetPasswordInput")
+            .field("new_password", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RecoverPasswordInput {
     pub email: String,
     pub recovery_key: String,
     pub new_password: String,
 }
 
+impl fmt::Debug for RecoverPasswordInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RecoverPasswordInput")
+            .field("email", &self.email)
+            .field("recovery_key", &"[REDACTED]")
+            .field("new_password", &"[REDACTED]")
+            .finish()
+    }
+}
+
 /// Resultado de uma recuperação de senha bem-sucedida.
 /// A nova chave de recuperação deve ser exibida ao usuário UMA ÚNICA VEZ e nunca armazenada em texto plano.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RecoverPasswordResult {
     /// Nova chave de recuperação em texto plano — exibir uma vez, depois descartar.
     pub new_recovery_key: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl fmt::Debug for RecoverPasswordResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RecoverPasswordResult")
+            .field("new_recovery_key", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LoginInput {
     pub email: String,
     pub password: String,
+}
+
+impl fmt::Debug for LoginInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LoginInput")
+            .field("email", &self.email)
+            .field("password", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

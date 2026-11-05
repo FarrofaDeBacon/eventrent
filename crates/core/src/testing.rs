@@ -522,4 +522,128 @@ mod unit_tests {
         assert_eq!(calculate_lockout_seconds(8), 3600);
         assert_eq!(calculate_lockout_seconds(15), 3600);
     }
+
+    #[test]
+    fn test_debug_redacts_sensitive_fields() {
+        use crate::domain::{
+            CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput, OperationMode,
+            RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput, SessionInfo,
+            TenantBranding, UserRecord,
+        };
+
+        let secret_pwd = "SuperSecretPassword#2026";
+        let secret_key = "ER-ABCD-EFGH-JKLM-NPQR";
+
+        let login = LoginInput {
+            email: "teste@eventrent.com".to_string(),
+            password: secret_pwd.to_string(),
+        };
+        let login_debug = format!("{login:?}");
+        assert!(!login_debug.contains(secret_pwd));
+        assert!(login_debug.contains("[REDACTED]"));
+
+        let create = CreateUserInput {
+            name: "Usuario".to_string(),
+            email: "u@e.com".to_string(),
+            password: secret_pwd.to_string(),
+            role_id: "role-1".to_string(),
+        };
+        let create_debug = format!("{create:?}");
+        assert!(!create_debug.contains(secret_pwd));
+        assert!(create_debug.contains("[REDACTED]"));
+
+        let reset = ResetPasswordInput {
+            new_password: secret_pwd.to_string(),
+        };
+        let reset_debug = format!("{reset:?}");
+        assert!(!reset_debug.contains(secret_pwd));
+        assert!(reset_debug.contains("[REDACTED]"));
+
+        let recover = RecoverPasswordInput {
+            email: "u@e.com".to_string(),
+            recovery_key: secret_key.to_string(),
+            new_password: secret_pwd.to_string(),
+        };
+        let recover_debug = format!("{recover:?}");
+        assert!(!recover_debug.contains(secret_pwd));
+        assert!(!recover_debug.contains(secret_key));
+        assert!(recover_debug.contains("[REDACTED]"));
+
+        let recover_res = RecoverPasswordResult {
+            new_recovery_key: secret_key.to_string(),
+        };
+        let recover_res_debug = format!("{recover_res:?}");
+        assert!(!recover_res_debug.contains(secret_key));
+        assert!(recover_res_debug.contains("[REDACTED]"));
+
+        let setup = InitialSetupInput {
+            mode: OperationMode::Local,
+            company_name: "Empresa".to_string(),
+            owner_name: "Dono".to_string(),
+            owner_email: "dono@e.com".to_string(),
+            owner_password: secret_pwd.to_string(),
+        };
+        let setup_debug = format!("{setup:?}");
+        assert!(!setup_debug.contains(secret_pwd));
+        assert!(setup_debug.contains("[REDACTED]"));
+
+        let setup_res = InitialSetupResult {
+            tenant_id: "t1".to_string(),
+            recovery_key: secret_key.to_string(),
+            session: SessionInfo {
+                user_id: "u1".to_string(),
+                tenant_id: "t1".to_string(),
+                name: "Dono".to_string(),
+                email: "dono@e.com".to_string(),
+                role_id: "r1".to_string(),
+                role_name: "Proprietário".to_string(),
+                role_slug: "owner".to_string(),
+                permissions: vec![],
+                authenticated_at: "2026-01-01T00:00:00Z".to_string(),
+                last_activity_at: "2026-01-01T00:00:00Z".to_string(),
+                inactivity_timeout_minutes: 30,
+            },
+            branding: TenantBranding {
+                id: "b1".to_string(),
+                tenant_id: "t1".to_string(),
+                company_name: "Empresa".to_string(),
+                primary_color: "#000".to_string(),
+                secondary_color: "#000".to_string(),
+                accent_color: "#000".to_string(),
+                logo_url: None,
+                favicon_url: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                deleted_at: None,
+                created_by: None,
+            },
+        };
+        let setup_res_debug = format!("{setup_res:?}");
+        assert!(!setup_res_debug.contains(secret_key));
+        assert!(setup_res_debug.contains("[REDACTED]"));
+
+        let user_rec = UserRecord {
+            id: "u1".to_string(),
+            tenant_id: "t1".to_string(),
+            name: "Dono".to_string(),
+            email: "dono@e.com".to_string(),
+            password_hash: "$argon2id$secret_hash_value".to_string(),
+            recovery_key_hash: Some("$argon2id$secret_key_hash_value".to_string()),
+            role_id: "r1".to_string(),
+            active: true,
+            last_login_at: None,
+            failed_attempts: 0,
+            locked_until: None,
+            recovery_failed_attempts: 0,
+            recovery_locked_until: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            deleted_at: None,
+            created_by: None,
+        };
+        let user_rec_debug = format!("{user_rec:?}");
+        assert!(!user_rec_debug.contains("secret_hash_value"));
+        assert!(!user_rec_debug.contains("secret_key_hash_value"));
+        assert!(user_rec_debug.contains("[REDACTED]"));
+    }
 }
