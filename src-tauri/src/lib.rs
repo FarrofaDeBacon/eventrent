@@ -122,6 +122,20 @@ fn init_logging(log_dir: &Path) {
         .try_init();
 }
 
+/// Resolve o caminho do banco de dados SQLite.
+/// O gancho de teste `EVENTRENT_FORCE_DB_PATH` existe exclusivamente em builds de
+/// desenvolvimento (`#[cfg(debug_assertions)]`) e é completamente inexistente em release.
+pub fn resolve_db_path(app_dir: &Path) -> PathBuf {
+    #[cfg(debug_assertions)]
+    if let Ok(forced_path) = std::env::var("EVENTRENT_FORCE_DB_PATH") {
+        let trimmed = forced_path.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    app_dir.join("eventrent.db")
+}
+
 async fn initialize_app(app_handle: &AppHandle) -> Result<(AppState, PathBuf), (String, String)> {
     let app_dir = app_handle.path().app_data_dir().map_err(|e| {
         (
@@ -162,11 +176,7 @@ async fn initialize_app(app_handle: &AppHandle) -> Result<(AppState, PathBuf), (
         (e, log_dir_display.clone())
     })?;
 
-    let db_path = if let Ok(forced_path) = std::env::var("EVENTRENT_FORCE_DB_PATH") {
-        PathBuf::from(forced_path)
-    } else {
-        app_dir.join("eventrent.db")
-    };
+    let db_path = resolve_db_path(&app_dir);
 
     tracing::info!(
         "Inicializando banco SQLite em: {}",
