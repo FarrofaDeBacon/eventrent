@@ -1,5 +1,8 @@
+use crate::guards::require_session_and_permission;
 use crate::AppState;
-use eventrent_core::{TenantBranding, UpdateBrandingInput};
+use eventrent_core::{
+    TenantBranding, UpdateBrandingInput, PERM_BRANDING_MANAGE, PERM_BRANDING_READ,
+};
 use tauri::State;
 
 fn resolve_tenant_id<'a>(state: &'a AppState, tenant_id: &'a str) -> &'a str {
@@ -18,6 +21,7 @@ pub async fn get_branding(
     state: State<'_, AppState>,
     tenant_id: String,
 ) -> Result<Option<TenantBranding>, String> {
+    let _session = require_session_and_permission(&state, Some(PERM_BRANDING_READ))?;
     let resolved_id = resolve_tenant_id(&state, &tenant_id);
     state
         .services
@@ -35,7 +39,7 @@ pub async fn save_branding(
     input: UpdateBrandingInput,
 ) -> Result<TenantBranding, String> {
     let _ = resolve_tenant_id(&state, &tenant_id);
-    let session = state.require_session()?;
+    let session = require_session_and_permission(&state, Some(PERM_BRANDING_MANAGE))?;
     state
         .services
         .save_branding(&session, &input)

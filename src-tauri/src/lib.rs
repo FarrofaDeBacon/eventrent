@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod guards;
 
 use chrono::Utc;
 use eventrent_core::{
