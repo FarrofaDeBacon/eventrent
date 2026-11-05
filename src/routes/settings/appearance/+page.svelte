@@ -9,7 +9,13 @@
     RotateCcw,
     Building2,
   } from "lucide-svelte";
-  import { getBrandingRepository } from "$lib/data";
+  import {
+    appSession,
+    DEFAULT_COMPANY_NAME,
+    getBrandingRepository,
+    hasPermission,
+    PERMISSIONS,
+  } from "$lib/data";
   import { applyBranding } from "$lib/theme/branding";
   import {
     Card,
@@ -24,12 +30,13 @@
   import { LoadingState } from "$lib/ui";
   import { _ } from "$lib/i18n";
 
-  const defaultTenantId = "018f0000-0000-7000-8000-000000000001";
-
   let isLoading = $state(true);
   let isSaving = $state(false);
+  let canEdit = $derived(
+    hasPermission(appSession.session, PERMISSIONS.BRANDING_MANAGE),
+  );
 
-  let companyName = $state("EventRent Audiovisual");
+  let companyName = $state(DEFAULT_COMPANY_NAME);
   let primaryColor = $state("#2563eb");
   let secondaryColor = $state("#475569");
   let accentColor = $state("#7c3aed");
@@ -38,7 +45,7 @@
   onMount(async () => {
     try {
       const repo = getBrandingRepository();
-      const data = await repo.getBranding(defaultTenantId);
+      const data = await repo.getBranding(appSession.defaultTenantId);
       if (data) {
         companyName = data.company_name;
         primaryColor = data.primary_color;
@@ -68,7 +75,7 @@
     isSaving = true;
     try {
       const repo = getBrandingRepository();
-      const updated = await repo.saveBranding(defaultTenantId, {
+      const updated = await repo.saveBranding(appSession.defaultTenantId, {
         company_name: companyName,
         primary_color: primaryColor,
         secondary_color: secondaryColor,
@@ -103,7 +110,7 @@
   }
 
   function handleResetDefaults() {
-    companyName = "EventRent Audiovisual";
+    companyName = $_("app.defaultCompanyName");
     primaryColor = "#2563eb";
     secondaryColor = "#475569";
     accentColor = "#7c3aed";
@@ -310,12 +317,17 @@
         </Card>
 
         <div class="flex items-center justify-between pt-2">
-          <Button variant="ghost" size="sm" onclick={handleResetDefaults}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onclick={handleResetDefaults}
+            disabled={!canEdit}
+          >
             <RotateCcw class="h-4 w-4" />
             {$_("appearance.resetBtn")}
           </Button>
 
-          <Button onclick={handleSave} disabled={isSaving}>
+          <Button onclick={handleSave} disabled={isSaving || !canEdit}>
             <CheckCircle2 class="h-4 w-4" />
             {isSaving ? $_("appearance.saving") : $_("appearance.saveBtn")}
           </Button>

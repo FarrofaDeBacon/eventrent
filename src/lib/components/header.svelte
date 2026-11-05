@@ -1,15 +1,22 @@
 <script lang="ts">
-  import { Search, Sun, Moon, Sparkles } from "lucide-svelte";
+  import { Search, Sun, Moon, Sparkles, LogOut, User } from "lucide-svelte";
   import { toggleMode, mode } from "mode-watcher";
+  import { appSession, DEFAULT_COMPANY_NAME } from "$lib/data";
   import { _ } from "$lib/i18n";
+  import { Badge } from "$lib/ui/badge";
   import { Button } from "$lib/ui/button";
 
   interface Props {
     title?: string;
     onOpenCommand?: () => void;
+    onLogout?: () => void;
   }
 
-  let { title = "EventRent", onOpenCommand }: Props = $props();
+  let {
+    title = DEFAULT_COMPANY_NAME,
+    onOpenCommand,
+    onLogout,
+  }: Props = $props();
 </script>
 
 <header
@@ -55,5 +62,35 @@
         <Moon class="h-4 w-4" />
       {/if}
     </Button>
+
+    {#if appSession.session}
+      <div
+        class="flex items-center gap-2.5 border-l border-border pl-3"
+        data-testid="header-user-info"
+      >
+        <div
+          class="hidden sm:flex items-center gap-2 rounded-[var(--radius)] bg-muted/60 px-2.5 py-1 text-xs"
+        >
+          <User class="h-3.5 w-3.5 text-primary shrink-0" />
+          <span class="font-medium text-foreground truncate max-w-36">
+            {appSession.session.name}
+          </span>
+          <Badge variant="secondary">
+            {appSession.session.role_name}
+          </Badge>
+        </div>
+
+        <Button
+          variant="outline"
+          size="sm"
+          onclick={onLogout}
+          title={$_("header.logoutTooltip")}
+          aria-label={$_("header.logout")}
+        >
+          <LogOut class="h-3.5 w-3.5" />
+          <span>{$_("header.logout")}</span>
+        </Button>
+      </div>
+    {/if}
   </div>
 </header>

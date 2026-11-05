@@ -21,9 +21,11 @@ Este documento estabelece as diretrizes arquiteturais, de qualidade de código, 
 - **Datas**: `date-fns` e `@internationalized/date`.
 - **Testes**: `vitest` + `@testing-library/svelte`; `playwright` para e2e.
 - **Backend**: Rust (Cargo Workspace).
-  - `crates/core`: Regras de negócio, domínio, repositórios e migrações SQL. **Zero** dependência de Tauri.
-  - `src-tauri`: Wrapper fino da aplicação Tauri 2; comandos chamam apenas `crates/core`.
-- **Banco de Dados**: SQLite via `sqlx` (com migrações versionadas em `crates/core/migrations`). SQL portável preparado para migração futura ao PostgreSQL.
+  - `crates/core`: Domínio, regras de negócio, serviços (`CoreServices`) e traits assíncronas de repositório (`TenantStore`, `BrandingStore`, `RoleStore`, `UserStore`, `AuditStore`). **Zero** dependência de Tauri e **zero** dependência de `sqlx`.
+  - `crates/store-sqlite`: Implementação SQLite das traits do `core` e migrações versionadas (`crates/store-sqlite/migrations`).
+  - `crates/store-postgres` (Fase 2.5): Implementação PostgreSQL das mesmas traits do `core`.
+  - `src-tauri`: Wrapper fino da aplicação Tauri 2; monta `CoreServices` com `Arc<dyn ...>` no `AppState` e expõe comandos IPC finos.
+- **Banco de Dados**: SQLite local (modo Local) em `crates/store-sqlite` e PostgreSQL (modo Nuvem, Fase 2.5), validados pela suíte genérica de testes de contrato (`run_store_contract_suite`).
 - **Gerenciador de Pacotes**: `pnpm`. Multiplataforma (Windows prioritário, compatível com Linux e macOS).
 
 > **Proibição**: Nenhuma dependência externa à lista acima pode ser adicionada sem um ADR formal aprovado em `docs/decisions/`.

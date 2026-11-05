@@ -5,18 +5,23 @@
   import {
     Search,
     LayoutDashboard,
+    UserCog,
+    Shield,
     Palette,
     SunMoon,
+    LogOut,
     ArrowRight,
   } from "lucide-svelte";
+  import { appSession, hasPermission, PERMISSIONS } from "$lib/data";
   import { _ } from "$lib/i18n";
   import { Dialog } from "$lib/ui/dialog";
 
   interface Props {
     open?: boolean;
+    onLogout?: () => void;
   }
 
-  let { open = $bindable(false) }: Props = $props();
+  let { open = $bindable(false), onLogout }: Props = $props();
   let query = $state("");
   let selectedIndex = $state(0);
 
@@ -25,18 +30,42 @@
     labelKey: string;
     categoryKey: string;
     icon: typeof LayoutDashboard;
+    permission?: string;
     action: () => void;
   }
 
-  const commands: CommandItem[] = [
+  const allCommands: CommandItem[] = [
     {
       id: "dashboard",
       labelKey: "command.goToDashboard",
       categoryKey: "command.navigation",
       icon: LayoutDashboard,
+      permission: undefined,
       action: () => {
         open = false;
         goto("/");
+      },
+    },
+    {
+      id: "users",
+      labelKey: "command.goToUsers",
+      categoryKey: "command.navigation",
+      icon: UserCog,
+      permission: PERMISSIONS.USER_READ,
+      action: () => {
+        open = false;
+        goto("/settings/users");
+      },
+    },
+    {
+      id: "roles",
+      labelKey: "command.goToRoles",
+      categoryKey: "command.navigation",
+      icon: Shield,
+      permission: PERMISSIONS.ROLE_READ,
+      action: () => {
+        open = false;
+        goto("/settings/roles");
       },
     },
     {
@@ -44,9 +73,10 @@
       labelKey: "command.goToAppearance",
       categoryKey: "command.navigation",
       icon: Palette,
+      permission: PERMISSIONS.BRANDING_READ,
       action: () => {
         open = false;
-        goto("/configuracoes/aparencia");
+        goto("/settings/appearance");
       },
     },
     {
@@ -59,12 +89,29 @@
         toggleMode();
       },
     },
+    {
+      id: "logout",
+      labelKey: "command.logout",
+      categoryKey: "command.actions",
+      icon: LogOut,
+      action: () => {
+        open = false;
+        onLogout?.();
+      },
+    },
   ];
+
+  let permittedCommands = $derived(
+    allCommands.filter(
+      (cmd) =>
+        !cmd.permission || hasPermission(appSession.session, cmd.permission),
+    ),
+  );
 
   let filteredCommands = $derived(
     query.trim() === ""
-      ? commands
-      : commands.filter(
+      ? permittedCommands
+      : permittedCommands.filter(
           (cmd) =>
             $_(cmd.labelKey).toLowerCase().includes(query.toLowerCase()) ||
             $_(cmd.categoryKey).toLowerCase().includes(query.toLowerCase()),
@@ -72,6 +119,8 @@
   );
 
   function handleKeyDown(event: KeyboardEvent) {
+    if (!appSession.session) return;
+
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
       event.preventDefault();
       open = !open;

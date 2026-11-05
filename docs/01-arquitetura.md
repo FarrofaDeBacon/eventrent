@@ -2,7 +2,7 @@
 
 ## 1. Visão Geral
 
-A arquitetura do EventRent adota uma estratégia **Desktop First** com **Tauri 2**, projetada para transição transparente para uma aplicação Web SaaS / Online no futuro sem reescrita de código da interface ou das regras de negócio.
+A arquitetura do EventRent adota dois modos de operação escolhidos na instalação (**Modo Local** com SQLite em um único computador e **Modo Nuvem** com servidor central `axum` + PostgreSQL na Fase 2.5), mantendo o núcleo de regras de negócio (`crates/core`) e o frontend (`src/`) 100% independentes do transporte e do banco de dados.
 
 ```
 +-------------------------------------------------------------------+
@@ -18,32 +18,37 @@ A arquitetura do EventRent adota uma estratégia **Desktop First** com **Tauri 2
                        | Implementação de Transporte
                        v
        +-------------------------------+
-       | src/lib/data/tauri_impl.ts     | (Fase atual: Tauri invoke)
-       | (Futuro: http_impl.ts via API)|
+       | src/lib/data/tauri-*.ts       | (Modo Local: Tauri invoke)
+       | (Fase 2.5: http-*.ts via API) |
        +---------------+---------------+
                        |
 =======================|=============================================
-                       | IPC Tauri
+                       | IPC Tauri (ou HTTP na Fase 2.5)
                        v
 +-------------------------------------------------------------------+
 |                        BACKEND (RUST)                             |
 |                                                                   |
-|  [src-tauri] (Bin Crate)                                          |
-|    - Comandos finos IPC (handlers de comando)                    |
-|    - Inicialização de janela, atalhos nativos, SQLite path        |
+|  [src-tauri] (Bin Crate - Aplicação Desktop)                      |
+|    - Lê <app_data_dir>/config.json antes de abrir o banco         |
+|    - Monta StoreBundle (Arc<dyn ...>) e CoreServices no AppState  |
+|    - Comandos finos IPC delegando para CoreServices               |
 |                                                                   |
-|  [crates/core] (Lib Crate - Domínio e Persistência)               |
-|    - Modelos de Domínio e Entidades                               |
-|    - Serviços de Negócio (reservas, cálculos, validações)         |
-|    - Repositórios com SQLx e Migrações versionadas                |
-|    - Zero acoplamento com Tauri                                   |
+|  [crates/core] (Lib Crate - Domínio, Serviços e Ports)            |
+|    - Entidades de Domínio, Permissões e Regras de Negócio         |
+|    - CoreServices (Auth Argon2id, RBAC, Lockout, Auditoria)       |
+|    - Traits async: TenantStore, BrandingStore, RoleStore,         |
+|      UserStore, AuditStore                                        |
+|    - Suíte genérica de testes de contrato                         |
+|    - Zero dependência de Tauri e zero dependência de sqlx         |
 +------------------------------+------------------------------------+
                                |
-                               v
-                     +-------------------+
-                     |  SQLite Database  | (Local Desktop)
-                     | (Futuro: Postgres)|
-                     +-------------------+
+             +-----------------+-----------------+
+             |                                   |
+             v                                   v
++-------------------------+         +-------------------------+
+|  [crates/store-sqlite]  |         | [crates/store-postgres] |
+|  SQLite + Migrations    |         | PostgreSQL (Fase 2.5)   |
++-------------------------+         +-------------------------+
 ```
 
 ## 2. Camadas do Frontend
@@ -52,9 +57,8 @@ A arquitetura do EventRent adota uma estratégia **Desktop First** com **Tauri 2
    - Componentes Svelte 5 utilizando Runes (`$state`, `$derived`, `$props`).
    - Nenhuma rota realiza requisição direta a IPC, HTTP ou SQLite.
 2. **Camada de Acesso a Dados (`src/lib/data`)**:
-   - Declara contratos através de interfaces TypeScript estritas (ex.: `BrandingRepository`).
-   - Fornece um injetor ou instância padrão do repositório.
-   - Atualmente, as implementações utilizam `@tauri-apps/api/core` `invoke`. A substituição para uma implementação de rede remota (`fetch` para API REST ou gRPC-web) não requer nenhuma alteração nas páginas ou componentes.
+   - Declara contratos através de interfaces TypeScript estritas (`BrandingRepository`, `AuthRepository`, `UserRepository`).
+   - No modo Desktop utiliza `@tauri-apps/api/core` `invoke`; em navegador/testes utiliza adaptadores mock em memória; na Fase 2.5 adicionará adaptadores HTTP sem alterar nenhuma tela.
 3. **Design System & Tokens (`src/lib/ui`, `src/lib/theme`)**:
    - Baseado em tokens CSS (OKLCH). Nenhuma cor arbitrária no HTML.
    - White-label gerenciado via injeção dinâmica de CSS variables no `:root`.
@@ -62,13 +66,12 @@ A arquitetura do EventRent adota uma estratégia **Desktop First** com **Tauri 2
 ## 3. Camadas do Backend (Rust Workspace)
 
 1. **`crates/core`**:
-   - Crate independente, sem referências ao Tauri. Pode ser compilado como biblioteca estática, daemon de servidor web (ex.: Axum/Actix) ou CLI de testes.
-   - Gerencia conexões e pool de conexões SQLite via `sqlx`.
-   - Executa migrações automáticas integradas (`sqlx::migrate!`).
-2. **`src-tauri`**:
-   - Camada fina responsável por expor comandos Tauri que delegam operações a instâncias gerenciadas em estado Tauri (`tauri::State`).
-
-## 4. Portabilidade do Banco de Dados
-
-- Utiliza SQLite com modo WAL (`Write-Ahead Logging`) e chaves estrangeiras ativadas (`PRAGMA foreign_keys = ON`).
-- Dialeto SQL portável para assegurar migração suave para PostgreSQL na Fase 9.
+   - Crate independente de banco de dados e de interface gráfica.
+   - Define as traits de persistência (`TenantStore`, `BrandingStore`, `RoleStore`, `UserStore`, `AuditStore`) e concentra toda a lógica de autenticação (Argon2id, chave de recuperação, bloqueio progressivo), verificação de permissões (`resource:action`) e regras de domínio (proteção do último Proprietário, proibição de autodesativação, geração de `audit_log`).
+2. **`crates/store-sqlite`**:
+   - Implementa todas as traits de store do `crates/core` usando SQLite (`sqlx`) com modo WAL, `foreign_keys = ON` e abertura segura por `Path` (`SqliteConnectOptions::new().filename(path)`).
+   - Contém as migrações versionadas em `crates/store-sqlite/migrations`.
+3. **`src-tauri`**:
+   - Lê `config.json` na pasta de dados do app antes de inicializar o banco.
+   - Configura logs rotativos diários (`tracing-appender`), instância única (`tauri-plugin-single-instance`) e diálogo nativo de erro não bloqueante (`tauri-plugin-dialog`).
+   - Mantém `CoreServices` e o estado de sessão no `AppState`.

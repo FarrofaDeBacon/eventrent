@@ -1,20 +1,36 @@
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CoreError {
-    #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    #[error("Erro de banco de dados: {0}")]
+    Database(String),
 
-    #[error("Migration error: {0}")]
-    Migration(#[from] sqlx::migrate::MigrateError),
+    #[error("Erro de migração: {0}")]
+    Migration(String),
 
-    #[error("Validation error: {0}")]
+    #[error("Erro de validação: {0}")]
     Validation(String),
 
-    #[error("Entity not found: {0}")]
+    #[error("Conflito de registro: {0}")]
+    Conflict(String),
+
+    #[error("Registro não encontrado: {0}")]
     NotFound(String),
 
-    #[error("Internal error: {0}")]
+    #[error("E-mail ou senha inválidos.")]
+    InvalidCredentials,
+
+    #[error("Conta temporariamente bloqueada até {locked_until}")]
+    AccountLocked { locked_until: String },
+
+    #[error("Não autenticado: {0}")]
+    Unauthorized(String),
+
+    #[error("Permissão negada: requer '{0}'")]
+    Forbidden(String),
+
+    #[error("Erro interno: {0}")]
     Internal(String),
 }
 

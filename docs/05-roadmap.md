@@ -1,93 +1,102 @@
 # 05 - Roadmap de Evolução: EventRent
 
-Este roadmap detalha as fases de evolução do sistema EventRent definidas pela Direção do Projeto.
+Este roadmap detalha as fases oficiais de evolução do sistema EventRent definidas pela Direção do Projeto.
 
 ---
 
-### Fase 0 — Fundação Arquitetural (Escopo Atual)
+### Fase 0 — Fundação Arquitetural (Concluída — `v0.1.0-fase0`)
 
 - Scaffold do projeto (Tauri 2 + SvelteKit static + TypeScript strict + Tailwind 4 + Cargo workspace).
-- Governança de documentação (`AGENTS.md`, `docs/`, ADRs iniciais).
+- Governança de documentação (`AGENTS.md`, `docs/`, ADRs 0001 a 0005).
 - Design system base com tokens OKLCH, alternância de tema e injeção dinâmica de branding.
 - Componentes base de UI (Button, Input, Card, Badge, Dialog, Toast, Estados).
 - App Shell (sidebar recolhível, cabeçalho, paleta de comandos Ctrl+K, tela de Configurações > Aparência).
 - Suporte a i18n (`pt-BR`).
-- Infraestrutura de banco de dados SQLite via `sqlx` no `crates/core`, migrações automáticas, tabelas `tenant` e `tenant_branding`.
-- Comunicação ponta a ponta (Tela -> `src/lib/data` -> `invoke` -> `crates/core` -> SQLite).
-- Bateria de testes (Rust in-memory, Vitest mock data, Playwright smoke test) e CI no GitHub Actions.
+- Logs em arquivo com rotação diária, instância única e diálogo nativo de erro no boot.
+- Testes automatizados e CI verde em Ubuntu e Windows.
 
 ---
 
-### Fase 1 — Base e Controle de Acesso
+### Fase 1A — Fundações de Dados, Usuários, Permissões e Escolha de Modo (Escopo Atual)
 
-- Gestão completa de Tenant.
-- Usuários, autenticação local e perfis de permissão (RBAC).
-- Cadastro de Clientes (PJ e PF) com histórico e contatos.
-- Branding avançado com geração automática de escala tonal e verificação WCAG AA.
+- Refatoração arquitetural de repositórios por trait (`crates/core` sem `sqlx` + `crates/store-sqlite` + suíte genérica de testes de contrato).
+- Escolha do modo de operação na primeira execução (`config.json` fora do banco): Modo Local ativo e Modo Nuvem sinalizado como "Em breve".
+- Assistente de primeira execução no modo local com criação da conta do Proprietário e geração de Chave de Recuperação única.
+- Controle de acesso baseado em papéis e permissões (`resource:action`) verificado no `core`, com perfis de sistema (`Proprietário`, `Comercial`, `Estoque`, `Técnico`, `Financeiro`).
+- Senhas com Argon2id, bloqueio temporário progressivo após falhas de login, expiração de sessão por inatividade e trilha de auditoria (`audit_log`).
+- Telas de Login, Recuperação de Senha, Gestão de Usuários e Consulta de Perfis.
+
+---
+
+### Fase 1B — Clientes e Marca Completa
+
+- Cadastro completo de Clientes (PJ e PF) com documentos, endereços, contatos e histórico.
+- Validação estrita de branding (hexadecimal, tamanhos, sanitização de SVG), upload local de logotipo e geração automática de escala tonal com verificação de contraste WCAG AA.
 
 ---
 
 ### Fase 2 — Catálogo de Equipamentos e Estoque
 
-- Modelos de equipamentos com atributos técnicos específicos do audiovisual.
+- Modelos de equipamentos com atributos técnicos do audiovisual.
 - Modelo híbrido de controle de estoque (`serialized` vs. `quantity`).
 - Cadastro de unidades patrimoniais e números de série.
 - Composição de Kits que se desdobram em itens componentes.
-- Campos personalizados e anexos técnicos por modelo.
+
+---
+
+### Fase 2.5 — Servidor Axum, PostgreSQL e Modo Nuvem
+
+- Criação do `crates/store-postgres` implementando as traits de store do `crates/core` e validado pela mesma suíte de contrato.
+- Servidor HTTP (`axum`) expondo os serviços do `crates/core`.
+- Implementação HTTP em `src/lib/data` e ativação da opção "Em mais de um computador (Nuvem)" no assistente inicial.
+
+---
+
+### Fase 2.6 — Assistente de Migração Local para Nuvem
+
+- Ferramenta guiada para exportar/sincronizar os dados de uma instalação SQLite local (preservando UUIDs v7, `tenant_id` e histórico de auditoria) para o servidor PostgreSQL em nuvem.
 
 ---
 
 ### Fase 3 — Motor de Disponibilidade, Reservas e Timeline
 
-- Algoritmo de cálculo de disponibilidade transacional no backend Rust.
-- Reservas e alocações atômicas (prevenção de conflito de datas e overbooking).
+- Algoritmo de cálculo de disponibilidade e gravação de reservas na mesma transação.
 - Visualização de Timeline interativa e Gantt de locação por equipamento/categoria.
-- Gestão de períodos: trânsito, montagem, show/evento, desmontagem e retorno.
+- Gestão de períodos: trânsito, montagem, evento, desmontagem e retorno.
 
 ---
 
 ### Fase 4 — Orçamento, Contrato e Emissão de Documentos
 
 - Criação e versionamento de propostas comerciais e orçamentos.
-- Tabela de preços dinâmicos, descontos e acréscimos.
-- Geração de contratos em PDF a partir de templates editáveis.
-- Assinatura digital e fluxo de aprovação do cliente.
+- Geração de contratos em PDF a partir de templates customizáveis.
 
 ---
 
-### Fase 5 — Expedição, Conferência e Devolução (Logística)
+### Fase 5 — Conferência e Operação com QR Code
 
-- Romaneio de carga para saída do galpão.
-- Leitura e conferência rápida com QR Code / código de barras.
-- Registro de avarias, perdas e substituição emergencial de equipamentos.
-- Checklist de inspeção no retorno do evento e baixa no estoque.
+- Romaneio de saída, leitura/conferência rápida via QR Code / código de barras, registro de avarias e checklist de retorno.
 
 ---
 
-### Fase 6 — Financeiro e Cobrança
+### Fase 6 — Financeiro
 
-- Contas a pagar e contas a receber integradas às locações.
-- Fluxo de caixa previsto x realizado.
-- Controle de caução, faturamento parcelado e conciliação bancária (PIX, boleto, cartão).
+- Contas a pagar e receber integradas às locações, controle de caução, fluxo de caixa e conciliação.
 
 ---
 
-### Fase 7 — Integração Fiscal
+### Fase 7 — Fiscal por Terceiro
 
-- Emissão de notas fiscais de serviço e remessa de locação por meio de integração com serviços terceirizados (APIs fiscais).
-
----
-
-### Fase 8 — Confiabilidade, Atualização e Licenciamento
-
-- Rotinas de backup automatizado (local e nuvem).
-- Sistema de atualização automática segura (Tauri updater).
-- Gestão de chaves de licença e planos do produto SaaS desktop.
+- Emissão de notas fiscais e documentos de remessa via integração com APIs fiscais terceirizadas.
 
 ---
 
-### Fase 9 — Versão Online (SaaS Web / Nuvem)
+### Fase 8 — Backup, Atualização e Licenciamento
 
-- Implementação de transporte HTTP em `src/lib/data` para conexão com backend em nuvem sem modificar o frontend.
-- Migração do `crates/core` para execução como serviço de API em servidor (PostgreSQL).
-- Modo híbrido com sincronização offline para o aplicativo desktop de galpão.
+- Rotinas de backup local/nuvem, atualização automática segura e controle de licenciamento.
+
+---
+
+### Fase 9 — Produção Online
+
+- Operação SaaS multi-tenant completa em produção online com observabilidade, escalabilidade e provisionamento automatizado.
