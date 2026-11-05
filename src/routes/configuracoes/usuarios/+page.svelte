@@ -7,6 +7,7 @@
     getUserRepository,
     hasPermission,
     PERMISSIONS,
+    ROLE_SLUGS,
     type RoleWithPermissions,
     type UserWithRole,
   } from "$lib/data";
@@ -30,16 +31,16 @@
   let roles = $state<RoleWithPermissions[]>([]);
 
   let canCreate = $derived(
-    hasPermission(appSession.session, PERMISSIONS.USERS_CREATE),
+    hasPermission(appSession.session, PERMISSIONS.USER_MANAGE),
   );
   let canEdit = $derived(
-    hasPermission(appSession.session, PERMISSIONS.USERS_EDIT),
+    hasPermission(appSession.session, PERMISSIONS.USER_MANAGE),
   );
   let canDeactivate = $derived(
-    hasPermission(appSession.session, PERMISSIONS.USERS_DEACTIVATE),
+    hasPermission(appSession.session, PERMISSIONS.USER_MANAGE),
   );
   let canResetPassword = $derived(
-    hasPermission(appSession.session, PERMISSIONS.USERS_RESET_PASSWORD),
+    hasPermission(appSession.session, PERMISSIONS.USER_MANAGE),
   );
 
   // Create modal state
@@ -79,7 +80,7 @@
       users = loadedUsers;
       roles = loadedRoles;
       if (!createRoleId && loadedRoles.length > 0) {
-        const comercial = loadedRoles.find((r) => r.slug === "comercial");
+        const comercial = loadedRoles.find((r) => r.slug === ROLE_SLUGS.COMMERCIAL);
         createRoleId = (comercial ?? loadedRoles[0]).id;
       }
     } catch (err) {
@@ -98,7 +99,7 @@
     createEmail = "";
     createPassword = "";
     createError = null;
-    const comercial = roles.find((r) => r.slug === "comercial");
+    const comercial = roles.find((r) => r.slug === ROLE_SLUGS.COMMERCIAL);
     createRoleId = (comercial ?? roles[0])?.id ?? "";
     createOpen = true;
   }
@@ -266,7 +267,7 @@
                   </td>
                   <td class="py-3.5 px-3">
                     <Badge
-                      variant={user.role_slug === "proprietario"
+                      variant={user.role_slug === ROLE_SLUGS.OWNER
                         ? "default"
                         : "secondary"}
                     >

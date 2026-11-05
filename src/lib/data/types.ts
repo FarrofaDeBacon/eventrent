@@ -127,28 +127,42 @@ export interface UpdateBrandingInput {
   logo_url?: string | null;
 }
 
+/**
+ * Catálogo de permissões `resource:action`.
+ * Fonte única de verdade: `crates/core/src/domain/permission.rs`.
+ * A paridade é verificada pelo teste Rust `permission_catalog_matches_frontend` em `src-tauri`.
+ */
 export const PERMISSIONS = {
-  DASHBOARD_VIEW: "dashboard:view",
-  USERS_VIEW: "users:view",
-  USERS_CREATE: "users:create",
-  USERS_EDIT: "users:edit",
-  USERS_DEACTIVATE: "users:deactivate",
-  USERS_RESET_PASSWORD: "users:reset_password",
-  ROLES_VIEW: "roles:view",
-  ROLES_MANAGE: "roles:manage",
-  BRANDING_VIEW: "branding:view",
-  BRANDING_EDIT: "branding:edit",
-  SETTINGS_VIEW: "settings:view",
-  SETTINGS_EDIT: "settings:edit",
-  AUDIT_VIEW: "audit:view",
-  INVENTORY_VIEW: "inventory:view",
-  INVENTORY_EDIT: "inventory:edit",
-  QUOTES_VIEW: "quotes:view",
-  QUOTES_EDIT: "quotes:edit",
-  OPERATIONS_VIEW: "operations:view",
-  OPERATIONS_EXECUTE: "operations:execute",
-  FINANCE_VIEW: "finance:view",
-  FINANCE_EDIT: "finance:edit",
+  USER_READ: "user:read",
+  USER_MANAGE: "user:manage",
+  ROLE_READ: "role:read",
+  ROLE_MANAGE: "role:manage",
+  BRANDING_READ: "branding:read",
+  BRANDING_MANAGE: "branding:manage",
+  CUSTOMER_READ: "customer:read",
+  CUSTOMER_MANAGE: "customer:manage",
+  CATALOG_READ: "catalog:read",
+  CATALOG_MANAGE: "catalog:manage",
+  RESERVATION_READ: "reservation:read",
+  RESERVATION_MANAGE: "reservation:manage",
+  QUOTE_READ: "quote:read",
+  QUOTE_MANAGE: "quote:manage",
+  WAREHOUSE_READ: "warehouse:read",
+  WAREHOUSE_OPERATE: "warehouse:operate",
+  FINANCE_READ: "finance:read",
+  FINANCE_MANAGE: "finance:manage",
+  AUDIT_READ: "audit:read",
+  SETTINGS_READ: "settings:read",
+  SETTINGS_MANAGE: "settings:manage",
+} as const;
+
+/** Slugs dos perfis de sistema (fonte: `crates/core/src/domain/permission.rs`). */
+export const ROLE_SLUGS = {
+  OWNER: "owner",
+  COMMERCIAL: "commercial",
+  WAREHOUSE: "warehouse",
+  TECHNICIAN: "technician",
+  FINANCE: "finance",
 } as const;
 
 export const DEFAULT_COMPANY_NAME = "Minha empresa";

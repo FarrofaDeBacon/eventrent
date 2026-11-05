@@ -2,6 +2,7 @@ import type { AuthRepository } from "./auth-repository";
 import {
   DEFAULT_COMPANY_NAME,
   PERMISSIONS,
+  ROLE_SLUGS,
   type AppConfig,
   type AppStatus,
   type InitialSetupInput,
@@ -34,13 +35,13 @@ export interface MockSharedState {
 const ALL_PERMISSIONS = Object.values(PERMISSIONS);
 
 function createSystemRoles(tenantId: string): RoleWithPermissions[] {
-  const now = "2026-01-01T00:00:00Z";
+  const now = new Date().toISOString();
   return [
     {
-      id: "role-proprietario",
+      id: "role-owner",
       tenant_id: tenantId,
       name: "Proprietário",
-      slug: "proprietario",
+      slug: ROLE_SLUGS.OWNER,
       description:
         "Acesso total à administração, usuários, perfis, financeiro e operação.",
       is_system: true,
@@ -51,20 +52,22 @@ function createSystemRoles(tenantId: string): RoleWithPermissions[] {
       created_by: null,
     },
     {
-      id: "role-comercial",
+      id: "role-commercial",
       tenant_id: tenantId,
       name: "Comercial",
-      slug: "comercial",
+      slug: ROLE_SLUGS.COMMERCIAL,
       description:
         "Gestão de clientes, orçamentos, reservas e consulta ao catálogo.",
       is_system: true,
       permissions: [
-        PERMISSIONS.DASHBOARD_VIEW,
-        PERMISSIONS.BRANDING_VIEW,
-        PERMISSIONS.INVENTORY_VIEW,
-        PERMISSIONS.QUOTES_VIEW,
-        PERMISSIONS.QUOTES_EDIT,
-        PERMISSIONS.FINANCE_VIEW,
+        PERMISSIONS.BRANDING_READ,
+        PERMISSIONS.CATALOG_READ,
+        PERMISSIONS.CUSTOMER_READ,
+        PERMISSIONS.CUSTOMER_MANAGE,
+        PERMISSIONS.QUOTE_READ,
+        PERMISSIONS.QUOTE_MANAGE,
+        PERMISSIONS.RESERVATION_READ,
+        PERMISSIONS.FINANCE_READ,
       ],
       created_at: now,
       updated_at: now,
@@ -72,20 +75,20 @@ function createSystemRoles(tenantId: string): RoleWithPermissions[] {
       created_by: null,
     },
     {
-      id: "role-estoque",
+      id: "role-warehouse",
       tenant_id: tenantId,
       name: "Estoque",
-      slug: "estoque",
+      slug: ROLE_SLUGS.WAREHOUSE,
       description:
         "Gestão de catálogo de equipamentos, números de série, kits e separação.",
       is_system: true,
       permissions: [
-        PERMISSIONS.DASHBOARD_VIEW,
-        PERMISSIONS.BRANDING_VIEW,
-        PERMISSIONS.INVENTORY_VIEW,
-        PERMISSIONS.INVENTORY_EDIT,
-        PERMISSIONS.OPERATIONS_VIEW,
-        PERMISSIONS.OPERATIONS_EXECUTE,
+        PERMISSIONS.BRANDING_READ,
+        PERMISSIONS.CATALOG_READ,
+        PERMISSIONS.CATALOG_MANAGE,
+        PERMISSIONS.WAREHOUSE_READ,
+        PERMISSIONS.WAREHOUSE_OPERATE,
+        PERMISSIONS.RESERVATION_READ,
       ],
       created_at: now,
       updated_at: now,
@@ -93,19 +96,19 @@ function createSystemRoles(tenantId: string): RoleWithPermissions[] {
       created_by: null,
     },
     {
-      id: "role-tecnico",
+      id: "role-technician",
       tenant_id: tenantId,
       name: "Técnico",
-      slug: "tecnico",
+      slug: ROLE_SLUGS.TECHNICIAN,
       description:
         "Operação de saída, retorno, checklist técnico e manutenção.",
       is_system: true,
       permissions: [
-        PERMISSIONS.DASHBOARD_VIEW,
-        PERMISSIONS.BRANDING_VIEW,
-        PERMISSIONS.INVENTORY_VIEW,
-        PERMISSIONS.OPERATIONS_VIEW,
-        PERMISSIONS.OPERATIONS_EXECUTE,
+        PERMISSIONS.BRANDING_READ,
+        PERMISSIONS.CATALOG_READ,
+        PERMISSIONS.WAREHOUSE_READ,
+        PERMISSIONS.WAREHOUSE_OPERATE,
+        PERMISSIONS.RESERVATION_READ,
       ],
       created_at: now,
       updated_at: now,
@@ -113,19 +116,19 @@ function createSystemRoles(tenantId: string): RoleWithPermissions[] {
       created_by: null,
     },
     {
-      id: "role-financeiro",
+      id: "role-finance",
       tenant_id: tenantId,
       name: "Financeiro",
-      slug: "financeiro",
+      slug: ROLE_SLUGS.FINANCE,
       description:
         "Faturamento, contas a receber, cobranças e relatórios financeiros.",
       is_system: true,
       permissions: [
-        PERMISSIONS.DASHBOARD_VIEW,
-        PERMISSIONS.BRANDING_VIEW,
-        PERMISSIONS.QUOTES_VIEW,
-        PERMISSIONS.FINANCE_VIEW,
-        PERMISSIONS.FINANCE_EDIT,
+        PERMISSIONS.BRANDING_READ,
+        PERMISSIONS.QUOTE_READ,
+        PERMISSIONS.FINANCE_READ,
+        PERMISSIONS.FINANCE_MANAGE,
+        PERMISSIONS.RESERVATION_READ,
       ],
       created_at: now,
       updated_at: now,
@@ -250,7 +253,7 @@ export class MockAuthRepository implements AuthRepository {
       throw new Error("A senha deve ter pelo menos 8 caracteres.");
     }
 
-    const ownerRole = state.roles.find((r) => r.slug === "proprietario")!;
+    const ownerRole = state.roles.find((r) => r.slug === ROLE_SLUGS.OWNER)!;
     const now = new Date().toISOString();
     const recoveryKey = generateMockRecoveryKey();
     const userId = `user-owner-${Date.now()}`;

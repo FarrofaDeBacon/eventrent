@@ -40,7 +40,7 @@
       labelKey: "nav.dashboard",
       href: "/",
       icon: LayoutDashboard,
-      permission: PERMISSIONS.DASHBOARD_VIEW,
+      permission: undefined,
     },
     {
       labelKey: "nav.quotes",
@@ -70,19 +70,19 @@
       labelKey: "nav.users",
       href: "/configuracoes/usuarios",
       icon: UserCog,
-      permission: PERMISSIONS.USERS_VIEW,
+      permission: PERMISSIONS.USER_READ,
     },
     {
       labelKey: "nav.roles",
       href: "/configuracoes/perfis",
       icon: Shield,
-      permission: PERMISSIONS.ROLES_VIEW,
+      permission: PERMISSIONS.ROLE_READ,
     },
     {
       labelKey: "nav.appearance",
       href: "/configuracoes/aparencia",
       icon: Palette,
-      permission: PERMISSIONS.BRANDING_VIEW,
+      permission: PERMISSIONS.BRANDING_READ,
     },
   ];
 

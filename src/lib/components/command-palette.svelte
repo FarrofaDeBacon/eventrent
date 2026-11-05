@@ -40,7 +40,7 @@
       labelKey: "command.goToDashboard",
       categoryKey: "command.navigation",
       icon: LayoutDashboard,
-      permission: PERMISSIONS.DASHBOARD_VIEW,
+      permission: undefined,
       action: () => {
         open = false;
         goto("/");
@@ -51,7 +51,7 @@
       labelKey: "command.goToUsers",
       categoryKey: "command.navigation",
       icon: UserCog,
-      permission: PERMISSIONS.USERS_VIEW,
+      permission: PERMISSIONS.USER_READ,
       action: () => {
         open = false;
         goto("/configuracoes/usuarios");
@@ -62,7 +62,7 @@
       labelKey: "command.goToRoles",
       categoryKey: "command.navigation",
       icon: Shield,
-      permission: PERMISSIONS.ROLES_VIEW,
+      permission: PERMISSIONS.ROLE_READ,
       action: () => {
         open = false;
         goto("/configuracoes/perfis");
@@ -73,7 +73,7 @@
       labelKey: "command.goToAppearance",
       categoryKey: "command.navigation",
       icon: Palette,
-      permission: PERMISSIONS.BRANDING_VIEW,
+      permission: PERMISSIONS.BRANDING_READ,
       action: () => {
         open = false;
         goto("/configuracoes/aparencia");

@@ -92,14 +92,15 @@ export function canAccessRoute(
   if (!session) return false;
 
   if (pathname.startsWith("/configuracoes/usuarios")) {
-    return hasPermission(session, PERMISSIONS.USERS_VIEW);
+    return hasPermission(session, PERMISSIONS.USER_READ);
   }
   if (pathname.startsWith("/configuracoes/perfis")) {
-    return hasPermission(session, PERMISSIONS.ROLES_VIEW);
+    return hasPermission(session, PERMISSIONS.ROLE_READ);
   }
   if (pathname.startsWith("/configuracoes/aparencia")) {
-    return hasPermission(session, PERMISSIONS.BRANDING_VIEW);
+    return hasPermission(session, PERMISSIONS.BRANDING_READ);
   }
 
-  return hasPermission(session, PERMISSIONS.DASHBOARD_VIEW);
+  // Rota raiz: qualquer sessão autenticada tem acesso
+  return true;
 }

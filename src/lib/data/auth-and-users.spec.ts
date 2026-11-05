@@ -5,7 +5,7 @@ import {
   resetSharedMockState,
 } from "./mock-auth-repository";
 import { MockUserRepository } from "./mock-user-repository";
-import { DEFAULT_COMPANY_NAME, PERMISSIONS } from "./types";
+import { DEFAULT_COMPANY_NAME, PERMISSIONS, ROLE_SLUGS } from "./types";
 
 describe("AuthRepository & UserRepository (Regras de Domínio e Guards)", () => {
   let authRepo: MockAuthRepository;
@@ -47,8 +47,8 @@ describe("AuthRepository & UserRepository (Regras de Domínio e Guards)", () => 
       /^ER-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/,
     );
     expect(result.branding.company_name).toBe("Palco Total Locações");
-    expect(result.session.role_slug).toBe("proprietario");
-    expect(hasPermission(result.session, PERMISSIONS.USERS_CREATE)).toBe(true);
+    expect(result.session.role_slug).toBe(ROLE_SLUGS.OWNER);
+    expect(hasPermission(result.session, PERMISSIONS.USER_MANAGE)).toBe(true);
   });
 
   it("deve bloquear temporariamente após 5 falhas de login e permitir recuperar com a chave de recuperação", async () => {
@@ -112,7 +112,7 @@ describe("AuthRepository & UserRepository (Regras de Domínio e Guards)", () => 
 
     const roles = await userRepo.listRoles();
     expect(roles).toHaveLength(5);
-    const comercialRole = roles.find((r) => r.slug === "comercial")!;
+    const comercialRole = roles.find((r) => r.slug === ROLE_SLUGS.COMMERCIAL)!;
 
     // Impede autodesativação
     await expect(
@@ -135,7 +135,7 @@ describe("AuthRepository & UserRepository (Regras de Domínio e Guards)", () => 
       password: "Lucas#Password2026",
       role_id: comercialRole.id,
     });
-    expect(comercialUser.role_slug).toBe("comercial");
+    expect(comercialUser.role_slug).toBe(ROLE_SLUGS.COMMERCIAL);
 
     // Faz login como Comercial e verifica guards de rota e permissão
     await authRepo.logout();
@@ -144,6 +144,7 @@ describe("AuthRepository & UserRepository (Regras de Domínio e Guards)", () => 
       password: "Lucas#Password2026",
     });
 
+    // Comercial tem acesso ao dashboard e à aparência (branding:read), mas não a usuários/perfis
     expect(canAccessRoute(comercialSession, "/")).toBe(true);
     expect(canAccessRoute(comercialSession, "/configuracoes/aparencia")).toBe(
       true,

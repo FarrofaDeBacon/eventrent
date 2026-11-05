@@ -37,7 +37,7 @@
           <ArrowRight class="h-4 w-4" />
         </Button>
 
-        {#if hasPermission(appSession.session, PERMISSIONS.USERS_VIEW)}
+        {#if hasPermission(appSession.session, PERMISSIONS.USER_READ)}
           <Button variant="outline" href="/configuracoes/usuarios">
             <UserCog class="h-4 w-4" />
             {$_("dashboard.ctaUsers")}

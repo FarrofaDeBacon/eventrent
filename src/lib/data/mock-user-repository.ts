@@ -5,6 +5,7 @@ import {
 } from "./mock-auth-repository";
 import {
   PERMISSIONS,
+  ROLE_SLUGS,
   type CreateUserInput,
   type ResetPasswordInput,
   type RoleWithPermissions,
@@ -47,7 +48,7 @@ function requireMockPermission(permission: string) {
 
 export class MockUserRepository implements UserRepository {
   async listRoles(): Promise<RoleWithPermissions[]> {
-    const { state } = requireMockPermission(PERMISSIONS.ROLES_VIEW);
+    const { state } = requireMockPermission(PERMISSIONS.ROLE_READ);
     return state.roles.map((r) => ({
       ...r,
       permissions: [...r.permissions],
@@ -55,12 +56,12 @@ export class MockUserRepository implements UserRepository {
   }
 
   async listUsers(): Promise<UserWithRole[]> {
-    const { state } = requireMockPermission(PERMISSIONS.USERS_VIEW);
+    const { state } = requireMockPermission(PERMISSIONS.USER_READ);
     return state.users.filter((u) => !u.deleted_at).map((u) => toPublicUser(u));
   }
 
   async createUser(input: CreateUserInput): Promise<UserWithRole> {
-    const { state, session } = requireMockPermission(PERMISSIONS.USERS_CREATE);
+    const { state, session } = requireMockPermission(PERMISSIONS.USER_MANAGE);
     if (input.name.trim().length < 2) {
       throw new Error("O nome do usuário deve ter pelo menos 2 caracteres.");
     }
@@ -110,7 +111,7 @@ export class MockUserRepository implements UserRepository {
     userId: string,
     input: UpdateUserInput,
   ): Promise<UserWithRole> {
-    const { state } = requireMockPermission(PERMISSIONS.USERS_EDIT);
+    const { state } = requireMockPermission(PERMISSIONS.USER_MANAGE);
     const user = state.users.find((u) => u.id === userId && !u.deleted_at);
     if (!user) {
       throw new Error("Usuário não encontrado.");
@@ -122,12 +123,12 @@ export class MockUserRepository implements UserRepository {
 
     // Regra de negócio: impedir rebaixamento do último Proprietário ativo
     if (
-      user.role_slug === "proprietario" &&
-      role.slug !== "proprietario" &&
+      user.role_slug === ROLE_SLUGS.OWNER &&
+      role.slug !== ROLE_SLUGS.OWNER &&
       user.active
     ) {
       const activeOwners = state.users.filter(
-        (u) => !u.deleted_at && u.active && u.role_slug === "proprietario",
+        (u) => !u.deleted_at && u.active && u.role_slug === ROLE_SLUGS.OWNER,
       ).length;
       if (activeOwners <= 1) {
         throw new Error(
@@ -168,7 +169,7 @@ export class MockUserRepository implements UserRepository {
 
   async setUserActive(userId: string, active: boolean): Promise<UserWithRole> {
     const { state, session } = requireMockPermission(
-      PERMISSIONS.USERS_DEACTIVATE,
+      PERMISSIONS.USER_MANAGE,
     );
     if (!active && session.user_id === userId) {
       throw new Error("Você não pode desativar sua própria conta.");
@@ -178,9 +179,9 @@ export class MockUserRepository implements UserRepository {
       throw new Error("Usuário não encontrado.");
     }
 
-    if (!active && user.role_slug === "proprietario" && user.active) {
+    if (!active && user.role_slug === ROLE_SLUGS.OWNER && user.active) {
       const activeOwners = state.users.filter(
-        (u) => !u.deleted_at && u.active && u.role_slug === "proprietario",
+        (u) => !u.deleted_at && u.active && u.role_slug === ROLE_SLUGS.OWNER,
       ).length;
       if (activeOwners <= 1) {
         throw new Error(
@@ -199,7 +200,7 @@ export class MockUserRepository implements UserRepository {
     userId: string,
     input: ResetPasswordInput,
   ): Promise<void> {
-    const { state } = requireMockPermission(PERMISSIONS.USERS_RESET_PASSWORD);
+    const { state } = requireMockPermission(PERMISSIONS.USER_MANAGE);
     if (input.new_password.length < 8) {
       throw new Error("A nova senha deve ter pelo menos 8 caracteres.");
     }
