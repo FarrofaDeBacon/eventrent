@@ -178,24 +178,18 @@ mod tests {
         };
 
         // 1. Acesso 15 minutos depois: dentro do limite (OK)
-        let active_check = CoreServices::verify_session_active_at(
-            &session,
-            base_time + Duration::minutes(15),
-        );
+        let active_check =
+            CoreServices::verify_session_active_at(&session, base_time + Duration::minutes(15));
         assert!(active_check.is_ok());
 
         // 2. Acesso 30 minutos depois: limite exato (OK)
-        let boundary_check = CoreServices::verify_session_active_at(
-            &session,
-            base_time + Duration::minutes(30),
-        );
+        let boundary_check =
+            CoreServices::verify_session_active_at(&session, base_time + Duration::minutes(30));
         assert!(boundary_check.is_ok());
 
         // 3. Acesso 31 minutos depois: expirou no caminho real do core (ERRO)
-        let expired_check = CoreServices::verify_session_active_at(
-            &session,
-            base_time + Duration::minutes(31),
-        );
+        let expired_check =
+            CoreServices::verify_session_active_at(&session, base_time + Duration::minutes(31));
         assert!(expired_check.is_err());
     }
 

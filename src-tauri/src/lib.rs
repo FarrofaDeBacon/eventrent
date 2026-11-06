@@ -229,15 +229,19 @@ async fn initialize_app(app_handle: &AppHandle) -> Result<(AppState, PathBuf), (
         )
     })?;
 
-    ensure_system_roles(&default_tenant_id, store_bundle.roles.as_ref())
-        .await
-        .map_err(|e| {
-            tracing::error!("Erro crítico ao garantir perfis de sistema: {}", e);
-            (
-                format!("Falha ao inicializar perfis de permissão do sistema: {e}"),
-                log_dir_display.clone(),
-            )
-        })?;
+    ensure_system_roles(
+        &default_tenant_id,
+        store_bundle.roles.as_ref(),
+        Some(store_bundle.audit.as_ref()),
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("Erro crítico ao garantir perfis de sistema: {}", e);
+        (
+            format!("Falha ao inicializar perfis de permissão do sistema: {e}"),
+            log_dir_display.clone(),
+        )
+    })?;
 
     tracing::info!(
         "Banco SQLite, tenant padrão ({}) e perfis de sistema verificados com sucesso",
@@ -352,7 +356,7 @@ mod tests {
 
         let loaded = load_or_create_app_config(&cfg_path).unwrap();
         assert_eq!(loaded.inactivity_timeout_minutes, 45);
-        assert_eq!(loaded.setup_completed, true);
+        assert!(loaded.setup_completed);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

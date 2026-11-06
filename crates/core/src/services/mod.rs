@@ -12,11 +12,83 @@ use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, Salt
 use argon2::{Algorithm, Argon2, Params, Version};
 use chrono::{DateTime, Duration, Utc};
 use rand::Rng;
+use std::collections::HashSet;
 use uuid::Uuid;
 
 pub const DEFAULT_COMPANY_NAME: &str = "Minha empresa";
 pub const MAX_FAILED_LOGIN_ATTEMPTS: i32 = 5;
 pub const MIN_PASSWORD_LEN: usize = 8;
+pub const MAX_PASSWORD_LEN: usize = 128;
+
+/// Hash fictício constante com formato e custo idênticos ao Argon2id OWASP.
+/// Executado quando um usuário não existe ou está inativo para eliminar timing side-channels
+/// e mitigar ataques de enumeração de e-mails.
+pub const DUMMY_ARGON2_HASH: &str =
+    "$argon2id$v=19$m=19456,t=2,p=1$ZXZlbnRyZW50c2FsdDEyMw$U29tZVVua25vd25QYXNzd29yZEhhc2hEYXRhMTIzNDU";
+
+/// Valida tamanho de senha em contagem de caracteres Unicode (RFC/OWASP: 8 a 128 caracteres).
+pub fn validate_password(password: &str) -> Result<()> {
+    let char_count = password.chars().count();
+    if !(MIN_PASSWORD_LEN..=MAX_PASSWORD_LEN).contains(&char_count) {
+        return Err(CoreError::Validation(format!(
+            "A senha deve ter entre {MIN_PASSWORD_LEN} e {MAX_PASSWORD_LEN} caracteres."
+        )));
+    }
+    Ok(())
+}
+
+/// Valida formato de e-mail sem dependências externas.
+///
+/// Regras aplicadas:
+/// 1. Comprimento total entre 5 e 254 caracteres (RFC 5321).
+/// 2. Presença de exatamente um caractere '@', separando parte local e domínio.
+/// 3. Parte local: não vazia, sem pontos no início/fim, sem pontos consecutivos.
+/// 4. Domínio: não vazio, sem pontos ou hífens no início/fim, com pelo menos uma extensão (TLD).
+/// 5. TLD (Top-Level Domain): no mínimo 2 caracteres exclusivamente alfabéticos.
+pub fn validate_email(email: &str) -> Result<String> {
+    let trimmed = email.trim().to_lowercase();
+    if trimmed.len() < 5 || trimmed.len() > 254 {
+        return Err(CoreError::Validation(
+            "O e-mail deve ter entre 5 e 254 caracteres.".to_string(),
+        ));
+    }
+    let parts: Vec<&str> = trimmed.split('@').collect();
+    if parts.len() != 2 {
+        return Err(CoreError::Validation(
+            "Informe um e-mail válido contendo um único '@'.".to_string(),
+        ));
+    }
+    let (local, domain) = (parts[0], parts[1]);
+    if local.is_empty() || local.starts_with('.') || local.ends_with('.') || local.contains("..") {
+        return Err(CoreError::Validation(
+            "Parte local do e-mail inválida.".to_string(),
+        ));
+    }
+    if domain.is_empty()
+        || domain.starts_with('.')
+        || domain.ends_with('.')
+        || domain.starts_with('-')
+        || domain.ends_with('-')
+        || domain.contains("..")
+    {
+        return Err(CoreError::Validation(
+            "Domínio do e-mail inválido.".to_string(),
+        ));
+    }
+    let domain_labels: Vec<&str> = domain.split('.').collect();
+    if domain_labels.len() < 2 {
+        return Err(CoreError::Validation(
+            "Domínio do e-mail deve conter pelo menos uma extensão (ex: .com).".to_string(),
+        ));
+    }
+    let tld = domain_labels.last().unwrap();
+    if tld.len() < 2 || !tld.chars().all(|c| c.is_ascii_alphabetic()) {
+        return Err(CoreError::Validation(
+            "Extensão do e-mail inválida.".to_string(),
+        ));
+    }
+    Ok(trimmed)
+}
 
 /// Configuração recomendada pelo OWASP Password Storage Cheat Sheet para Argon2id:
 /// - Memória (m): 19 MiB (19.456 KiB = 19 * 1024)
@@ -153,9 +225,11 @@ pub async fn ensure_default_tenant(
 }
 
 /// Garante de forma idempotente a criação dos 5 perfis de sistema para um tenant.
+/// Compara conjuntos de permissões (em vez de mera contagem) e registra auditoria ao corrigir divergências.
 pub async fn ensure_system_roles(
     tenant_id: &str,
     roles: &dyn RoleStore,
+    audit: Option<&dyn crate::store::AuditStore>,
 ) -> Result<Vec<RoleWithPermissions>> {
     let now = Utc::now().to_rfc3339();
 
@@ -163,10 +237,32 @@ pub async fn ensure_system_roles(
         let perms: Vec<String> = spec.permissions.iter().map(|s| (*s).to_string()).collect();
 
         if let Some(existing) = roles.find_by_slug(tenant_id, spec.slug).await? {
-            if existing.permissions.len() != perms.len() {
+            let expected_set: HashSet<&str> = spec.permissions.iter().copied().collect();
+            let current_set: HashSet<&str> =
+                existing.permissions.iter().map(|s| s.as_str()).collect();
+
+            if expected_set != current_set {
                 roles
                     .set_permissions(tenant_id, &existing.id, &perms, &now)
                     .await?;
+
+                if let Some(audit_store) = audit {
+                    let entry = AuditLogEntry {
+                        id: Uuid::now_v7().to_string(),
+                        tenant_id: tenant_id.to_string(),
+                        actor_user_id: None,
+                        action: "role.system_permissions_repaired".to_string(),
+                        entity_type: "role".to_string(),
+                        entity_id: existing.id.clone(),
+                        summary: format!(
+                            "Permissões do perfil de sistema '{}' sincronizadas com o catálogo canônico",
+                            spec.name
+                        ),
+                        created_at: now.clone(),
+                        created_by: None,
+                    };
+                    let _ = audit_store.append(&entry).await;
+                }
             }
         } else {
             let role = Role {
@@ -280,7 +376,8 @@ impl CoreServices {
 
         let company_name = input.company_name.trim();
         let owner_name = input.owner_name.trim();
-        let owner_email = input.owner_email.trim().to_lowercase();
+        let owner_email = validate_email(&input.owner_email)?;
+        validate_password(&input.owner_password)?;
 
         if company_name.is_empty() {
             return Err(CoreError::Validation(
@@ -291,16 +388,6 @@ impl CoreServices {
             return Err(CoreError::Validation(
                 "Informe o nome do proprietário.".to_string(),
             ));
-        }
-        if !owner_email.contains('@') || owner_email.len() < 5 {
-            return Err(CoreError::Validation(
-                "Informe um e-mail válido.".to_string(),
-            ));
-        }
-        if input.owner_password.len() < MIN_PASSWORD_LEN {
-            return Err(CoreError::Validation(format!(
-                "A senha deve ter pelo menos {MIN_PASSWORD_LEN} caracteres."
-            )));
         }
 
         let now = Utc::now().to_rfc3339();
@@ -332,7 +419,12 @@ impl CoreServices {
             .save(tenant_id, &branding_input)
             .await?;
 
-        ensure_system_roles(tenant_id, self.stores.roles.as_ref()).await?;
+        ensure_system_roles(
+            tenant_id,
+            self.stores.roles.as_ref(),
+            Some(self.stores.audit.as_ref()),
+        )
+        .await?;
 
         let owner_role = self
             .stores
@@ -413,6 +505,7 @@ impl CoreServices {
     }
 
     /// Realiza autenticação por e-mail e senha com proteção Argon2id e bloqueio progressivo.
+    /// Implementa proteção contra enumeração de e-mail e timing attacks executando hash fictício constante.
     pub async fn login(
         &self,
         tenant_id: &str,
@@ -421,16 +514,19 @@ impl CoreServices {
     ) -> Result<SessionInfo> {
         let email = input.email.trim().to_lowercase();
         if email.is_empty() || input.password.is_empty() {
+            let _ = verify_secret(&input.password, DUMMY_ARGON2_HASH).await;
             return Err(CoreError::InvalidCredentials);
         }
 
-        let Some(user) = self.stores.users.find_by_email(tenant_id, &email).await? else {
-            return Err(CoreError::InvalidCredentials);
+        let maybe_user = self.stores.users.find_by_email(tenant_id, &email).await?;
+        let user = match maybe_user {
+            Some(u) if u.active => u,
+            _ => {
+                // Mitigação contra enumeração de usuário: executa a mesma carga criptográfica de Argon2id
+                let _ = verify_secret(&input.password, DUMMY_ARGON2_HASH).await;
+                return Err(CoreError::InvalidCredentials);
+            }
         };
-
-        if !user.active {
-            return Err(CoreError::InvalidCredentials);
-        }
 
         let now = Utc::now();
         let now_str = now.to_rfc3339();
@@ -446,7 +542,11 @@ impl CoreServices {
         }
 
         if !verify_secret(&input.password, &user.password_hash).await? {
-            let new_failures = user.failed_attempts + 1;
+            let new_failures = self
+                .stores
+                .users
+                .increment_login_failure(tenant_id, &user.id, &now_str)
+                .await?;
             let lockout_secs = calculate_lockout_seconds(new_failures);
             let locked_until = if lockout_secs > 0 {
                 Some((now + Duration::seconds(lockout_secs)).to_rfc3339())
@@ -454,16 +554,12 @@ impl CoreServices {
                 None
             };
 
-            self.stores
-                .users
-                .record_login_failure(
-                    tenant_id,
-                    &user.id,
-                    new_failures,
-                    locked_until.as_deref(),
-                    &now_str,
-                )
-                .await?;
+            if locked_until.is_some() {
+                self.stores
+                    .users
+                    .set_login_lockout(tenant_id, &user.id, locked_until.as_deref(), &now_str)
+                    .await?;
+            }
 
             if let Some(ref until) = locked_until {
                 self.record_audit(
@@ -549,11 +645,7 @@ impl CoreServices {
         let email = input.email.trim().to_lowercase();
         let normalized_key = normalize_recovery_key(&input.recovery_key);
 
-        if input.new_password.len() < MIN_PASSWORD_LEN {
-            return Err(CoreError::Validation(format!(
-                "A nova senha deve ter pelo menos {MIN_PASSWORD_LEN} caracteres."
-            )));
-        }
+        validate_password(&input.new_password)?;
 
         let Some(user) = self.stores.users.find_by_email(tenant_id, &email).await? else {
             return Err(CoreError::InvalidCredentials);
@@ -577,7 +669,11 @@ impl CoreServices {
         }
 
         if !verify_secret(&normalized_key, key_hash).await? {
-            let new_failures = user.recovery_failed_attempts + 1;
+            let new_failures = self
+                .stores
+                .users
+                .increment_recovery_failure(tenant_id, &user.id, &now_str)
+                .await?;
             let lockout_secs = calculate_lockout_seconds(new_failures);
             let locked_until = if lockout_secs > 0 {
                 Some((now + Duration::seconds(lockout_secs)).to_rfc3339())
@@ -585,16 +681,12 @@ impl CoreServices {
                 None
             };
 
-            self.stores
-                .users
-                .record_recovery_failure(
-                    tenant_id,
-                    &user.id,
-                    new_failures,
-                    locked_until.as_deref(),
-                    &now_str,
-                )
-                .await?;
+            if locked_until.is_some() {
+                self.stores
+                    .users
+                    .set_recovery_lockout(tenant_id, &user.id, locked_until.as_deref(), &now_str)
+                    .await?;
+            }
 
             if let Some(ref until) = locked_until {
                 self.record_audit(
@@ -667,10 +759,7 @@ impl CoreServices {
     }
 
     pub async fn list_users(&self, session: &SessionInfo) -> Result<Vec<UserWithRole>> {
-        self.verify_session_active(session)?;
-        if !session.has_permission(PERM_USER_READ) && !session.has_permission(PERM_USER_MANAGE) {
-            return Err(CoreError::Forbidden(PERM_USER_READ.to_string()));
-        }
+        self.check_session_and_permission(session, PERM_USER_READ)?;
         self.stores.users.list_by_tenant(&session.tenant_id).await
     }
 
@@ -682,22 +771,13 @@ impl CoreServices {
         self.check_session_and_permission(session, PERM_USER_MANAGE)?;
 
         let name = input.name.trim();
-        let email = input.email.trim().to_lowercase();
+        let email = validate_email(&input.email)?;
+        validate_password(&input.password)?;
 
         if name.is_empty() {
             return Err(CoreError::Validation(
                 "Informe o nome do usuário.".to_string(),
             ));
-        }
-        if !email.contains('@') || email.len() < 5 {
-            return Err(CoreError::Validation(
-                "Informe um e-mail válido.".to_string(),
-            ));
-        }
-        if input.password.len() < MIN_PASSWORD_LEN {
-            return Err(CoreError::Validation(format!(
-                "A senha deve ter pelo menos {MIN_PASSWORD_LEN} caracteres."
-            )));
         }
 
         if self
@@ -718,6 +798,15 @@ impl CoreServices {
             .find_by_id(&session.tenant_id, &input.role_id)
             .await?
             .ok_or_else(|| CoreError::NotFound("Perfil de acesso não encontrado.".to_string()))?;
+
+        // Anti-escalada (B4): o perfil atribuído deve ter permissões contidas na sessão atual
+        for perm in &role.permissions {
+            if !session.has_permission(perm) {
+                return Err(CoreError::Forbidden(format!(
+                    "Não é permitido atribuir um perfil com permissões superiores às suas: '{perm}'"
+                )));
+            }
+        }
 
         let now = Utc::now().to_rfc3339();
         let password_hash = hash_secret(&input.password).await?;
@@ -769,16 +858,11 @@ impl CoreServices {
         self.check_session_and_permission(session, PERM_USER_MANAGE)?;
 
         let name = input.name.trim();
-        let email = input.email.trim().to_lowercase();
+        let email = validate_email(&input.email)?;
 
         if name.is_empty() {
             return Err(CoreError::Validation(
                 "Informe o nome do usuário.".to_string(),
-            ));
-        }
-        if !email.contains('@') || email.len() < 5 {
-            return Err(CoreError::Validation(
-                "Informe um e-mail válido.".to_string(),
             ));
         }
 
@@ -808,6 +892,15 @@ impl CoreServices {
             .find_by_id(&session.tenant_id, &input.role_id)
             .await?
             .ok_or_else(|| CoreError::NotFound("Perfil de acesso não encontrado.".to_string()))?;
+
+        // Anti-escalada (B4):
+        for perm in &new_role.permissions {
+            if !session.has_permission(perm) {
+                return Err(CoreError::Forbidden(format!(
+                    "Não é permitido atribuir um perfil com permissões superiores às suas: '{perm}'"
+                )));
+            }
+        }
 
         if target.role_slug == ROLE_SLUG_OWNER && target.active && new_role.slug != ROLE_SLUG_OWNER
         {
@@ -920,12 +1013,7 @@ impl CoreServices {
         input: &ResetPasswordInput,
     ) -> Result<()> {
         self.check_session_and_permission(session, PERM_USER_MANAGE)?;
-
-        if input.new_password.len() < MIN_PASSWORD_LEN {
-            return Err(CoreError::Validation(format!(
-                "A nova senha deve ter pelo menos {MIN_PASSWORD_LEN} caracteres."
-            )));
-        }
+        validate_password(&input.new_password)?;
 
         let target = self
             .stores
@@ -955,13 +1043,7 @@ impl CoreServices {
     }
 
     pub async fn list_roles(&self, session: &SessionInfo) -> Result<Vec<RoleWithPermissions>> {
-        self.verify_session_active(session)?;
-        if !session.has_permission(PERM_ROLE_READ)
-            && !session.has_permission(PERM_USER_READ)
-            && !session.has_permission(PERM_USER_MANAGE)
-        {
-            return Err(CoreError::Forbidden(PERM_ROLE_READ.to_string()));
-        }
+        self.check_session_and_permission(session, PERM_ROLE_READ)?;
         self.stores.roles.list_by_tenant(&session.tenant_id).await
     }
 

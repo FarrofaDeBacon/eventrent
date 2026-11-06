@@ -909,22 +909,44 @@ impl UserStore for SqliteStore {
         Ok(())
     }
 
-    async fn record_login_failure(
+    async fn increment_login_failure(
         &self,
         tenant_id: &str,
         user_id: &str,
-        failed_attempts: i32,
+        updated_at: &str,
+    ) -> Result<i32> {
+        let row = sqlx::query(
+            r#"
+            UPDATE app_user
+            SET failed_attempts = failed_attempts + 1, updated_at = ?
+            WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+            RETURNING failed_attempts
+            "#,
+        )
+        .bind(updated_at)
+        .bind(tenant_id)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_err)?;
+
+        Ok(row.get("failed_attempts"))
+    }
+
+    async fn set_login_lockout(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
         locked_until: Option<&str>,
         updated_at: &str,
     ) -> Result<()> {
         sqlx::query(
             r#"
             UPDATE app_user
-            SET failed_attempts = ?, locked_until = ?, updated_at = ?
+            SET locked_until = ?, updated_at = ?
             WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
             "#,
         )
-        .bind(failed_attempts)
         .bind(locked_until)
         .bind(updated_at)
         .bind(tenant_id)
@@ -936,23 +958,45 @@ impl UserStore for SqliteStore {
         Ok(())
     }
 
-    async fn record_recovery_failure(
+    async fn increment_recovery_failure(
         &self,
         tenant_id: &str,
         user_id: &str,
-        recovery_failed_attempts: i32,
-        recovery_locked_until: Option<&str>,
+        updated_at: &str,
+    ) -> Result<i32> {
+        let row = sqlx::query(
+            r#"
+            UPDATE app_user
+            SET recovery_failed_attempts = recovery_failed_attempts + 1, updated_at = ?
+            WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+            RETURNING recovery_failed_attempts
+            "#,
+        )
+        .bind(updated_at)
+        .bind(tenant_id)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_err)?;
+
+        Ok(row.get("recovery_failed_attempts"))
+    }
+
+    async fn set_recovery_lockout(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+        locked_until: Option<&str>,
         updated_at: &str,
     ) -> Result<()> {
         sqlx::query(
             r#"
             UPDATE app_user
-            SET recovery_failed_attempts = ?, recovery_locked_until = ?, updated_at = ?
+            SET recovery_locked_until = ?, updated_at = ?
             WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
             "#,
         )
-        .bind(recovery_failed_attempts)
-        .bind(recovery_locked_until)
+        .bind(locked_until)
         .bind(updated_at)
         .bind(tenant_id)
         .bind(user_id)
