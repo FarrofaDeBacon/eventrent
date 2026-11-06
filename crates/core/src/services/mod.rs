@@ -212,12 +212,19 @@ impl CoreServices {
     }
 
     pub fn verify_session_active(&self, session: &SessionInfo) -> Result<()> {
+        Self::verify_session_active_at(session, Utc::now())
+    }
+
+    /// Valida se a sessão expirou por inatividade contra um instante de referência.
+    /// Utilizado pela produção (`verify_session_active` com `Utc::now()`) e por testes
+    /// com relógio injetável sem sleeps reais.
+    pub fn verify_session_active_at(session: &SessionInfo, now: DateTime<Utc>) -> Result<()> {
         let last_activity = DateTime::parse_from_rfc3339(&session.last_activity_at)
             .map_err(|_| CoreError::Unauthorized("Timestamp de sessão inválido.".to_string()))?
             .with_timezone(&Utc);
 
         let timeout = Duration::minutes(i64::from(session.inactivity_timeout_minutes.max(1)));
-        if Utc::now() - last_activity > timeout {
+        if now - last_activity > timeout {
             return Err(CoreError::Unauthorized(
                 "Sessão expirada por inatividade.".to_string(),
             ));
