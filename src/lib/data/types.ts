@@ -127,6 +127,14 @@ export interface UpdateBrandingInput {
   logo_url?: string | null;
 }
 
+export interface PublicBranding {
+  company_name: string;
+  primary_color: string;
+  secondary_color: string;
+  accent_color: string;
+  logo_url: string | null;
+}
+
 /**
  * Catálogo de permissões `resource:action`.
  * Fonte única de verdade: `crates/core/src/domain/permission.rs`.

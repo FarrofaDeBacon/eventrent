@@ -5,6 +5,7 @@ import {
 } from "./mock-auth-repository";
 import {
   DEFAULT_COMPANY_NAME,
+  type PublicBranding,
   type TenantBranding,
   type UpdateBrandingInput,
 } from "./types";
@@ -29,6 +30,18 @@ export class MockBrandingRepository implements BrandingRepository {
         created_by: null,
       };
     }
+  }
+
+  async getPublicBranding(): Promise<PublicBranding | null> {
+    const current = this.isolatedBranding ?? getSharedMockState().branding;
+    if (!current) return null;
+    return {
+      company_name: current.company_name,
+      primary_color: current.primary_color,
+      secondary_color: current.secondary_color,
+      accent_color: current.accent_color,
+      logo_url: current.logo_url ?? null,
+    };
   }
 
   async getBranding(tenantId: string): Promise<TenantBranding | null> {
