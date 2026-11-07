@@ -1,5 +1,5 @@
 use crate::domain::{
-    CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput, OperationMode,
+    CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
     RecoverPasswordInput, ResetPasswordInput, SessionInfo, UpdateBrandingInput, UpdateUserInput,
     UserRecord, UserWithRole, ROLE_SLUG_COMMERCIAL, ROLE_SLUG_OWNER,
 };
@@ -209,6 +209,7 @@ pub async fn contract_user_creation_and_rbac(
                 email: "carlos@luzesom.com.br".to_string(),
                 password: "Carlos#2026".to_string(),
             },
+            &LoginPolicy::default(),
             30,
         )
         .await
@@ -250,6 +251,7 @@ pub async fn contract_user_creation_and_rbac(
                 email: "inexistente@luzesom.com.br".to_string(),
                 password: "SenhaQualquer#123".to_string(),
             },
+            &LoginPolicy::default(),
             30,
         )
         .await;
@@ -306,6 +308,7 @@ pub async fn contract_user_lockout(services: &CoreServices, tenant_id: &str) {
                     email: "carlos@luzesom.com.br".to_string(),
                     password: "SenhaErrada".to_string(),
                 },
+                &LoginPolicy::default(),
                 30,
             )
             .await;
@@ -315,12 +318,16 @@ pub async fn contract_user_lockout(services: &CoreServices, tenant_id: &str) {
         );
     }
 
+    // 5ª tentativa com política Desktop (reveal_account_locked: true) revela AccountLocked
     let fifth_attempt = services
         .login(
             tenant_id,
             &LoginInput {
                 email: "carlos@luzesom.com.br".to_string(),
                 password: "SenhaErrada".to_string(),
+            },
+            &LoginPolicy {
+                reveal_account_locked: true,
             },
             30,
         )
@@ -330,13 +337,35 @@ pub async fn contract_user_lockout(services: &CoreServices, tenant_id: &str) {
         Err(CoreError::AccountLocked { .. })
     ));
 
-    // Mesmo com a senha correta, enquanto bloqueado deve recusar com AccountLocked
+    // Com política de nuvem/padrão (reveal_account_locked: false), não revela o bloqueio (anti-enumeração e DoS)
+    let obscured_locked_try = services
+        .login(
+            tenant_id,
+            &LoginInput {
+                email: "carlos@luzesom.com.br".to_string(),
+                password: "Carlos#2026".to_string(),
+            },
+            &LoginPolicy {
+                reveal_account_locked: false,
+            },
+            30,
+        )
+        .await;
+    assert!(matches!(
+        obscured_locked_try,
+        Err(CoreError::InvalidCredentials)
+    ));
+
+    // Mesmo com a senha correta, enquanto bloqueado no desktop deve recusar com AccountLocked
     let locked_try = services
         .login(
             tenant_id,
             &LoginInput {
                 email: "carlos@luzesom.com.br".to_string(),
                 password: "Carlos#2026".to_string(),
+            },
+            &LoginPolicy {
+                reveal_account_locked: true,
             },
             30,
         )
@@ -369,6 +398,7 @@ pub async fn contract_password_reset_clears_lockout(
                 email: "carlos@luzesom.com.br".to_string(),
                 password: "NovaSenhaCarlos#2026".to_string(),
             },
+            &LoginPolicy::default(),
             30,
         )
         .await;
@@ -418,6 +448,7 @@ pub async fn contract_recovery_key_rotation_and_lockout(
                 email: "ana@luzesom.com.br".to_string(),
                 password: "AnaRecuperada#2026".to_string(),
             },
+            &LoginPolicy::default(),
             30,
         )
         .await;

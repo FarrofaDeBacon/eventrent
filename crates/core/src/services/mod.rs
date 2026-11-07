@@ -1,5 +1,5 @@
 use crate::domain::{
-    AuditLogEntry, CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput,
+    AuditLogEntry, CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy,
     OperationMode, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput, Role,
     RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput, UpdateUserInput,
     UserRecord, UserWithRole, PERM_BRANDING_MANAGE, PERM_ROLE_READ, PERM_USER_MANAGE,
@@ -510,6 +510,7 @@ impl CoreServices {
         &self,
         tenant_id: &str,
         input: &LoginInput,
+        policy: &LoginPolicy,
         inactivity_timeout_minutes: u32,
     ) -> Result<SessionInfo> {
         let email = input.email.trim().to_lowercase();
@@ -534,9 +535,15 @@ impl CoreServices {
         if let Some(ref locked_str) = user.locked_until {
             if let Ok(locked_dt) = DateTime::parse_from_rfc3339(locked_str) {
                 if locked_dt.with_timezone(&Utc) > now {
-                    return Err(CoreError::AccountLocked {
-                        locked_until: locked_str.clone(),
-                    });
+                    if policy.reveal_account_locked {
+                        return Err(CoreError::AccountLocked {
+                            locked_until: locked_str.clone(),
+                        });
+                    } else {
+                        // Política reveal_account_locked = false: executa hash fictício para tempo constante
+                        let _ = verify_secret(&input.password, DUMMY_ARGON2_HASH).await;
+                        return Err(CoreError::InvalidCredentials);
+                    }
                 }
             }
         }
@@ -573,9 +580,14 @@ impl CoreServices {
                     ),
                 )
                 .await?;
-                return Err(CoreError::AccountLocked {
-                    locked_until: until.clone(),
-                });
+
+                if policy.reveal_account_locked {
+                    return Err(CoreError::AccountLocked {
+                        locked_until: until.clone(),
+                    });
+                } else {
+                    return Err(CoreError::InvalidCredentials);
+                }
             }
 
             self.record_audit(

@@ -72,12 +72,26 @@ Enquanto a aplicação opera no modo local:
 
 ---
 
-## 5. Roadmap: Criptografia em Repouso (SQLCipher)
+## 6. Vetor de Negação de Serviço por Bloqueio de Conta e Requisitos da Fase 2.5 (Nuvem)
 
-A implementação de criptografia transparente em repouso no banco SQLite foi mapeada como item de arquitetura para decisões futuras:
+### 6.1 Análise de Ameaça: Negação de Serviço (DoS) via Bloqueio de Conta
 
-- **Pendência Registrada**: Avaliação de integração com **SQLCipher** (via `sqlx` com feature de encriptação ou biblioteca sidecar).
-- **Desafios a serem resolvidos**:
-  - Gerenciamento seguro da chave mestra de decodificação no cliente desktop (armazenamento em TPM / Windows Credential Manager / macOS Keychain / Linux Secret Service);
-  - Complexidade de compilação estática em múltiplos sistemas operacionais (cross-compilation no CI);
-  - Migração de dados entre o modo local SQLite puro e o futuro modo Nuvem PostgreSQL (Fase 2.5).
+O bloqueio de conta baseado exclusivamente em e-mail (`failed_attempts` e `locked_until`) introduz um vetor clássico de negação de serviço:
+
+- Um ator mal-intencionado (ou concorrente) que conheça o e-mail do Proprietário pode disparar propositalmente 5 tentativas incorretas de login, forçando o bloqueio da conta por 5 a 60 minutos e impedindo o acesso do usuário legítimo às operações da empresa.
+- No **Modo Local Desktop**, essa ameaça tem impacto mitigado porque o software roda em um computador físico controlado e a Chave de Recuperação permite redefinir a senha e zerar o bloqueio imediatamente. Por essa razão, a aplicação desktop local adota a política `LoginPolicy { reveal_account_locked: true }` para fornecer feedback claro ao operador.
+
+### 6.2 Política de Login Desacoplada (`LoginPolicy`)
+
+O núcleo do sistema (`crates/core`) adota como padrão estrito `reveal_account_locked: false`:
+
+- Quando `reveal_account_locked` é falso (recomendado para ambientes de rede/nuvem), tentativas de login contra uma conta temporariamente bloqueada **não revelam** o bloqueio. Em vez disso, o sistema executa a carga criptográfica completa de Argon2id contra a constante `DUMMY_ARGON2_HASH` e devolve genericamente `CoreError::InvalidCredentials`.
+- Essa política elimina qualquer canal lateral de enumeração de contas e reduz a atratividade de ataques de DoS por e-mail.
+
+### 6.3 Requisitos Mandatórios para a Fase 2.5 (Servidor Axum e PostgreSQL)
+
+Para a transição da nuvem na Fase 2.5, as seguintes salvaguardas serão obrigatórias:
+
+1. **Limitação de Taxa por IP e Dispositivo (Rate Limiting)**: O bloqueio e o throttling serão aplicados por endereço IP de origem e identificadores de dispositivo, evitando que requisições vindas de atacantes bloqueiem o acesso do usuário legítimo em seu IP corporativo/residencial.
+2. **Confiança Zero no Cliente**: O backend HTTP jamais aceitará estruturas `SessionInfo` originadas do frontend. A autenticação utilizará tokens de sessão opacos gerados e armazenados no servidor (ou cookies seguros `HttpOnly`, `SameSite=Strict`), com validação rigorosa de assinatura e revogação no banco.
+3. **Mecanismo de Desbloqueio e Alertas**: Disparo assíncrono de notificações transacionais por e-mail quando tentativas anômalas forem detectadas, permitindo desbloqueio seguro por link assinado sem depender exclusivamente do tempo de expiração.

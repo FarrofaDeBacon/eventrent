@@ -13,6 +13,6 @@ pub use permission::*;
 pub use role::{Role, RoleWithPermissions};
 pub use tenant::Tenant;
 pub use user::{
-    CreateUserInput, LoginInput, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput,
-    SessionInfo, UpdateUserInput, UserRecord, UserWithRole,
+    CreateUserInput, LoginInput, LoginPolicy, RecoverPasswordInput, RecoverPasswordResult,
+    ResetPasswordInput, SessionInfo, UpdateUserInput, UserRecord, UserWithRole,
 };
