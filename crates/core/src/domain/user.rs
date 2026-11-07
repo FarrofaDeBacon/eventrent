@@ -1,6 +1,22 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoginPolicy {
+    /// Se verdadeiro, revela se a conta está temporariamente bloqueada devolvendo `CoreError::AccountLocked`.
+    /// Se falso (padrão no core / recomendado para nuvem), não revela o bloqueio para evitar enumeração de contas
+    /// e ataques de enumeração/timing, executando a carga criptográfica do hash fictício e retornando `CoreError::InvalidCredentials`.
+    pub reveal_account_locked: bool,
+}
+
+impl Default for LoginPolicy {
+    fn default() -> Self {
+        Self {
+            reveal_account_locked: false,
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct UserRecord {
     pub id: String,
@@ -174,7 +190,20 @@ pub struct SessionInfo {
 }
 
 impl SessionInfo {
+    /// Verifica se a sessão possui a permissão requerida.
+    /// Regra de implicação estrutural: a permissão `<recurso>:manage` implica automaticamente `<recurso>:read`.
     pub fn has_permission(&self, perm: &str) -> bool {
-        self.permissions.iter().any(|p| p == perm)
+        if self.permissions.iter().any(|p| p == perm) {
+            return true;
+        }
+
+        if let Some(resource) = perm.strip_suffix(":read") {
+            let implied_manage = format!("{resource}:manage");
+            if self.permissions.iter().any(|p| p == &implied_manage) {
+                return true;
+            }
+        }
+
+        false
     }
 }

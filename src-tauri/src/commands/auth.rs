@@ -5,11 +5,16 @@ use tauri::State;
 #[tauri::command]
 pub async fn login(state: State<'_, AppState>, input: LoginInput) -> Result<SessionInfo, String> {
     let cfg = state.get_config()?;
+    // No app desktop local, a política permite revelar conta bloqueada para feedback direto ao operador
+    let policy = eventrent_core::LoginPolicy {
+        reveal_account_locked: true,
+    };
     let session = state
         .services
         .login(
             &state.default_tenant_id,
             &input,
+            &policy,
             cfg.inactivity_timeout_minutes,
         )
         .await

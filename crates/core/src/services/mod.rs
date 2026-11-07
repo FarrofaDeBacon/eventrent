@@ -1,9 +1,9 @@
 use crate::domain::{
-    AuditLogEntry, CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput,
+    AuditLogEntry, CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy,
     OperationMode, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput, Role,
     RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput, UpdateUserInput,
-    UserRecord, UserWithRole, PERM_BRANDING_MANAGE, PERM_ROLE_READ, PERM_USER_MANAGE,
-    PERM_USER_READ, ROLE_SLUG_OWNER, SYSTEM_ROLES,
+    UserRecord, UserWithRole, PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_ROLE_READ,
+    PERM_USER_MANAGE, PERM_USER_READ, ROLE_SLUG_OWNER, SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{BrandingStore, RoleStore, StoreBundle, TenantStore};
@@ -510,6 +510,7 @@ impl CoreServices {
         &self,
         tenant_id: &str,
         input: &LoginInput,
+        policy: &LoginPolicy,
         inactivity_timeout_minutes: u32,
     ) -> Result<SessionInfo> {
         let email = input.email.trim().to_lowercase();
@@ -534,9 +535,15 @@ impl CoreServices {
         if let Some(ref locked_str) = user.locked_until {
             if let Ok(locked_dt) = DateTime::parse_from_rfc3339(locked_str) {
                 if locked_dt.with_timezone(&Utc) > now {
-                    return Err(CoreError::AccountLocked {
-                        locked_until: locked_str.clone(),
-                    });
+                    if policy.reveal_account_locked {
+                        return Err(CoreError::AccountLocked {
+                            locked_until: locked_str.clone(),
+                        });
+                    } else {
+                        // Política reveal_account_locked = false: executa hash fictício para tempo constante
+                        let _ = verify_secret(&input.password, DUMMY_ARGON2_HASH).await;
+                        return Err(CoreError::InvalidCredentials);
+                    }
                 }
             }
         }
@@ -573,9 +580,14 @@ impl CoreServices {
                     ),
                 )
                 .await?;
-                return Err(CoreError::AccountLocked {
-                    locked_until: until.clone(),
-                });
+
+                if policy.reveal_account_locked {
+                    return Err(CoreError::AccountLocked {
+                        locked_until: until.clone(),
+                    });
+                } else {
+                    return Err(CoreError::InvalidCredentials);
+                }
             }
 
             self.record_audit(
@@ -1043,8 +1055,21 @@ impl CoreServices {
     }
 
     pub async fn list_roles(&self, session: &SessionInfo) -> Result<Vec<RoleWithPermissions>> {
-        self.check_session_and_permission(session, PERM_ROLE_READ)?;
+        self.verify_session_active(session)?;
+        if !session.has_permission(PERM_ROLE_READ) && !session.has_permission(PERM_USER_READ) {
+            return Err(CoreError::Forbidden(
+                "Permissão insuficiente: requer 'role:read' ou 'user:read'.".to_string(),
+            ));
+        }
         self.stores.roles.list_by_tenant(&session.tenant_id).await
+    }
+
+    pub async fn get_branding(&self, session: &SessionInfo) -> Result<Option<TenantBranding>> {
+        self.check_session_and_permission(session, PERM_BRANDING_READ)?;
+        self.stores
+            .branding
+            .get_by_tenant_id(&session.tenant_id)
+            .await
     }
 
     pub async fn save_branding(

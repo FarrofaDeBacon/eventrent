@@ -1,5 +1,5 @@
 use crate::domain::{
-    CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput, OperationMode,
+    CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
     RecoverPasswordInput, ResetPasswordInput, SessionInfo, UpdateBrandingInput, UpdateUserInput,
     UserRecord, UserWithRole, ROLE_SLUG_COMMERCIAL, ROLE_SLUG_OWNER,
 };
@@ -209,6 +209,7 @@ pub async fn contract_user_creation_and_rbac(
                 email: "carlos@luzesom.com.br".to_string(),
                 password: "Carlos#2026".to_string(),
             },
+            &LoginPolicy::default(),
             30,
         )
         .await
@@ -250,6 +251,7 @@ pub async fn contract_user_creation_and_rbac(
                 email: "inexistente@luzesom.com.br".to_string(),
                 password: "SenhaQualquer#123".to_string(),
             },
+            &LoginPolicy::default(),
             30,
         )
         .await;
@@ -306,6 +308,7 @@ pub async fn contract_user_lockout(services: &CoreServices, tenant_id: &str) {
                     email: "carlos@luzesom.com.br".to_string(),
                     password: "SenhaErrada".to_string(),
                 },
+                &LoginPolicy::default(),
                 30,
             )
             .await;
@@ -315,12 +318,16 @@ pub async fn contract_user_lockout(services: &CoreServices, tenant_id: &str) {
         );
     }
 
+    // 5ª tentativa com política Desktop (reveal_account_locked: true) revela AccountLocked
     let fifth_attempt = services
         .login(
             tenant_id,
             &LoginInput {
                 email: "carlos@luzesom.com.br".to_string(),
                 password: "SenhaErrada".to_string(),
+            },
+            &LoginPolicy {
+                reveal_account_locked: true,
             },
             30,
         )
@@ -330,13 +337,35 @@ pub async fn contract_user_lockout(services: &CoreServices, tenant_id: &str) {
         Err(CoreError::AccountLocked { .. })
     ));
 
-    // Mesmo com a senha correta, enquanto bloqueado deve recusar com AccountLocked
+    // Com política de nuvem/padrão (reveal_account_locked: false), não revela o bloqueio (anti-enumeração e DoS)
+    let obscured_locked_try = services
+        .login(
+            tenant_id,
+            &LoginInput {
+                email: "carlos@luzesom.com.br".to_string(),
+                password: "Carlos#2026".to_string(),
+            },
+            &LoginPolicy {
+                reveal_account_locked: false,
+            },
+            30,
+        )
+        .await;
+    assert!(matches!(
+        obscured_locked_try,
+        Err(CoreError::InvalidCredentials)
+    ));
+
+    // Mesmo com a senha correta, enquanto bloqueado no desktop deve recusar com AccountLocked
     let locked_try = services
         .login(
             tenant_id,
             &LoginInput {
                 email: "carlos@luzesom.com.br".to_string(),
                 password: "Carlos#2026".to_string(),
+            },
+            &LoginPolicy {
+                reveal_account_locked: true,
             },
             30,
         )
@@ -369,6 +398,7 @@ pub async fn contract_password_reset_clears_lockout(
                 email: "carlos@luzesom.com.br".to_string(),
                 password: "NovaSenhaCarlos#2026".to_string(),
             },
+            &LoginPolicy::default(),
             30,
         )
         .await;
@@ -418,6 +448,7 @@ pub async fn contract_recovery_key_rotation_and_lockout(
                 email: "ana@luzesom.com.br".to_string(),
                 password: "AnaRecuperada#2026".to_string(),
             },
+            &LoginPolicy::default(),
             30,
         )
         .await;
@@ -780,5 +811,37 @@ mod unit_tests {
         assert!(validate_email(".ponto-inicio@dominio.com").is_err());
         assert!(validate_email("ponto..duplo@dominio.com").is_err());
         assert!(validate_email("usuario@-hifen-inicio.com").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_dummy_argon2_hash_validity_and_params() {
+        use crate::services::{verify_secret, DUMMY_ARGON2_HASH};
+        use argon2::password_hash::PasswordHash;
+
+        // 1. O hash fictício deve ser sintaticamente válido segundo o padrão PHC
+        let parsed = PasswordHash::new(DUMMY_ARGON2_HASH)
+            .expect("DUMMY_ARGON2_HASH deve ser um hash PHC válido");
+
+        // 2. O algoritmo deve ser Argon2id
+        assert_eq!(parsed.algorithm.as_str(), "argon2id");
+
+        // 3. A versão do Argon2 deve ser 0x13 (19 decimal)
+        assert_eq!(parsed.version, Some(19));
+
+        // 4. Os parâmetros devem ser idênticos aos parâmetros de produção (OWASP):
+        // m = 19456 (19 MiB), t = 2 (iterações), p = 1 (grau de paralelismo)
+        let m_param = parsed.params.get("m").expect("Parâmetro 'm' ausente");
+        let t_param = parsed.params.get("t").expect("Parâmetro 't' ausente");
+        let p_param = parsed.params.get("p").expect("Parâmetro 'p' ausente");
+
+        assert_eq!(m_param.decimal().unwrap(), 19456);
+        assert_eq!(t_param.decimal().unwrap(), 2);
+        assert_eq!(p_param.decimal().unwrap(), 1);
+
+        // 5. A verificação criptográfica com qualquer senha deve executar a carga do Argon2id
+        // e retornar Ok(false) sem erro
+        let verification = verify_secret("senha_qualquer", DUMMY_ARGON2_HASH).await;
+        assert!(verification.is_ok());
+        assert!(!verification.unwrap());
     }
 }
