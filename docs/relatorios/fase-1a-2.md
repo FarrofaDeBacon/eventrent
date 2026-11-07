@@ -18,6 +18,7 @@ Esta foi a última rodada antes do congelamento definitivo das migrações `0001
 ## 2. Entregas Realizadas
 
 ### Grupo A: Testes e Guarda de Comandos
+
 - **A1. Relógio Único de Sessão**: Eliminada a função duplicada em `guards.rs`. O núcleo de domínio (`crates/core`) agora expõe `verify_session_active_at(&self, now: DateTime<Utc>)`, utilizada diretamente pela produção via `verify_session_active()`. Os testes unitários agora exercitam exatamente a lógica de produção, passando timestamps simulados e validando os limites precisos de 15 min (ativo), 30 min (limite exato) e 31 min (expirado).
 - **A2. Registro e Integridade Estrutural de Comandos**:
   - Implementado teste de contrato estrutural (`test_command_registry_matches_generate_handler_in_lib_rs`) que extrai programaticamente os comandos declarados no macro `tauri::generate_handler!` em `src-tauri/src/lib.rs` e valida paridade 1:1 com o `COMMAND_REGISTRY`.
@@ -25,6 +26,7 @@ Esta foi a última rodada antes do congelamento definitivo das migrações `0001
   - Testes garantem que qualquer comando não listado na whitelist pública obrigatoriamente passe pela guarda e exija sessão autenticada.
 
 ### Grupo B: Segurança no Core
+
 - **B1. Login Sem Enumeração de Usuários**: Quando um usuário não é encontrado ou está inativo, o serviço de autenticação executa `verify_secret` contra uma constante fictícia padronizada de Argon2id OWASP (`DUMMY_ARGON2_HASH`). Isso uniformiza a curva de tempo de resposta e previne ataques de timing e enumeração de credenciais.
 - **B2. Contadores de Falha Atômicos com `RETURNING`**: Novas operações de store (`increment_login_failure` e `increment_recovery_failure`) realizam o incremento atômico diretamente na instrução SQL `UPDATE` retornando o valor atualizado (`RETURNING failed_attempts`), eliminando janelas de corrida concorrentes.
 - **B3. Validação Estrita de Senha e E-mail**:
@@ -37,12 +39,14 @@ Esta foi a última rodada antes do congelamento definitivo das migrações `0001
 - **B8. Documentação Técnica da Chave de Recuperação**: Ajustado o comentário criptográfico da chave de recuperação para refletir a especificação técnica exata (80 bits de entropia CSPRNG com hashing Argon2id OWASP).
 
 ### Grupo C: Banco de Dados e Compatibilidade PostgreSQL
+
 - **C1. Renomeação para `app_user`**: Renomeada a tabela `user` para `app_user` em todo o código e na migração `0002_users_roles_and_audit.sql`, prevenindo colisões com palavras reservadas em dialetos SQL padrão (especialmente PostgreSQL).
 - **C2. Trilha de Auditoria Append-Only**: Removidas as colunas `updated_at` e `deleted_at` da tabela `audit_log`. A trait `AuditStore` não expõe métodos de mutação ou deleção, com teste de contrato atestando sua imutabilidade.
 - **C3. Índice em Relacionamento**: Adicionado índice `idx_app_user_role_id` em `app_user(role_id)`.
 - **C4. Mapeamento PostgreSQL no ADR-0007**: Registradas as diretrizes e diferenças arquiteturais para a Fase 2.5 (tipos booleanos nativos, timestamps com fuso horário, placeholders posicionais).
 
 ### Grupo D: Aplicação Desktop e CI
+
 - **D1. Branding Público Desacoplado**: Criado o comando `get_public_branding` (e método `get_public_branding` no repositório frontend), permitindo que telas pré-autenticação (`/setup` e `/login`) exibam a identidade visual (nome, cores e logo) da empresa sem demandar token de sessão.
 - **D2. Resiliência contra Mutex Envenenado**: O acesso ao estado global da aplicação (`AppState`) utiliza `lock().unwrap_or_else(PoisonError::into_inner)`, evitando falhas silenciosas ou travamento do desktop em caso de pânico anterior.
 - **D3. Gravação Atômica de Configuração**: O arquivo `config.json` agora é gravado utilizando um arquivo temporário intermediário (`config.json.tmp.<ts>`) seguido por renomeação atômica (`fs::rename`), prevenindo corrupção em quedas de energia. Teste unitário incluído.

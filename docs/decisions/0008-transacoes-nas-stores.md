@@ -9,9 +9,10 @@
 Atualmente, `crates/core` consome persistência via traits assíncronas desacopladas (`TenantStore`, `BrandingStore`, `RoleStore`, `UserStore`, `AuditStore`) agregadas em uma `StoreBundle`.
 
 Entretanto, fluxos de negócio críticos realizam múltiplas escritas correlacionadas sem garantia de atomicidade ACID:
+
 1. **Configuração Inicial (`complete_initial_setup`)**: Cria o tenant, salva branding inicial, cria o usuário proprietário e gera evento de auditoria. Caso a criação do usuário falhe, o tenant já persiste gravado.
 2. **Criação/Edição de Usuário e Segurança**: Criação de usuário seguida por inserção em `audit_log`. Se o sistema cair entre as duas chamadas, perde-se a rastreabilidade do evento.
-3. **Motor de Disponibilidade de Equipamentos (Fase 3)**: O requisito central da Fase 3 exige *“verificar disponibilidade de estoque e gravar a reserva na mesma transação”*, prevenindo race conditions e overbooking sob concorrência (especialmente no modo nuvem/PostgreSQL da Fase 2.5).
+3. **Motor de Disponibilidade de Equipamentos (Fase 3)**: O requisito central da Fase 3 exige _“verificar disponibilidade de estoque e gravar a reserva na mesma transação”_, prevenindo race conditions e overbooking sob concorrência (especialmente no modo nuvem/PostgreSQL da Fase 2.5).
 
 Com as traits atuais operando diretamente contra pools de conexão individuais, não há como compor operações de diferentes stores em uma única transação atômica gerenciada pelo serviço do `core`.
 
@@ -22,6 +23,7 @@ Com as traits atuais operando diretamente contra pools de conexão individuais, 
 ### Opção 1: Unit of Work (UoW) com Stores Transacionais (`TransactionManager`)
 
 Criação de uma abstração de transação no `crates/core`:
+
 ```rust
 #[async_trait]
 pub trait TransactionManager: Send + Sync {
@@ -54,6 +56,7 @@ pub trait TxStoreBundle: Send + Sync {
 ### Opção 2: Callback Transacional de Orquestração (`run_in_transaction`)
 
 Implementação de um runner no `crates/core` que recebe um closure assíncrono:
+
 ```rust
 #[async_trait]
 pub trait TransactionRunner: Send + Sync {
@@ -88,11 +91,11 @@ Evitar abstrações transacionais no `core` e criar métodos específicos nas tr
 
 ## Comparativo: SQLite vs PostgreSQL
 
-| Critério | SQLite (`crates/store-sqlite`) | PostgreSQL (`crates/store-postgres` - Fase 2.5) |
-| :--- | :--- | :--- |
-| **Concorrência de Escrita** | Um único escritor simultâneo por arquivo (`BEGIN IMMEDIATE`). Transações longas podem causar `SQLITE_BUSY`. | Concorrência multi-conexão com MVCC (Postgres suporta múltiplos escritores em linhas diferentes). |
-| **Níveis de Isolamento** | `SERIALIZABLE` inerente no modo WAL para escritores. | Configurável (`READ COMMITTED`, `REPEATABLE READ`, `SERIALIZABLE`). |
-| **Compatibilidade com Opção 1** | `sqlx::Transaction<'_, Sqlite>` implementa perfeitamente as traits dos stores. | `sqlx::Transaction<'_, Postgres>` implementa a mesma interface com suporte nativo a savepoints. |
+| Critério                        | SQLite (`crates/store-sqlite`)                                                                              | PostgreSQL (`crates/store-postgres` - Fase 2.5)                                                   |
+| :------------------------------ | :---------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------ |
+| **Concorrência de Escrita**     | Um único escritor simultâneo por arquivo (`BEGIN IMMEDIATE`). Transações longas podem causar `SQLITE_BUSY`. | Concorrência multi-conexão com MVCC (Postgres suporta múltiplos escritores em linhas diferentes). |
+| **Níveis de Isolamento**        | `SERIALIZABLE` inerente no modo WAL para escritores.                                                        | Configurável (`READ COMMITTED`, `REPEATABLE READ`, `SERIALIZABLE`).                               |
+| **Compatibilidade com Opção 1** | `sqlx::Transaction<'_, Sqlite>` implementa perfeitamente as traits dos stores.                              | `sqlx::Transaction<'_, Postgres>` implementa a mesma interface com suporte nativo a savepoints.   |
 
 ---
 
@@ -109,6 +112,7 @@ Evitar abstrações transacionais no `core` e criar métodos específicos nas tr
 Recomenda-se a **Opção 1 (Unit of Work com `TransactionManager` / `TxStoreBundle`)**, combinada com um helper ergonômico no core para garantir rollback automático em caso de erro.
 
 Essa abordagem:
+
 1. Mantém `crates/core` 100% puro e agnóstico de SQL.
 2. Resolve de forma limpa a atomicidade do setup inicial e auditoria.
 3. Prepara arquiteturalmente o sistema para o motor de disponibilidade e reservas em tempo real da Fase 3, atendendo tanto o SQLite local quanto o PostgreSQL do servidor Axum (Fase 2.5).
