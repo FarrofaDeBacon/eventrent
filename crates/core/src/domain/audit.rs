@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+/// Registro de auditoria append-only.
+/// Não possui `updated_at` nem `deleted_at` porque registros de auditoria
+/// nunca devem ser alterados ou excluídos (imutabilidade por design).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuditLogEntry {
     pub id: String,
@@ -10,7 +13,5 @@ pub struct AuditLogEntry {
     pub entity_id: String,
     pub summary: String,
     pub created_at: String,
-    pub updated_at: String,
-    pub deleted_at: Option<String>,
     pub created_by: Option<String>,
 }

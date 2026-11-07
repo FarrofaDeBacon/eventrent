@@ -1,7 +1,7 @@
 use crate::guards::require_session_and_permission;
 use crate::AppState;
 use eventrent_core::{
-    TenantBranding, UpdateBrandingInput, PERM_BRANDING_MANAGE, PERM_BRANDING_READ,
+    PublicBranding, TenantBranding, UpdateBrandingInput, PERM_BRANDING_MANAGE, PERM_BRANDING_READ,
 };
 use tauri::State;
 
@@ -14,6 +14,22 @@ fn resolve_tenant_id<'a>(state: &'a AppState, tenant_id: &'a str) -> &'a str {
     } else {
         tenant_id
     }
+}
+
+/// Comando público de identidade visual para telas pré-login (/login, /setup).
+#[tauri::command]
+pub async fn get_public_branding(
+    state: State<'_, AppState>,
+) -> Result<Option<PublicBranding>, String> {
+    let branding = state
+        .services
+        .stores
+        .branding
+        .get_by_tenant_id(&state.default_tenant_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(branding.map(PublicBranding::from))
 }
 
 #[tauri::command]

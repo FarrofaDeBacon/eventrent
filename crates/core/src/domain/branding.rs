@@ -24,3 +24,27 @@ pub struct UpdateBrandingInput {
     pub accent_color: String,
     pub logo_url: Option<String>,
 }
+
+/// Dados públicos de identidade visual (não sensíveis).
+/// Utilizados antes do login (telas de /login e /setup) para manter o white-label
+/// sem requerer sessão ou permissões de usuário.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PublicBranding {
+    pub company_name: String,
+    pub primary_color: String,
+    pub secondary_color: String,
+    pub accent_color: String,
+    pub logo_url: Option<String>,
+}
+
+impl From<TenantBranding> for PublicBranding {
+    fn from(b: TenantBranding) -> Self {
+        Self {
+            company_name: b.company_name,
+            primary_color: b.primary_color,
+            secondary_color: b.secondary_color,
+            accent_color: b.accent_color,
+            logo_url: b.logo_url,
+        }
+    }
+}

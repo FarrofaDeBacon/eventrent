@@ -15,6 +15,14 @@ Embora instruções SQL básicas possam ser escritas de forma semelhante entre S
 3. **Suíte Genérica de Testes de Contrato**:
    - `crates/core::testing::run_store_contract_suite` define uma suíte de testes agnóstica que recebe uma fábrica assíncrona de `StoreBundle` e valida todas as traits e regras de serviço.
    - Hoje a suíte é executada por `crates/store-sqlite` em memória; na Fase 2.5 será executada também por `crates/store-postgres`.
+4. **Diferenças Mapeadas para o PostgreSQL (Fase 2.5)**:
+   - **Tabela de Usuários**: Renomeada para `app_user` (evitando a palavra reservada `USER` no PostgreSQL).
+   - **Índices de Relacionamento**: Índice explícito em `app_user(role_id)` adicionado para otimizar joins e integridade referencial.
+   - **Tipos de Dados**:
+     - SQLite: `INTEGER 0/1` para booleanos, `TEXT` ISO 8601 para timestamps.
+     - PostgreSQL: `BOOLEAN` nativo (`TRUE`/`FALSE`), `TIMESTAMPTZ` nativo com fuso horário UTC.
+   - **Placeholders de Parâmetros**: `?` posicional no SQLite versus `$1, $2, ... $n` no PostgreSQL.
+   - **Auditoria Imutável**: Tabela `audit_log` padronizada como puramente append-only (sem colunas `updated_at` nem `deleted_at`), compatível com partições por data e políticas de retenção do PostgreSQL.
 
 ## Consequências
 

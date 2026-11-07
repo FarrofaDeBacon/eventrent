@@ -1,5 +1,4 @@
 use crate::AppState;
-use chrono::{DateTime, Duration, Utc};
 use eventrent_core::{
     SessionInfo, PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_ROLE_READ, PERM_USER_MANAGE,
     PERM_USER_READ,
@@ -14,7 +13,7 @@ pub struct CommandDefinition {
 }
 
 /// Registro centralizado e canônico de todos os comandos invocáveis do Tauri.
-/// Usado pela suíte de auditoria para garantir que nenhum comando privado deixe de passar pela guarda central.
+/// Usado pela suíte de auditoria para garantir sincronia estrita com generate_handler!.
 pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
     // Comandos públicos (pré-autenticação / ciclo de vida da sessão)
     CommandDefinition {
@@ -24,6 +23,11 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
     },
     CommandDefinition {
         name: "complete_initial_setup",
+        is_public: true,
+        required_permission: None,
+    },
+    CommandDefinition {
+        name: "get_public_branding",
         is_public: true,
         required_permission: None,
     },
@@ -47,7 +51,7 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
         is_public: true,
         required_permission: None,
     },
-    // Comandos protegidos por autenticação e RBAC
+    // Comandos protegidos por autenticação e RBAC (o core é a autoridade máxima)
     CommandDefinition {
         name: "get_branding",
         is_public: false,
@@ -90,23 +94,6 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
     },
 ];
 
-/// Valida se a sessão expirou por inatividade utilizando um relógio injetável (sem sleep).
-pub fn evaluate_session_inactivity(
-    last_activity_at: &str,
-    inactivity_timeout_minutes: u32,
-    now: DateTime<Utc>,
-) -> Result<(), String> {
-    let last_activity = DateTime::parse_from_rfc3339(last_activity_at)
-        .map_err(|e| format!("Timestamp de sessão inválido: {e}"))?
-        .with_timezone(&Utc);
-
-    let timeout = Duration::minutes(i64::from(inactivity_timeout_minutes.max(1)));
-    if now - last_activity > timeout {
-        return Err("Sessão expirada por inatividade.".to_string());
-    }
-    Ok(())
-}
-
 /// Guarda central única de autenticação e autorização RBAC para comandos Tauri.
 ///
 /// Todos os comandos não públicos obrigatoriamente passam por esta guarda.
@@ -133,6 +120,8 @@ pub fn require_session_and_permission(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{Duration, Utc};
+    use eventrent_core::CoreServices;
 
     #[test]
     fn test_all_non_public_commands_have_required_permissions() {
@@ -152,6 +141,7 @@ mod tests {
         let expected_public = [
             "get_app_status",
             "complete_initial_setup",
+            "get_public_branding",
             "login",
             "logout",
             "get_current_session",
@@ -170,59 +160,76 @@ mod tests {
     }
 
     #[test]
-    fn test_session_inactivity_expiration_with_injectable_clock() {
+    fn test_session_inactivity_expiration_uses_core_production_path() {
         let base_time = Utc::now();
         let timeout_minutes = 30;
-        let last_activity_at = base_time.to_rfc3339();
+        let session = SessionInfo {
+            user_id: "test-user".to_string(),
+            tenant_id: "test-tenant".to_string(),
+            name: "Test".to_string(),
+            email: "test@example.com".to_string(),
+            role_id: "role-1".to_string(),
+            role_name: "Admin".to_string(),
+            role_slug: "admin".to_string(),
+            permissions: vec![],
+            authenticated_at: base_time.to_rfc3339(),
+            last_activity_at: base_time.to_rfc3339(),
+            inactivity_timeout_minutes: timeout_minutes,
+        };
 
         // 1. Acesso 15 minutos depois: dentro do limite (OK)
-        let active_check = evaluate_session_inactivity(
-            &last_activity_at,
-            timeout_minutes,
-            base_time + Duration::minutes(15),
-        );
+        let active_check =
+            CoreServices::verify_session_active_at(&session, base_time + Duration::minutes(15));
         assert!(active_check.is_ok());
 
         // 2. Acesso 30 minutos depois: limite exato (OK)
-        let boundary_check = evaluate_session_inactivity(
-            &last_activity_at,
-            timeout_minutes,
-            base_time + Duration::minutes(30),
-        );
+        let boundary_check =
+            CoreServices::verify_session_active_at(&session, base_time + Duration::minutes(30));
         assert!(boundary_check.is_ok());
 
-        // 3. Acesso 31 minutos depois: expirou sem nenhum sleep real (ERRO)
-        let expired_check = evaluate_session_inactivity(
-            &last_activity_at,
-            timeout_minutes,
-            base_time + Duration::minutes(31),
-        );
+        // 3. Acesso 31 minutos depois: expirou no caminho real do core (ERRO)
+        let expired_check =
+            CoreServices::verify_session_active_at(&session, base_time + Duration::minutes(31));
         assert!(expired_check.is_err());
-        assert!(expired_check
-            .unwrap_err()
-            .contains("expirada por inatividade"));
     }
 
     #[test]
-    fn test_command_source_files_use_central_guard() {
-        // Auditoria estática: verifica que todos os arquivos de comando protegidos
-        // invocam `require_session_and_permission`.
-        let commands_dir = std::path::Path::new("src/commands");
-        if !commands_dir.exists() {
-            // Se executado da raiz do workspace
-            return;
-        }
+    fn test_command_registry_matches_generate_handler_in_lib_rs() {
+        // Validação estrutural estrita: extrai a lista do generate_handler! em src/lib.rs
+        // e falha se houver qualquer divergência em relação a COMMAND_REGISTRY.
+        let lib_path = std::path::Path::new("src/lib.rs");
+        let content = if lib_path.exists() {
+            std::fs::read_to_string(lib_path).expect("Falha ao ler src/lib.rs")
+        } else {
+            let alt_path = std::path::Path::new("src-tauri/src/lib.rs");
+            std::fs::read_to_string(alt_path).expect("Falha ao ler src-tauri/src/lib.rs")
+        };
 
-        let protected_files = ["users.rs", "branding.rs"];
-        for file in protected_files {
-            let path = commands_dir.join(file);
-            let content = std::fs::read_to_string(&path)
-                .unwrap_or_else(|_| panic!("Falha ao ler arquivo de comando {}", path.display()));
-            assert!(
-                content.contains("require_session_and_permission"),
-                "Arquivo {} deve utilizar a guarda central require_session_and_permission",
-                path.display()
-            );
-        }
+        let start_marker = "generate_handler![";
+        let start_pos = content
+            .find(start_marker)
+            .expect("generate_handler![ não encontrado em lib.rs")
+            + start_marker.len();
+        let end_pos = content[start_pos..]
+            .find(']')
+            .expect("Fechamento ] do generate_handler! não encontrado")
+            + start_pos;
+
+        let handler_block = &content[start_pos..end_pos];
+        let mut handler_commands: Vec<&str> = handler_block
+            .lines()
+            .map(|l| l.trim().trim_end_matches(','))
+            .filter(|l| !l.is_empty() && !l.starts_with("//"))
+            .map(|l| l.rsplit("::").next().unwrap_or(l))
+            .collect();
+        handler_commands.sort();
+
+        let mut registry_commands: Vec<&str> = COMMAND_REGISTRY.iter().map(|c| c.name).collect();
+        registry_commands.sort();
+
+        assert_eq!(
+            handler_commands, registry_commands,
+            "Divergência detectada entre generate_handler! e COMMAND_REGISTRY!"
+        );
     }
 }

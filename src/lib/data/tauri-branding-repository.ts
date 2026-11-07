@@ -1,8 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { BrandingRepository } from "./branding-repository";
-import type { TenantBranding, UpdateBrandingInput } from "./types";
+import type {
+  PublicBranding,
+  TenantBranding,
+  UpdateBrandingInput,
+} from "./types";
 
 export class TauriBrandingRepository implements BrandingRepository {
+  async getPublicBranding(): Promise<PublicBranding | null> {
+    return await invoke<PublicBranding | null>("get_public_branding");
+  }
+
   async getBranding(tenantId: string): Promise<TenantBranding | null> {
     return await invoke<TenantBranding | null>("get_branding", {
       tenantId,

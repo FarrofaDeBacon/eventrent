@@ -81,21 +81,34 @@ pub trait UserStore: Send + Sync {
         user_id: &str,
         login_at: &str,
     ) -> Result<()>;
-    async fn record_login_failure(
+    /// Incrementa atomicamente o contador de falhas de login em um único UPDATE e devolve o novo total.
+    async fn increment_login_failure(
         &self,
         tenant_id: &str,
         user_id: &str,
-        failed_attempts: i32,
+        updated_at: &str,
+    ) -> Result<i32>;
+    /// Define o bloqueio temporário de login do usuário.
+    async fn set_login_lockout(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
         locked_until: Option<&str>,
         updated_at: &str,
     ) -> Result<()>;
-    /// Registra falha de uso da chave de recuperação com backoff exponencial separado do login.
-    async fn record_recovery_failure(
+    /// Incrementa atomicamente o contador de falhas da chave de recuperação em um único UPDATE e devolve o novo total.
+    async fn increment_recovery_failure(
         &self,
         tenant_id: &str,
         user_id: &str,
-        recovery_failed_attempts: i32,
-        recovery_locked_until: Option<&str>,
+        updated_at: &str,
+    ) -> Result<i32>;
+    /// Define o bloqueio temporário da chave de recuperação do usuário.
+    async fn set_recovery_lockout(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+        locked_until: Option<&str>,
         updated_at: &str,
     ) -> Result<()>;
     /// Atualiza senha, zera contadores de bloqueio (login e recuperação) e grava novo hash da chave de recuperação.

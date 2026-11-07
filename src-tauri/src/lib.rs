@@ -7,7 +7,7 @@ use eventrent_core::{
 };
 use eventrent_store_sqlite::{init_db, SqliteStore};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, PoisonError};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tracing_appender::non_blocking::WorkerGuard;
@@ -26,28 +26,24 @@ pub struct AppState {
 
 impl AppState {
     pub fn get_config(&self) -> Result<AppConfig, String> {
-        self.config
-            .lock()
-            .map(|c| c.clone())
-            .map_err(|_| "Falha ao acessar estado de configuração.".to_string())
+        let guard = self.config.lock().unwrap_or_else(PoisonError::into_inner);
+        Ok(guard.clone())
     }
 
     pub fn save_config(&self, new_cfg: &AppConfig) -> Result<(), String> {
         save_app_config_file(&self.config_path, new_cfg)?;
-        if let Ok(mut guard) = self.config.lock() {
-            *guard = new_cfg.clone();
-        }
+        let mut guard = self.config.lock().unwrap_or_else(PoisonError::into_inner);
+        *guard = new_cfg.clone();
         Ok(())
     }
 
     pub fn set_session(&self, session: Option<SessionInfo>) {
-        if let Ok(mut guard) = self.session.lock() {
-            *guard = session;
-        }
+        let mut guard = self.session.lock().unwrap_or_else(PoisonError::into_inner);
+        *guard = session;
     }
 
     pub fn touch_and_get_session(&self) -> Option<SessionInfo> {
-        let mut guard = self.session.lock().ok()?;
+        let mut guard = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         let current = guard.as_mut()?;
 
         if self.services.verify_session_active(current).is_err() {
@@ -87,15 +83,41 @@ pub fn load_or_create_app_config(config_path: &Path) -> Result<AppConfig, String
     })
 }
 
+/// Grava o arquivo config.json de forma atômica (arquivo temporário + rename).
+/// Previne corrupção de arquivo caso ocorra queda de energia ou terminação abrupta durante a escrita.
 pub fn save_app_config_file(config_path: &Path, config: &AppConfig) -> Result<(), String> {
     let serialized = serde_json::to_string_pretty(config)
         .map_err(|e| format!("Falha ao serializar config.json: {e}"))?;
-    std::fs::write(config_path, serialized).map_err(|e| {
+
+    let parent = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let temp_file = parent.join(format!(
+        ".config.json.tmp.{}",
+        Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+
+    std::fs::write(&temp_file, &serialized).map_err(|e| {
         format!(
-            "Falha ao gravar arquivo de configuração ({}): {e}",
+            "Falha ao gravar arquivo temporário de configuração ({}): {e}",
+            temp_file.display()
+        )
+    })?;
+
+    #[cfg(windows)]
+    {
+        if config_path.exists() {
+            let _ = std::fs::remove_file(config_path);
+        }
+    }
+
+    std::fs::rename(&temp_file, config_path).map_err(|e| {
+        let _ = std::fs::remove_file(&temp_file);
+        format!(
+            "Falha ao mover arquivo temporário para configuração final ({}): {e}",
             config_path.display()
         )
-    })
+    })?;
+
+    Ok(())
 }
 
 fn init_logging(log_dir: &Path) {
@@ -207,15 +229,19 @@ async fn initialize_app(app_handle: &AppHandle) -> Result<(AppState, PathBuf), (
         )
     })?;
 
-    ensure_system_roles(&default_tenant_id, store_bundle.roles.as_ref())
-        .await
-        .map_err(|e| {
-            tracing::error!("Erro crítico ao garantir perfis de sistema: {}", e);
-            (
-                format!("Falha ao inicializar perfis de permissão do sistema: {e}"),
-                log_dir_display.clone(),
-            )
-        })?;
+    ensure_system_roles(
+        &default_tenant_id,
+        store_bundle.roles.as_ref(),
+        Some(store_bundle.audit.as_ref()),
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("Erro crítico ao garantir perfis de sistema: {}", e);
+        (
+            format!("Falha ao inicializar perfis de permissão do sistema: {e}"),
+            log_dir_display.clone(),
+        )
+    })?;
 
     tracing::info!(
         "Banco SQLite, tenant padrão ({}) e perfis de sistema verificados com sucesso",
@@ -264,8 +290,6 @@ pub fn run() {
                             let _ = window.hide();
                         }
 
-                        // Usa `.show(...)` não bloqueante em vez de `.blocking_show()` para não
-                        // causar deadlock na thread principal antes do início do event loop.
                         let exit_handle = app_handle.clone();
                         app_handle
                             .dialog()
@@ -287,6 +311,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::setup::get_app_status,
             commands::setup::complete_initial_setup,
+            commands::branding::get_public_branding,
             commands::auth::login,
             commands::auth::logout,
             commands::auth::get_current_session,
@@ -304,5 +329,35 @@ pub fn run() {
 
     if let Err(e) = app_result {
         tracing::error!("Aplicação Tauri encerrada com erro: {}", e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_save_app_config_file_atomic() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "eventrent_cfg_test_{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let cfg_path = temp_dir.join("config.json");
+
+        let cfg = AppConfig {
+            mode: Some(eventrent_core::OperationMode::Local),
+            setup_completed: true,
+            inactivity_timeout_minutes: 45,
+        };
+
+        save_app_config_file(&cfg_path, &cfg).unwrap();
+        assert!(cfg_path.exists());
+
+        let loaded = load_or_create_app_config(&cfg_path).unwrap();
+        assert_eq!(loaded.inactivity_timeout_minutes, 45);
+        assert!(loaded.setup_completed);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

@@ -558,7 +558,7 @@ impl UserStore for SqliteStore {
                    role_id, active, last_login_at, failed_attempts, locked_until,
                    recovery_failed_attempts, recovery_locked_until,
                    created_at, updated_at, deleted_at, created_by
-            FROM user
+            FROM app_user
             WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
             LIMIT 1
             "#,
@@ -600,7 +600,7 @@ impl UserStore for SqliteStore {
                    role_id, active, last_login_at, failed_attempts, locked_until,
                    recovery_failed_attempts, recovery_locked_until,
                    created_at, updated_at, deleted_at, created_by
-            FROM user
+            FROM app_user
             WHERE tenant_id = ? AND email = ? AND deleted_at IS NULL
             LIMIT 1
             "#,
@@ -642,7 +642,7 @@ impl UserStore for SqliteStore {
                    r.name AS role_name, r.slug AS role_slug,
                    u.active, u.last_login_at, u.failed_attempts, u.locked_until,
                    u.created_at, u.updated_at, u.deleted_at, u.created_by
-            FROM user u
+            FROM app_user u
             INNER JOIN role r ON r.id = u.role_id AND r.deleted_at IS NULL
             WHERE u.tenant_id = ? AND u.id = ? AND u.deleted_at IS NULL
             LIMIT 1
@@ -689,7 +689,7 @@ impl UserStore for SqliteStore {
                    r.name AS role_name, r.slug AS role_slug,
                    u.active, u.last_login_at, u.failed_attempts, u.locked_until,
                    u.created_at, u.updated_at, u.deleted_at, u.created_by
-            FROM user u
+            FROM app_user u
             INNER JOIN role r ON r.id = u.role_id AND r.deleted_at IS NULL
             WHERE u.tenant_id = ? AND u.deleted_at IS NULL
             ORDER BY u.created_at ASC
@@ -732,7 +732,7 @@ impl UserStore for SqliteStore {
         let row = sqlx::query(
             r#"
             SELECT COUNT(*) AS cnt
-            FROM user u
+            FROM app_user u
             INNER JOIN role r ON r.id = u.role_id AND r.deleted_at IS NULL
             WHERE u.tenant_id = ?
               AND u.deleted_at IS NULL
@@ -753,7 +753,7 @@ impl UserStore for SqliteStore {
         let row = sqlx::query(
             r#"
             SELECT COUNT(*) AS cnt
-            FROM user
+            FROM app_user
             WHERE tenant_id = ? AND deleted_at IS NULL
             "#,
         )
@@ -768,7 +768,7 @@ impl UserStore for SqliteStore {
     async fn create(&self, user: &UserRecord) -> Result<UserWithRole> {
         sqlx::query(
             r#"
-            INSERT INTO user (
+            INSERT INTO app_user (
                 id, tenant_id, name, email, password_hash, recovery_key_hash,
                 role_id, active, last_login_at, failed_attempts, locked_until,
                 recovery_failed_attempts, recovery_locked_until,
@@ -813,7 +813,7 @@ impl UserStore for SqliteStore {
     ) -> Result<UserWithRole> {
         sqlx::query(
             r#"
-            UPDATE user
+            UPDATE app_user
             SET name = ?, email = ?, role_id = ?, updated_at = ?
             WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
             "#,
@@ -842,7 +842,7 @@ impl UserStore for SqliteStore {
     ) -> Result<UserWithRole> {
         sqlx::query(
             r#"
-            UPDATE user
+            UPDATE app_user
             SET active = ?, updated_at = ?
             WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
             "#,
@@ -869,7 +869,7 @@ impl UserStore for SqliteStore {
     ) -> Result<()> {
         sqlx::query(
             r#"
-            UPDATE user
+            UPDATE app_user
             SET password_hash = ?, failed_attempts = 0, locked_until = NULL, updated_at = ?
             WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
             "#,
@@ -893,7 +893,7 @@ impl UserStore for SqliteStore {
     ) -> Result<()> {
         sqlx::query(
             r#"
-            UPDATE user
+            UPDATE app_user
             SET last_login_at = ?, failed_attempts = 0, locked_until = NULL, updated_at = ?
             WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
             "#,
@@ -909,22 +909,44 @@ impl UserStore for SqliteStore {
         Ok(())
     }
 
-    async fn record_login_failure(
+    async fn increment_login_failure(
         &self,
         tenant_id: &str,
         user_id: &str,
-        failed_attempts: i32,
+        updated_at: &str,
+    ) -> Result<i32> {
+        let row = sqlx::query(
+            r#"
+            UPDATE app_user
+            SET failed_attempts = failed_attempts + 1, updated_at = ?
+            WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+            RETURNING failed_attempts
+            "#,
+        )
+        .bind(updated_at)
+        .bind(tenant_id)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_err)?;
+
+        Ok(row.get("failed_attempts"))
+    }
+
+    async fn set_login_lockout(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
         locked_until: Option<&str>,
         updated_at: &str,
     ) -> Result<()> {
         sqlx::query(
             r#"
-            UPDATE user
-            SET failed_attempts = ?, locked_until = ?, updated_at = ?
+            UPDATE app_user
+            SET locked_until = ?, updated_at = ?
             WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
             "#,
         )
-        .bind(failed_attempts)
         .bind(locked_until)
         .bind(updated_at)
         .bind(tenant_id)
@@ -936,23 +958,45 @@ impl UserStore for SqliteStore {
         Ok(())
     }
 
-    async fn record_recovery_failure(
+    async fn increment_recovery_failure(
         &self,
         tenant_id: &str,
         user_id: &str,
-        recovery_failed_attempts: i32,
-        recovery_locked_until: Option<&str>,
+        updated_at: &str,
+    ) -> Result<i32> {
+        let row = sqlx::query(
+            r#"
+            UPDATE app_user
+            SET recovery_failed_attempts = recovery_failed_attempts + 1, updated_at = ?
+            WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+            RETURNING recovery_failed_attempts
+            "#,
+        )
+        .bind(updated_at)
+        .bind(tenant_id)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_err)?;
+
+        Ok(row.get("recovery_failed_attempts"))
+    }
+
+    async fn set_recovery_lockout(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+        locked_until: Option<&str>,
         updated_at: &str,
     ) -> Result<()> {
         sqlx::query(
             r#"
-            UPDATE user
-            SET recovery_failed_attempts = ?, recovery_locked_until = ?, updated_at = ?
+            UPDATE app_user
+            SET recovery_locked_until = ?, updated_at = ?
             WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
             "#,
         )
-        .bind(recovery_failed_attempts)
-        .bind(recovery_locked_until)
+        .bind(locked_until)
         .bind(updated_at)
         .bind(tenant_id)
         .bind(user_id)
@@ -973,7 +1017,7 @@ impl UserStore for SqliteStore {
     ) -> Result<()> {
         sqlx::query(
             r#"
-            UPDATE user
+            UPDATE app_user
             SET password_hash = ?,
                 recovery_key_hash = ?,
                 failed_attempts = 0,
@@ -1004,8 +1048,8 @@ impl AuditStore for SqliteStore {
             r#"
             INSERT INTO audit_log (
                 id, tenant_id, actor_user_id, action, entity_type,
-                entity_id, summary, created_at, updated_at, deleted_at, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                entity_id, summary, created_at, created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&entry.id)
@@ -1016,8 +1060,6 @@ impl AuditStore for SqliteStore {
         .bind(&entry.entity_id)
         .bind(&entry.summary)
         .bind(&entry.created_at)
-        .bind(&entry.updated_at)
-        .bind(&entry.deleted_at)
         .bind(&entry.created_by)
         .execute(&self.pool)
         .await
@@ -1030,9 +1072,9 @@ impl AuditStore for SqliteStore {
         let rows = sqlx::query(
             r#"
             SELECT id, tenant_id, actor_user_id, action, entity_type,
-                   entity_id, summary, created_at, updated_at, deleted_at, created_by
+                   entity_id, summary, created_at, created_by
             FROM audit_log
-            WHERE tenant_id = ? AND deleted_at IS NULL
+            WHERE tenant_id = ?
             ORDER BY created_at DESC
             LIMIT ?
             "#,
@@ -1054,8 +1096,6 @@ impl AuditStore for SqliteStore {
                 entity_id: r.get("entity_id"),
                 summary: r.get("summary"),
                 created_at: r.get("created_at"),
-                updated_at: r.get("updated_at"),
-                deleted_at: r.get("deleted_at"),
                 created_by: r.get("created_by"),
             })
             .collect())

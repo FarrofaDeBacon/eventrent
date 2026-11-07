@@ -13,6 +13,7 @@ jobs:
   quality:
     name: Check & Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -69,6 +70,15 @@ jobs:
 
       - name: Testes Unitários Frontend (Vitest)
         run: pnpm test:run
+
+      - name: Cache dos Navegadores Playwright
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
 
       - name: Instalar navegador Playwright (Linux)
         if: runner.os == 'Linux'

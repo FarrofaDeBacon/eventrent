@@ -33,17 +33,64 @@ pub async fn contract_default_seeds(stores: &StoreBundle) -> String {
     tenant_id
 }
 
-/// 2. Contrato: Idempotência de ensure_system_roles (5 perfis de sistema com permissões granulares).
+/// 2. Contrato: Idempotência de ensure_system_roles (5 perfis de sistema com permissões granulares e reparo com auditoria).
 pub async fn contract_system_roles(stores: &StoreBundle, tenant_id: &str) {
-    let roles = ensure_system_roles(tenant_id, stores.roles.as_ref())
-        .await
-        .expect("Falha em ensure_system_roles");
+    let roles = ensure_system_roles(
+        tenant_id,
+        stores.roles.as_ref(),
+        Some(stores.audit.as_ref()),
+    )
+    .await
+    .expect("Falha em ensure_system_roles");
     assert_eq!(roles.len(), 5);
 
-    let roles_again = ensure_system_roles(tenant_id, stores.roles.as_ref())
-        .await
-        .expect("Segunda chamada a ensure_system_roles falhou");
+    let roles_again = ensure_system_roles(
+        tenant_id,
+        stores.roles.as_ref(),
+        Some(stores.audit.as_ref()),
+    )
+    .await
+    .expect("Segunda chamada a ensure_system_roles falhou");
     assert_eq!(roles_again.len(), 5);
+
+    // B5: Simula adulteração de permissões para validar detecção por conjunto e auditoria
+    let comm_role = roles
+        .iter()
+        .find(|r| r.slug == ROLE_SLUG_COMMERCIAL)
+        .expect("Perfil comercial deve existir");
+    let now = chrono::Utc::now().to_rfc3339();
+    stores
+        .roles
+        .set_permissions(
+            tenant_id,
+            &comm_role.id,
+            &["branding:read".to_string()],
+            &now,
+        )
+        .await
+        .expect("Falha ao adulterar permissões para teste");
+
+    let repaired = ensure_system_roles(
+        tenant_id,
+        stores.roles.as_ref(),
+        Some(stores.audit.as_ref()),
+    )
+    .await
+    .expect("Falha ao reparar perfis divergentes");
+    let repaired_comm = repaired
+        .iter()
+        .find(|r| r.slug == ROLE_SLUG_COMMERCIAL)
+        .unwrap();
+    assert_eq!(repaired_comm.permissions.len(), 8);
+
+    let audits = stores
+        .audit
+        .list_by_tenant(tenant_id, 10)
+        .await
+        .expect("Falha ao buscar auditoria");
+    assert!(audits
+        .iter()
+        .any(|a| a.action == "role.system_permissions_repaired"));
 }
 
 /// 3. Contrato: Setup inicial da conta do Proprietário (modo Local) e geração de Chave de Recuperação.
@@ -194,6 +241,57 @@ pub async fn contract_user_creation_and_rbac(
         )
         .await;
     assert!(matches!(forbidden_branding, Err(CoreError::Forbidden(_))));
+
+    // B1: Login com usuário inexistente devolve InvalidCredentials sem revelar existência
+    let non_existent_login = services
+        .login(
+            tenant_id,
+            &LoginInput {
+                email: "inexistente@luzesom.com.br".to_string(),
+                password: "SenhaQualquer#123".to_string(),
+            },
+            30,
+        )
+        .await;
+    assert!(matches!(
+        non_existent_login,
+        Err(CoreError::InvalidCredentials)
+    ));
+
+    // B4: Anti-escalada: Usuário com user:manage mas sem permissões de proprietário não pode criar proprietário
+    let limited_manager_session = SessionInfo {
+        user_id: "limited-manager-id".to_string(),
+        tenant_id: tenant_id.to_string(),
+        name: "Gerente Limitado".to_string(),
+        email: "gerente@luzesom.com.br".to_string(),
+        role_id: "limited-role-id".to_string(),
+        role_name: "Gerente Limitado".to_string(),
+        role_slug: "manager".to_string(),
+        permissions: vec!["user:read".to_string(), "user:manage".to_string()],
+        authenticated_at: chrono::Utc::now().to_rfc3339(),
+        last_activity_at: chrono::Utc::now().to_rfc3339(),
+        inactivity_timeout_minutes: 30,
+    };
+    let owner_role = services
+        .stores
+        .roles
+        .find_by_slug(tenant_id, ROLE_SLUG_OWNER)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let escalate_attempt = services
+        .create_user(
+            &limited_manager_session,
+            &CreateUserInput {
+                name: "Novo Dono Ilegitimo".to_string(),
+                email: "ilegitimo@luzesom.com.br".to_string(),
+                password: "SenhaForte#2026".to_string(),
+                role_id: owner_role.id.clone(),
+            },
+        )
+        .await;
+    assert!(matches!(escalate_attempt, Err(CoreError::Forbidden(_))));
 
     (commercial_user, commercial_session)
 }
@@ -521,5 +619,166 @@ mod unit_tests {
         assert_eq!(calculate_lockout_seconds(7), 1200);
         assert_eq!(calculate_lockout_seconds(8), 3600);
         assert_eq!(calculate_lockout_seconds(15), 3600);
+    }
+
+    #[test]
+    fn test_debug_redacts_sensitive_fields() {
+        use crate::domain::{
+            CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput, OperationMode,
+            RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput, SessionInfo,
+            TenantBranding, UserRecord,
+        };
+
+        let secret_pwd = "SuperSecretPassword#2026";
+        let secret_key = "ER-ABCD-EFGH-JKLM-NPQR";
+
+        let login = LoginInput {
+            email: "teste@eventrent.com".to_string(),
+            password: secret_pwd.to_string(),
+        };
+        let login_debug = format!("{login:?}");
+        assert!(!login_debug.contains(secret_pwd));
+        assert!(login_debug.contains("[REDACTED]"));
+
+        let create = CreateUserInput {
+            name: "Usuario".to_string(),
+            email: "u@e.com".to_string(),
+            password: secret_pwd.to_string(),
+            role_id: "role-1".to_string(),
+        };
+        let create_debug = format!("{create:?}");
+        assert!(!create_debug.contains(secret_pwd));
+        assert!(create_debug.contains("[REDACTED]"));
+
+        let reset = ResetPasswordInput {
+            new_password: secret_pwd.to_string(),
+        };
+        let reset_debug = format!("{reset:?}");
+        assert!(!reset_debug.contains(secret_pwd));
+        assert!(reset_debug.contains("[REDACTED]"));
+
+        let recover = RecoverPasswordInput {
+            email: "u@e.com".to_string(),
+            recovery_key: secret_key.to_string(),
+            new_password: secret_pwd.to_string(),
+        };
+        let recover_debug = format!("{recover:?}");
+        assert!(!recover_debug.contains(secret_pwd));
+        assert!(!recover_debug.contains(secret_key));
+        assert!(recover_debug.contains("[REDACTED]"));
+
+        let recover_res = RecoverPasswordResult {
+            new_recovery_key: secret_key.to_string(),
+        };
+        let recover_res_debug = format!("{recover_res:?}");
+        assert!(!recover_res_debug.contains(secret_key));
+        assert!(recover_res_debug.contains("[REDACTED]"));
+
+        let setup = InitialSetupInput {
+            mode: OperationMode::Local,
+            company_name: "Empresa".to_string(),
+            owner_name: "Dono".to_string(),
+            owner_email: "dono@e.com".to_string(),
+            owner_password: secret_pwd.to_string(),
+        };
+        let setup_debug = format!("{setup:?}");
+        assert!(!setup_debug.contains(secret_pwd));
+        assert!(setup_debug.contains("[REDACTED]"));
+
+        let setup_res = InitialSetupResult {
+            tenant_id: "t1".to_string(),
+            recovery_key: secret_key.to_string(),
+            session: SessionInfo {
+                user_id: "u1".to_string(),
+                tenant_id: "t1".to_string(),
+                name: "Dono".to_string(),
+                email: "dono@e.com".to_string(),
+                role_id: "r1".to_string(),
+                role_name: "Proprietário".to_string(),
+                role_slug: "owner".to_string(),
+                permissions: vec![],
+                authenticated_at: "2026-01-01T00:00:00Z".to_string(),
+                last_activity_at: "2026-01-01T00:00:00Z".to_string(),
+                inactivity_timeout_minutes: 30,
+            },
+            branding: TenantBranding {
+                id: "b1".to_string(),
+                tenant_id: "t1".to_string(),
+                company_name: "Empresa".to_string(),
+                primary_color: "#000".to_string(),
+                secondary_color: "#000".to_string(),
+                accent_color: "#000".to_string(),
+                logo_url: None,
+                favicon_url: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                deleted_at: None,
+                created_by: None,
+            },
+        };
+        let setup_res_debug = format!("{setup_res:?}");
+        assert!(!setup_res_debug.contains(secret_key));
+        assert!(setup_res_debug.contains("[REDACTED]"));
+
+        let user_rec = UserRecord {
+            id: "u1".to_string(),
+            tenant_id: "t1".to_string(),
+            name: "Dono".to_string(),
+            email: "dono@e.com".to_string(),
+            password_hash: "$argon2id$secret_hash_value".to_string(),
+            recovery_key_hash: Some("$argon2id$secret_key_hash_value".to_string()),
+            role_id: "r1".to_string(),
+            active: true,
+            last_login_at: None,
+            failed_attempts: 0,
+            locked_until: None,
+            recovery_failed_attempts: 0,
+            recovery_locked_until: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            deleted_at: None,
+            created_by: None,
+        };
+        let user_rec_debug = format!("{user_rec:?}");
+        assert!(!user_rec_debug.contains("secret_hash_value"));
+        assert!(!user_rec_debug.contains("secret_key_hash_value"));
+        assert!(user_rec_debug.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_password_and_email_validation() {
+        use crate::services::{validate_email, validate_password};
+
+        // Senhas: mínimo 8 e máximo 128 caracteres (contagem Unicode)
+        assert!(validate_password("1234567").is_err());
+        assert!(validate_password("12345678").is_ok());
+
+        let exactly_128_chars = "a".repeat(128);
+        assert!(validate_password(&exactly_128_chars).is_ok());
+
+        let too_long_129 = "a".repeat(129);
+        assert!(validate_password(&too_long_129).is_err());
+
+        // Contagem de caracteres vs bytes (Unicode com acentos e emojis)
+        // Cada caractere especial conta como 1 caractere, não 2-4 bytes
+        let unicode_8_chars = "café☕123";
+        assert_eq!(unicode_8_chars.chars().count(), 8);
+        assert!(validate_password(unicode_8_chars).is_ok());
+
+        // E-mails válidos
+        assert!(validate_email("usuario@dominio.com").is_ok());
+        assert!(validate_email("user.name+tag@sub.empresa.com.br").is_ok());
+
+        // E-mails inválidos (RFC 5321 edge cases)
+        assert!(validate_email("").is_err());
+        assert!(validate_email("sem-arroba.com").is_err());
+        assert!(validate_email("dois@@arrobas.com").is_err());
+        assert!(validate_email("@sem-local.com").is_err());
+        assert!(validate_email("local@").is_err());
+        assert!(validate_email("local@sem-tld").is_err());
+        assert!(validate_email("local@.ponto-no-inicio.com").is_err());
+        assert!(validate_email(".ponto-inicio@dominio.com").is_err());
+        assert!(validate_email("ponto..duplo@dominio.com").is_err());
+        assert!(validate_email("usuario@-hifen-inicio.com").is_err());
     }
 }

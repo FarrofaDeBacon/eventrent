@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MockBrandingRepository } from "./mock-branding-repository";
+import { resetSharedMockState } from "./mock-auth-repository";
 import type { BrandingRepository } from "./branding-repository";
 import { DEFAULT_COMPANY_NAME } from "./types";
 
@@ -8,6 +9,7 @@ describe("BrandingRepository (Data Layer Port & Adapter)", () => {
   const tenantId = "018f0000-0000-7000-8000-000000000001";
 
   beforeEach(() => {
+    resetSharedMockState();
     repository = new MockBrandingRepository();
   });
 
@@ -38,6 +40,15 @@ describe("BrandingRepository (Data Layer Port & Adapter)", () => {
     const reloaded = await repository.getBranding(tenantId);
     expect(reloaded?.company_name).toBe("Som & Iluminação Prime");
     expect(reloaded?.primary_color).toBe("#10b981");
+  });
+
+  it("deve carregar o branding público sem requerer autenticação", async () => {
+    const publicBranding = await repository.getPublicBranding();
+    expect(publicBranding).not.toBeNull();
+    expect(publicBranding?.company_name).toBe(DEFAULT_COMPANY_NAME);
+    expect(publicBranding?.primary_color).toBe("#2563eb");
+    expect(publicBranding?.secondary_color).toBe("#475569");
+    expect(publicBranding?.accent_color).toBe("#7c3aed");
   });
 
   it("deve retornar null para tenant inexistente", async () => {
