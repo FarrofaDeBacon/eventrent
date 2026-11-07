@@ -86,6 +86,7 @@ impl SqliteStore {
             roles: arc.clone(),
             users: arc.clone(),
             audit: arc,
+            tx_manager: None,
         }
     }
 

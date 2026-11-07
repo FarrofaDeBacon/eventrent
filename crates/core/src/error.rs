@@ -15,6 +15,9 @@ pub enum CoreError {
     #[error("Conflito de registro: {0}")]
     Conflict(String),
 
+    #[error("Conflito transitório de concorrência: {0}")]
+    TransientConflict(String),
+
     #[error("Registro não encontrado: {0}")]
     NotFound(String),
 

@@ -2,7 +2,7 @@ use crate::domain::{
     AuditLogEntry, Role, RoleWithPermissions, Tenant, TenantBranding, UpdateBrandingInput,
     UserRecord, UserWithRole,
 };
-use crate::error::Result;
+use crate::error::{CoreError, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -135,4 +135,78 @@ pub struct StoreBundle {
     pub roles: Arc<dyn RoleStore>,
     pub users: Arc<dyn UserStore>,
     pub audit: Arc<dyn AuditStore>,
+    pub tx_manager: Option<Arc<dyn TransactionManager>>,
+}
+
+#[async_trait]
+pub trait TransactionManager: Send + Sync {
+    async fn begin_transaction(&self) -> Result<Box<dyn TxStoreBundle>>;
+}
+
+#[async_trait]
+pub trait TxStoreBundle: Send + Sync {
+    fn tenants(&self) -> &dyn TenantStore;
+    fn branding(&self) -> &dyn BrandingStore;
+    fn roles(&self) -> &dyn RoleStore;
+    fn users(&self) -> &dyn UserStore;
+    fn audit(&self) -> &dyn AuditStore;
+
+    async fn commit(self: Box<Self>) -> Result<()>;
+    async fn rollback(self: Box<Self>) -> Result<()>;
+}
+
+#[derive(Debug, Clone)]
+pub struct TransactionPolicy {
+    pub max_retries: u32,
+    pub initial_backoff_ms: u64,
+}
+
+impl Default for TransactionPolicy {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            initial_backoff_ms: 25,
+        }
+    }
+}
+
+/// Executa um closure assíncrono dentro de uma transação atômica gerenciada por `TransactionManager`.
+///
+/// Garantias:
+/// 1. Commit automático quando o closure retornar `Ok(T)`.
+/// 2. Rollback automático quando o closure retornar `Err(E)` ou ocorrer pânico (RAII/Drop).
+/// 3. Nova tentativa automática com backoff exponencial quando o erro for `CoreError::TransientConflict`
+///    (ex.: SQLITE_BUSY / lock contention sob concorrência).
+pub async fn run_in_tx<F, Fut, T>(
+    manager: &dyn TransactionManager,
+    policy: &TransactionPolicy,
+    f: F,
+) -> Result<T>
+where
+    F: Fn(&dyn TxStoreBundle) -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let mut attempt = 0;
+    loop {
+        let tx = manager.begin_transaction().await?;
+        match f(tx.as_ref()).await {
+            Ok(res) => {
+                tx.commit().await?;
+                return Ok(res);
+            }
+            Err(err) => {
+                let is_transient = matches!(err, CoreError::TransientConflict(_));
+                let _ = tx.rollback().await;
+
+                if is_transient && attempt < policy.max_retries {
+                    attempt += 1;
+                    let backoff = policy.initial_backoff_ms * (1 << (attempt - 1));
+                    tokio::time::sleep(tokio::time::Duration::from_millis(backoff)).await;
+                    continue;
+                }
+
+                return Err(err);
+            }
+        }
+    }
 }
