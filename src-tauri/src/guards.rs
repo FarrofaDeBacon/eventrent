@@ -1,15 +1,11 @@
 use crate::AppState;
-use eventrent_core::{
-    SessionInfo, PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_ROLE_READ, PERM_USER_MANAGE,
-    PERM_USER_READ,
-};
+use eventrent_core::SessionInfo;
 
 /// Definição formal de comando registrado no runtime Tauri.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandDefinition {
     pub name: &'static str,
     pub is_public: bool,
-    pub required_permission: Option<&'static str>,
 }
 
 /// Registro centralizado e canônico de todos os comandos invocáveis do Tauri.
@@ -19,102 +15,77 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
     CommandDefinition {
         name: "get_app_status",
         is_public: true,
-        required_permission: None,
     },
     CommandDefinition {
         name: "complete_initial_setup",
         is_public: true,
-        required_permission: None,
     },
     CommandDefinition {
         name: "get_public_branding",
         is_public: true,
-        required_permission: None,
     },
     CommandDefinition {
         name: "login",
         is_public: true,
-        required_permission: None,
     },
     CommandDefinition {
         name: "logout",
         is_public: true,
-        required_permission: None,
     },
     CommandDefinition {
         name: "get_current_session",
         is_public: true,
-        required_permission: None,
     },
     CommandDefinition {
         name: "recover_password",
         is_public: true,
-        required_permission: None,
     },
-    // Comandos protegidos por autenticação e RBAC (o core é a autoridade máxima)
+    // Comandos protegidos por autenticação (o core é a autoridade única de permissões)
     CommandDefinition {
         name: "get_branding",
         is_public: false,
-        required_permission: Some(PERM_BRANDING_READ),
     },
     CommandDefinition {
         name: "save_branding",
         is_public: false,
-        required_permission: Some(PERM_BRANDING_MANAGE),
     },
     CommandDefinition {
         name: "list_users",
         is_public: false,
-        required_permission: Some(PERM_USER_READ),
     },
     CommandDefinition {
         name: "create_user",
         is_public: false,
-        required_permission: Some(PERM_USER_MANAGE),
     },
     CommandDefinition {
         name: "update_user",
         is_public: false,
-        required_permission: Some(PERM_USER_MANAGE),
     },
     CommandDefinition {
         name: "set_user_active",
         is_public: false,
-        required_permission: Some(PERM_USER_MANAGE),
     },
     CommandDefinition {
         name: "reset_user_password",
         is_public: false,
-        required_permission: Some(PERM_USER_MANAGE),
     },
     CommandDefinition {
         name: "list_roles",
         is_public: false,
-        required_permission: Some(PERM_ROLE_READ),
     },
 ];
 
-/// Guarda central única de autenticação e autorização RBAC para comandos Tauri.
+/// Guarda central de autenticação para comandos protegidos do Tauri.
 ///
 /// Todos os comandos não públicos obrigatoriamente passam por esta guarda.
 /// Ela garante:
 /// 1. Existência de sessão ativa;
 /// 2. Validação de expiração por inatividade;
-/// 3. Atualização automática do timestamp de última atividade (touch);
-/// 4. Verificação estrita da permissão exigida via RBAC.
-pub fn require_session_and_permission(
-    state: &AppState,
-    required_permission: Option<&str>,
-) -> Result<SessionInfo, String> {
-    let session = state.require_session()?;
-
-    if let Some(perm) = required_permission {
-        if !session.has_permission(perm) {
-            return Err(format!("Permissão insuficiente: requer '{perm}'."));
-        }
-    }
-
-    Ok(session)
+/// 3. Atualização automática do timestamp de última atividade (touch).
+///
+/// Nota: A autoridade e validação de permissões RBAC pertencem exclusivamente ao Core.
+pub fn require_session(state: &AppState) -> Result<SessionInfo, String> {
+    state.require_session()
 }
 
 #[cfg(test)]
@@ -124,12 +95,42 @@ mod tests {
     use eventrent_core::CoreServices;
 
     #[test]
-    fn test_all_non_public_commands_have_required_permissions() {
+    fn test_all_protected_commands_call_require_session_guard() {
+        let commands_dir = std::path::Path::new("src/commands");
+        let commands_path = if commands_dir.exists() {
+            commands_dir.to_path_buf()
+        } else {
+            std::path::Path::new("src-tauri/src/commands").to_path_buf()
+        };
+
+        let mut all_code = String::new();
+        for entry in std::fs::read_dir(&commands_path).expect("Falha ao ler diretório de comandos")
+        {
+            let entry = entry.expect("Entrada inválida");
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+                let code = std::fs::read_to_string(&path).expect("Falha ao ler arquivo de comando");
+                all_code.push_str(&code);
+                all_code.push('\n');
+            }
+        }
+
         for cmd in COMMAND_REGISTRY {
             if !cmd.is_public {
+                let fn_pattern = format!("pub async fn {}(", cmd.name);
+                let fn_pos = all_code.find(&fn_pattern).unwrap_or_else(|| {
+                    panic!(
+                        "Handler para comando protegido '{}' não encontrado em {:?}",
+                        cmd.name, commands_path
+                    )
+                });
+                let slice = &all_code[fn_pos..];
+                let fn_end = slice.find("}\n").unwrap_or(slice.len());
+                let body = &slice[..fn_end];
+
                 assert!(
-                    cmd.required_permission.is_some(),
-                    "Comando protegido '{}' deve definir uma permissão obrigatória",
+                    body.contains("require_session(&state)"),
+                    "Comando protegido '{}' não invoca a guarda require_session(&state)!",
                     cmd.name
                 );
             }

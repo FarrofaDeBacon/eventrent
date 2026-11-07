@@ -190,7 +190,20 @@ pub struct SessionInfo {
 }
 
 impl SessionInfo {
+    /// Verifica se a sessão possui a permissão requerida.
+    /// Regra de implicação estrutural: a permissão `<recurso>:manage` implica automaticamente `<recurso>:read`.
     pub fn has_permission(&self, perm: &str) -> bool {
-        self.permissions.iter().any(|p| p == perm)
+        if self.permissions.iter().any(|p| p == perm) {
+            return true;
+        }
+
+        if let Some(resource) = perm.strip_suffix(":read") {
+            let implied_manage = format!("{resource}:manage");
+            if self.permissions.iter().any(|p| p == &implied_manage) {
+                return true;
+            }
+        }
+
+        false
     }
 }
