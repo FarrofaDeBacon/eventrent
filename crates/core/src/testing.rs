@@ -781,4 +781,36 @@ mod unit_tests {
         assert!(validate_email("ponto..duplo@dominio.com").is_err());
         assert!(validate_email("usuario@-hifen-inicio.com").is_err());
     }
+
+    #[tokio::test]
+    async fn test_dummy_argon2_hash_validity_and_params() {
+        use crate::services::{verify_secret, DUMMY_ARGON2_HASH};
+        use argon2::password_hash::PasswordHash;
+
+        // 1. O hash fictício deve ser sintaticamente válido segundo o padrão PHC
+        let parsed = PasswordHash::new(DUMMY_ARGON2_HASH)
+            .expect("DUMMY_ARGON2_HASH deve ser um hash PHC válido");
+
+        // 2. O algoritmo deve ser Argon2id
+        assert_eq!(parsed.algorithm.as_str(), "argon2id");
+
+        // 3. A versão do Argon2 deve ser 0x13 (19 decimal)
+        assert_eq!(parsed.version, Some(19));
+
+        // 4. Os parâmetros devem ser idênticos aos parâmetros de produção (OWASP):
+        // m = 19456 (19 MiB), t = 2 (iterações), p = 1 (grau de paralelismo)
+        let m_param = parsed.params.get("m").expect("Parâmetro 'm' ausente");
+        let t_param = parsed.params.get("t").expect("Parâmetro 't' ausente");
+        let p_param = parsed.params.get("p").expect("Parâmetro 'p' ausente");
+
+        assert_eq!(m_param.decimal().unwrap(), 19456);
+        assert_eq!(t_param.decimal().unwrap(), 2);
+        assert_eq!(p_param.decimal().unwrap(), 1);
+
+        // 5. A verificação criptográfica com qualquer senha deve executar a carga do Argon2id
+        // e retornar Ok(false) sem erro
+        let verification = verify_secret("senha_qualquer", DUMMY_ARGON2_HASH).await;
+        assert!(verification.is_ok());
+        assert!(!verification.unwrap());
+    }
 }
