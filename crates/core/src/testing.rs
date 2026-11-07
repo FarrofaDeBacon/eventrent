@@ -35,22 +35,14 @@ pub async fn contract_default_seeds(stores: &StoreBundle) -> String {
 
 /// 2. Contrato: Idempotência de ensure_system_roles (5 perfis de sistema com permissões granulares e reparo com auditoria).
 pub async fn contract_system_roles(stores: &StoreBundle, tenant_id: &str) {
-    let roles = ensure_system_roles(
-        tenant_id,
-        stores.roles.as_ref(),
-        Some(stores.audit.as_ref()),
-    )
-    .await
-    .expect("Falha em ensure_system_roles");
+    let roles = ensure_system_roles(tenant_id, stores.roles.as_ref(), stores.audit.as_ref())
+        .await
+        .expect("Falha em ensure_system_roles");
     assert_eq!(roles.len(), 5);
 
-    let roles_again = ensure_system_roles(
-        tenant_id,
-        stores.roles.as_ref(),
-        Some(stores.audit.as_ref()),
-    )
-    .await
-    .expect("Segunda chamada a ensure_system_roles falhou");
+    let roles_again = ensure_system_roles(tenant_id, stores.roles.as_ref(), stores.audit.as_ref())
+        .await
+        .expect("Segunda chamada a ensure_system_roles falhou");
     assert_eq!(roles_again.len(), 5);
 
     // B5: Simula adulteração de permissões para validar detecção por conjunto e auditoria
@@ -70,13 +62,9 @@ pub async fn contract_system_roles(stores: &StoreBundle, tenant_id: &str) {
         .await
         .expect("Falha ao adulterar permissões para teste");
 
-    let repaired = ensure_system_roles(
-        tenant_id,
-        stores.roles.as_ref(),
-        Some(stores.audit.as_ref()),
-    )
-    .await
-    .expect("Falha ao reparar perfis divergentes");
+    let repaired = ensure_system_roles(tenant_id, stores.roles.as_ref(), stores.audit.as_ref())
+        .await
+        .expect("Falha ao reparar perfis divergentes");
     let repaired_comm = repaired
         .iter()
         .find(|r| r.slug == ROLE_SLUG_COMMERCIAL)

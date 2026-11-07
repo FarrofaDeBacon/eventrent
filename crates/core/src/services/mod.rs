@@ -229,7 +229,7 @@ pub async fn ensure_default_tenant(
 pub async fn ensure_system_roles(
     tenant_id: &str,
     roles: &dyn RoleStore,
-    audit: Option<&dyn crate::store::AuditStore>,
+    audit: &dyn crate::store::AuditStore,
 ) -> Result<Vec<RoleWithPermissions>> {
     let now = Utc::now().to_rfc3339();
 
@@ -246,23 +246,21 @@ pub async fn ensure_system_roles(
                     .set_permissions(tenant_id, &existing.id, &perms, &now)
                     .await?;
 
-                if let Some(audit_store) = audit {
-                    let entry = AuditLogEntry {
-                        id: Uuid::now_v7().to_string(),
-                        tenant_id: tenant_id.to_string(),
-                        actor_user_id: None,
-                        action: "role.system_permissions_repaired".to_string(),
-                        entity_type: "role".to_string(),
-                        entity_id: existing.id.clone(),
-                        summary: format!(
-                            "Permissões do perfil de sistema '{}' sincronizadas com o catálogo canônico",
-                            spec.name
-                        ),
-                        created_at: now.clone(),
-                        created_by: None,
-                    };
-                    let _ = audit_store.append(&entry).await;
-                }
+                let entry = AuditLogEntry {
+                    id: Uuid::now_v7().to_string(),
+                    tenant_id: tenant_id.to_string(),
+                    actor_user_id: None,
+                    action: "role.system_permissions_repaired".to_string(),
+                    entity_type: "role".to_string(),
+                    entity_id: existing.id.clone(),
+                    summary: format!(
+                        "Permissões do perfil de sistema '{}' sincronizadas com o catálogo canônico",
+                        spec.name
+                    ),
+                    created_at: now.clone(),
+                    created_by: None,
+                };
+                audit.append(&entry).await?;
             }
         } else {
             let role = Role {
@@ -422,7 +420,7 @@ impl CoreServices {
         ensure_system_roles(
             tenant_id,
             self.stores.roles.as_ref(),
-            Some(self.stores.audit.as_ref()),
+            self.stores.audit.as_ref(),
         )
         .await?;
 

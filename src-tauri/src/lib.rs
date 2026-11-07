@@ -253,7 +253,7 @@ async fn initialize_app(app_handle: &AppHandle) -> Result<(AppState, PathBuf), (
     ensure_system_roles(
         &default_tenant_id,
         store_bundle.roles.as_ref(),
-        Some(store_bundle.audit.as_ref()),
+        store_bundle.audit.as_ref(),
     )
     .await
     .map_err(|e| {
