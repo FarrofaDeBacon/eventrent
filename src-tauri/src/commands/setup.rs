@@ -31,7 +31,7 @@ pub async fn get_app_status(state: State<'_, AppState>) -> Result<AppStatus, Str
         .get_by_tenant_id(&state.default_tenant_id)
         .await
         .map_err(|e| e.to_string())?;
-    let session = state.touch_and_get_session();
+    let session = state.get_session_without_touch();
 
     Ok(AppStatus {
         config,

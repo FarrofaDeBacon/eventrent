@@ -34,7 +34,7 @@ pub async fn logout(state: State<'_, AppState>) -> Result<(), String> {
 pub async fn get_current_session(
     state: State<'_, AppState>,
 ) -> Result<Option<SessionInfo>, String> {
-    Ok(state.touch_and_get_session())
+    Ok(state.get_session_without_touch())
 }
 
 #[tauri::command]
