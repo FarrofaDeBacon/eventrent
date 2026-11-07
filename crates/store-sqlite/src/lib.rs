@@ -1211,6 +1211,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_audit_log_triggers_abort_update_and_delete() {
+        let pool = init_memory_db()
+            .await
+            .expect("Falha ao criar banco SQLite em memória");
+        let store = SqliteStore::new(pool.clone()).into_bundle();
+        let tenant_id = contract_default_seeds(&store).await;
+
+        let entry = AuditLogEntry {
+            id: Uuid::now_v7().to_string(),
+            tenant_id: tenant_id.clone(),
+            actor_user_id: None,
+            action: "test.event".to_string(),
+            entity_type: "test".to_string(),
+            entity_id: "123".to_string(),
+            summary: "Registro original imutável".to_string(),
+            created_at: Utc::now().to_rfc3339(),
+            created_by: None,
+        };
+        store
+            .audit
+            .append(&entry)
+            .await
+            .expect("Falha ao inserir auditoria");
+
+        // 1. Tentar fazer UPDATE direto via SQL deve falhar pelo trigger
+        let update_res = sqlx::query("UPDATE audit_log SET summary = 'adulterado' WHERE id = ?")
+            .bind(&entry.id)
+            .execute(&pool)
+            .await;
+        assert!(
+            update_res.is_err(),
+            "Trigger de UPDATE em audit_log deve abortar a transação"
+        );
+        let update_err = update_res.unwrap_err().to_string();
+        assert!(
+            update_err.contains("audit_log é append-only: UPDATE não permitido"),
+            "Erro inesperado no trigger de UPDATE: {update_err}"
+        );
+
+        // 2. Tentar fazer DELETE direto via SQL deve falhar pelo trigger
+        let delete_res = sqlx::query("DELETE FROM audit_log WHERE id = ?")
+            .bind(&entry.id)
+            .execute(&pool)
+            .await;
+        assert!(
+            delete_res.is_err(),
+            "Trigger de DELETE em audit_log deve abortar a transação"
+        );
+        let delete_err = delete_res.unwrap_err().to_string();
+        assert!(
+            delete_err.contains("audit_log é append-only: DELETE não permitido"),
+            "Erro inesperado no trigger de DELETE: {delete_err}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_contract_unique_partial_indexes() {
         let store = create_isolated_store().await;
         let tenant_id = contract_default_seeds(&store).await;
