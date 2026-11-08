@@ -25,7 +25,7 @@ pub async fn get_public_branding(
         .branding
         .get_by_tenant_id(&state.default_tenant_id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::map_core_err)?;
 
     Ok(branding.map(PublicBranding::from))
 }
@@ -40,7 +40,7 @@ pub async fn get_branding(
         .services
         .get_branding(&session)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::map_core_err)
 }
 
 #[tauri::command]
@@ -55,5 +55,5 @@ pub async fn save_branding(
         .services
         .save_branding(&session, &input)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::map_core_err)
 }

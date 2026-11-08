@@ -12,7 +12,7 @@ pub async fn list_users(state: State<'_, AppState>) -> Result<Vec<UserWithRole>,
         .services
         .list_users(&session)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::map_core_err)
 }
 
 #[tauri::command]
@@ -25,7 +25,7 @@ pub async fn create_user(
         .services
         .create_user(&session, &input)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::map_core_err)
 }
 
 #[tauri::command]
@@ -39,7 +39,7 @@ pub async fn update_user(
         .services
         .update_user(&session, &user_id, &input)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::map_core_err)
 }
 
 #[tauri::command]
@@ -53,7 +53,7 @@ pub async fn set_user_active(
         .services
         .set_user_active(&session, &user_id, active)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::map_core_err)
 }
 
 #[tauri::command]
@@ -67,7 +67,7 @@ pub async fn reset_user_password(
         .services
         .reset_user_password(&session, &user_id, &input)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::map_core_err)
 }
 
 #[tauri::command]
@@ -77,5 +77,5 @@ pub async fn list_roles(state: State<'_, AppState>) -> Result<Vec<RoleWithPermis
         .services
         .list_roles(&session)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::map_core_err)
 }

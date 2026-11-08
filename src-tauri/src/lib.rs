@@ -82,6 +82,15 @@ impl AppState {
     }
 }
 
+pub fn map_core_err(err: eventrent_core::CoreError) -> String {
+    match &err {
+        eventrent_core::CoreError::TransientConflict(msg) => {
+            format!("O sistema está temporariamente ocupado processando outra operação concorrente ({msg}). Por favor, tente novamente em instantes.")
+        }
+        _ => err.to_string(),
+    }
+}
+
 pub fn load_or_create_app_config(config_path: &Path) -> Result<AppConfig, String> {
     if !config_path.exists() {
         let default_cfg = AppConfig::default();

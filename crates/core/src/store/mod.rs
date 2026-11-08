@@ -170,6 +170,11 @@ impl Default for TransactionPolicy {
     }
 }
 
+use std::future::Future;
+use std::pin::Pin;
+
+pub type TxBoxFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
+
 /// Executa um closure assíncrono dentro de uma transação atômica gerenciada por `TransactionManager`.
 ///
 /// Garantias:
@@ -177,14 +182,13 @@ impl Default for TransactionPolicy {
 /// 2. Rollback automático quando o closure retornar `Err(E)` ou ocorrer pânico (RAII/Drop).
 /// 3. Nova tentativa automática com backoff exponencial quando o erro for `CoreError::TransientConflict`
 ///    (ex.: SQLITE_BUSY / lock contention sob concorrência).
-pub async fn run_in_tx<F, Fut, T>(
+pub async fn run_in_tx<F, T>(
     manager: &dyn TransactionManager,
     policy: &TransactionPolicy,
     f: F,
 ) -> Result<T>
 where
-    F: Fn(&dyn TxStoreBundle) -> Fut,
-    Fut: std::future::Future<Output = Result<T>>,
+    F: for<'a> Fn(&'a dyn TxStoreBundle) -> TxBoxFuture<'a, T>,
 {
     let mut attempt = 0;
     loop {

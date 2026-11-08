@@ -18,7 +18,7 @@ pub async fn login(state: State<'_, AppState>, input: LoginInput) -> Result<Sess
             cfg.inactivity_timeout_minutes,
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::map_core_err)?;
 
     state.set_session(Some(session.clone()));
     Ok(session)
@@ -46,5 +46,5 @@ pub async fn recover_password(
         .services
         .recover_password(&state.default_tenant_id, &input)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::map_core_err)
 }

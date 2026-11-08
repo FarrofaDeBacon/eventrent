@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use eventrent_core::{
-    AuditLogEntry, AuditStore, BrandingStore, CoreError, Result, Role, RoleStore,
-    RoleWithPermissions, StoreBundle, Tenant, TenantBranding, TenantStore, UpdateBrandingInput,
-    UserRecord, UserStore, UserWithRole,
+    run_in_tx, AuditLogEntry, AuditStore, BrandingStore, CoreError, Result, Role, RoleStore,
+    RoleWithPermissions, StoreBundle, Tenant, TenantBranding, TenantStore, TransactionManager,
+    TransactionPolicy, TxStoreBundle, UpdateBrandingInput, UserRecord, UserStore, UserWithRole,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, Row, Sqlite};
@@ -15,7 +15,28 @@ use uuid::Uuid;
 pub type DbPool = Pool<Sqlite>;
 
 fn map_sqlx_err(err: sqlx::Error) -> CoreError {
-    CoreError::Database(err.to_string())
+    match &err {
+        sqlx::Error::Database(db_err) => {
+            if let Some(code) = db_err.code() {
+                if code == "5" || code == "6" || code == "261" || code == "517" {
+                    return CoreError::TransientConflict(format!(
+                        "SQLite ocupado ou bloqueado (código {code}): {}",
+                        db_err.message()
+                    ));
+                }
+            }
+            let msg = db_err.message();
+            let lower = msg.to_lowercase();
+            if lower.contains("busy") || lower.contains("locked") {
+                return CoreError::TransientConflict(format!("SQLite conflito de concorrência: {msg}"));
+            }
+            CoreError::Database(err.to_string())
+        }
+        sqlx::Error::PoolTimedOut => {
+            CoreError::TransientConflict("Timeout ao adquirir conexão do pool".to_string())
+        }
+        _ => CoreError::Database(err.to_string()),
+    }
 }
 
 /// Inicializa o banco de dados SQLite em arquivo usando `SqliteConnectOptions::new().filename(path)`,
@@ -26,7 +47,8 @@ pub async fn init_db(db_path: &Path) -> Result<DbPool> {
         .create_if_missing(true)
         .foreign_keys(true)
         .journal_mode(SqliteJournalMode::Wal)
-        .synchronous(SqliteSynchronous::Normal);
+        .synchronous(SqliteSynchronous::Normal)
+        .busy_timeout(std::time::Duration::from_secs(5));
 
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
@@ -43,7 +65,8 @@ pub async fn init_db(db_path: &Path) -> Result<DbPool> {
 pub async fn init_memory_db() -> Result<DbPool> {
     let connection_options = SqliteConnectOptions::from_str("sqlite::memory:")
         .map_err(map_sqlx_err)?
-        .foreign_keys(true);
+        .foreign_keys(true)
+        .busy_timeout(std::time::Duration::from_secs(5));
 
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -65,20 +88,186 @@ pub async fn run_migrations(pool: &DbPool) -> Result<()> {
 }
 
 #[derive(Clone)]
+pub enum SqliteExecutor {
+    Pool(DbPool),
+    Tx(Arc<tokio::sync::Mutex<Option<sqlx::Transaction<'static, Sqlite>>>>),
+}
+
+impl SqliteExecutor {
+    pub async fn fetch_optional<'a>(
+        &self,
+        query: sqlx::query::Query<'a, Sqlite, sqlx::sqlite::SqliteArguments<'a>>,
+    ) -> Result<Option<sqlx::sqlite::SqliteRow>> {
+        match self {
+            Self::Pool(pool) => query.fetch_optional(pool).await.map_err(map_sqlx_err),
+            Self::Tx(tx) => {
+                let mut guard = tx.lock().await;
+                let tx = guard.as_mut().ok_or_else(|| {
+                    CoreError::Database("Transação SQLite já foi finalizada ou abortada".into())
+                })?;
+                query.fetch_optional(&mut **tx).await.map_err(map_sqlx_err)
+            }
+        }
+    }
+
+    pub async fn fetch_one<'a>(
+        &self,
+        query: sqlx::query::Query<'a, Sqlite, sqlx::sqlite::SqliteArguments<'a>>,
+    ) -> Result<sqlx::sqlite::SqliteRow> {
+        match self {
+            Self::Pool(pool) => query.fetch_one(pool).await.map_err(map_sqlx_err),
+            Self::Tx(tx) => {
+                let mut guard = tx.lock().await;
+                let tx = guard.as_mut().ok_or_else(|| {
+                    CoreError::Database("Transação SQLite já foi finalizada ou abortada".into())
+                })?;
+                query.fetch_one(&mut **tx).await.map_err(map_sqlx_err)
+            }
+        }
+    }
+
+    pub async fn fetch_all<'a>(
+        &self,
+        query: sqlx::query::Query<'a, Sqlite, sqlx::sqlite::SqliteArguments<'a>>,
+    ) -> Result<Vec<sqlx::sqlite::SqliteRow>> {
+        match self {
+            Self::Pool(pool) => query.fetch_all(pool).await.map_err(map_sqlx_err),
+            Self::Tx(tx) => {
+                let mut guard = tx.lock().await;
+                let tx = guard.as_mut().ok_or_else(|| {
+                    CoreError::Database("Transação SQLite já foi finalizada ou abortada".into())
+                })?;
+                query.fetch_all(&mut **tx).await.map_err(map_sqlx_err)
+            }
+        }
+    }
+
+    pub async fn execute<'a>(
+        &self,
+        query: sqlx::query::Query<'a, Sqlite, sqlx::sqlite::SqliteArguments<'a>>,
+    ) -> Result<sqlx::sqlite::SqliteQueryResult> {
+        match self {
+            Self::Pool(pool) => query.execute(pool).await.map_err(map_sqlx_err),
+            Self::Tx(tx) => {
+                let mut guard = tx.lock().await;
+                let tx = guard.as_mut().ok_or_else(|| {
+                    CoreError::Database("Transação SQLite já foi finalizada ou abortada".into())
+                })?;
+                query.execute(&mut **tx).await.map_err(map_sqlx_err)
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct SqliteTxManager {
+    pub pool: DbPool,
+}
+
+#[async_trait]
+impl TransactionManager for SqliteTxManager {
+    async fn begin_transaction(&self) -> Result<Box<dyn TxStoreBundle>> {
+        let tx = self
+            .pool
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(map_sqlx_err)?;
+        let tx_mutex = Arc::new(tokio::sync::Mutex::new(Some(tx)));
+        let store = SqliteStore {
+            executor: SqliteExecutor::Tx(tx_mutex.clone()),
+        };
+        let arc = Arc::new(store);
+        Ok(Box::new(SqliteTxStoreBundle {
+            tx: tx_mutex,
+            tenants: arc.clone(),
+            branding: arc.clone(),
+            roles: arc.clone(),
+            users: arc.clone(),
+            audit: arc,
+        }))
+    }
+}
+
+pub struct SqliteTxStoreBundle {
+    tx: Arc<tokio::sync::Mutex<Option<sqlx::Transaction<'static, Sqlite>>>>,
+    pub tenants: Arc<dyn TenantStore>,
+    pub branding: Arc<dyn BrandingStore>,
+    pub roles: Arc<dyn RoleStore>,
+    pub users: Arc<dyn UserStore>,
+    pub audit: Arc<dyn AuditStore>,
+}
+
+#[async_trait]
+impl TxStoreBundle for SqliteTxStoreBundle {
+    fn tenants(&self) -> &dyn TenantStore {
+        self.tenants.as_ref()
+    }
+
+    fn branding(&self) -> &dyn BrandingStore {
+        self.branding.as_ref()
+    }
+
+    fn roles(&self) -> &dyn RoleStore {
+        self.roles.as_ref()
+    }
+
+    fn users(&self) -> &dyn UserStore {
+        self.users.as_ref()
+    }
+
+    fn audit(&self) -> &dyn AuditStore {
+        self.audit.as_ref()
+    }
+
+    async fn commit(self: Box<Self>) -> Result<()> {
+        let mut guard = self.tx.lock().await;
+        if let Some(tx) = guard.take() {
+            tx.commit().await.map_err(map_sqlx_err)?;
+        }
+        Ok(())
+    }
+
+    async fn rollback(self: Box<Self>) -> Result<()> {
+        let mut guard = self.tx.lock().await;
+        if let Some(tx) = guard.take() {
+            tx.rollback().await.map_err(map_sqlx_err)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
 pub struct SqliteStore {
-    pool: DbPool,
+    executor: SqliteExecutor,
 }
 
 impl SqliteStore {
     pub fn new(pool: DbPool) -> Self {
-        Self { pool }
+        Self {
+            executor: SqliteExecutor::Pool(pool),
+        }
     }
 
-    pub fn pool(&self) -> &DbPool {
-        &self.pool
+    pub fn from_executor(executor: SqliteExecutor) -> Self {
+        Self { executor }
+    }
+
+    pub fn pool(&self) -> Option<&DbPool> {
+        match &self.executor {
+            SqliteExecutor::Pool(p) => Some(p),
+            SqliteExecutor::Tx(_) => None,
+        }
+    }
+
+    pub fn executor(&self) -> &SqliteExecutor {
+        &self.executor
     }
 
     pub fn into_bundle(self) -> StoreBundle {
+        let tx_manager: Option<Arc<dyn TransactionManager>> = match &self.executor {
+            SqliteExecutor::Pool(pool) => Some(Arc::new(SqliteTxManager { pool: pool.clone() })),
+            SqliteExecutor::Tx(_) => None,
+        };
         let arc = Arc::new(self);
         StoreBundle {
             tenants: arc.clone(),
@@ -86,23 +275,52 @@ impl SqliteStore {
             roles: arc.clone(),
             users: arc.clone(),
             audit: arc,
-            tx_manager: None,
+            tx_manager,
         }
     }
 
+    pub async fn fetch_optional<'a>(
+        &self,
+        query: sqlx::query::Query<'a, Sqlite, sqlx::sqlite::SqliteArguments<'a>>,
+    ) -> Result<Option<sqlx::sqlite::SqliteRow>> {
+        self.executor.fetch_optional(query).await
+    }
+
+    pub async fn fetch_one<'a>(
+        &self,
+        query: sqlx::query::Query<'a, Sqlite, sqlx::sqlite::SqliteArguments<'a>>,
+    ) -> Result<sqlx::sqlite::SqliteRow> {
+        self.executor.fetch_one(query).await
+    }
+
+    pub async fn fetch_all<'a>(
+        &self,
+        query: sqlx::query::Query<'a, Sqlite, sqlx::sqlite::SqliteArguments<'a>>,
+    ) -> Result<Vec<sqlx::sqlite::SqliteRow>> {
+        self.executor.fetch_all(query).await
+    }
+
+    pub async fn execute<'a>(
+        &self,
+        query: sqlx::query::Query<'a, Sqlite, sqlx::sqlite::SqliteArguments<'a>>,
+    ) -> Result<sqlx::sqlite::SqliteQueryResult> {
+        self.executor.execute(query).await
+    }
+
     async fn load_permissions_for_role(&self, role_id: &str) -> Result<Vec<String>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT permission
-            FROM role_permission
-            WHERE role_id = ? AND deleted_at IS NULL
-            ORDER BY permission ASC
-            "#,
-        )
-        .bind(role_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        let rows = self
+            .fetch_all(
+                sqlx::query(
+                    r#"
+                    SELECT permission
+                    FROM role_permission
+                    WHERE role_id = ? AND deleted_at IS NULL
+                    ORDER BY permission ASC
+                    "#,
+                )
+                .bind(role_id),
+            )
+            .await?;
 
         Ok(rows.into_iter().map(|r| r.get("permission")).collect())
     }
@@ -111,19 +329,20 @@ impl SqliteStore {
 #[async_trait]
 impl TenantStore for SqliteStore {
     async fn find_by_id(&self, id: &str) -> Result<Option<Tenant>> {
-        let row = sqlx::query(
-            r#"
-            SELECT id, tenant_id, name, slug, document_number,
-                   created_at, updated_at, deleted_at, created_by
-            FROM tenant
-            WHERE id = ? AND deleted_at IS NULL
-            LIMIT 1
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        let row = self
+            .fetch_optional(
+                sqlx::query(
+                    r#"
+                    SELECT id, tenant_id, name, slug, document_number,
+                           created_at, updated_at, deleted_at, created_by
+                    FROM tenant
+                    WHERE id = ? AND deleted_at IS NULL
+                    LIMIT 1
+                    "#,
+                )
+                .bind(id),
+            )
+            .await?;
 
         Ok(row.map(|r| Tenant {
             id: r.get("id"),
@@ -139,19 +358,20 @@ impl TenantStore for SqliteStore {
     }
 
     async fn find_by_slug(&self, slug: &str) -> Result<Option<Tenant>> {
-        let row = sqlx::query(
-            r#"
-            SELECT id, tenant_id, name, slug, document_number,
-                   created_at, updated_at, deleted_at, created_by
-            FROM tenant
-            WHERE slug = ? AND deleted_at IS NULL
-            LIMIT 1
-            "#,
-        )
-        .bind(slug)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        let row = self
+            .fetch_optional(
+                sqlx::query(
+                    r#"
+                    SELECT id, tenant_id, name, slug, document_number,
+                           created_at, updated_at, deleted_at, created_by
+                    FROM tenant
+                    WHERE slug = ? AND deleted_at IS NULL
+                    LIMIT 1
+                    "#,
+                )
+                .bind(slug),
+            )
+            .await?;
 
         Ok(row.map(|r| Tenant {
             id: r.get("id"),
@@ -167,44 +387,44 @@ impl TenantStore for SqliteStore {
     }
 
     async fn create(&self, tenant: &Tenant) -> Result<Tenant> {
-        sqlx::query(
-            r#"
-            INSERT INTO tenant (
-                id, tenant_id, name, slug, document_number,
-                created_at, updated_at, deleted_at, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
+        self.execute(
+            sqlx::query(
+                r#"
+                INSERT INTO tenant (
+                    id, tenant_id, name, slug, document_number,
+                    created_at, updated_at, deleted_at, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&tenant.id)
+            .bind(&tenant.tenant_id)
+            .bind(&tenant.name)
+            .bind(&tenant.slug)
+            .bind(&tenant.document_number)
+            .bind(&tenant.created_at)
+            .bind(&tenant.updated_at)
+            .bind(&tenant.deleted_at)
+            .bind(&tenant.created_by),
         )
-        .bind(&tenant.id)
-        .bind(&tenant.tenant_id)
-        .bind(&tenant.name)
-        .bind(&tenant.slug)
-        .bind(&tenant.document_number)
-        .bind(&tenant.created_at)
-        .bind(&tenant.updated_at)
-        .bind(&tenant.deleted_at)
-        .bind(&tenant.created_by)
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        .await?;
 
         Ok(tenant.clone())
     }
 
     async fn update_name(&self, id: &str, name: &str, updated_at: &str) -> Result<Tenant> {
-        sqlx::query(
-            r#"
-            UPDATE tenant
-            SET name = ?, updated_at = ?
-            WHERE id = ? AND deleted_at IS NULL
-            "#,
+        self.execute(
+            sqlx::query(
+                r#"
+                UPDATE tenant
+                SET name = ?, updated_at = ?
+                WHERE id = ? AND deleted_at IS NULL
+                "#,
+            )
+            .bind(name)
+            .bind(updated_at)
+            .bind(id),
         )
-        .bind(name)
-        .bind(updated_at)
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        .await?;
 
         TenantStore::find_by_id(self, id)
             .await?
@@ -215,20 +435,21 @@ impl TenantStore for SqliteStore {
 #[async_trait]
 impl BrandingStore for SqliteStore {
     async fn get_by_tenant_id(&self, tenant_id: &str) -> Result<Option<TenantBranding>> {
-        let row = sqlx::query(
-            r#"
-            SELECT id, tenant_id, company_name, primary_color, secondary_color,
-                   accent_color, logo_url, favicon_url, created_at, updated_at,
-                   deleted_at, created_by
-            FROM tenant_branding
-            WHERE tenant_id = ? AND deleted_at IS NULL
-            LIMIT 1
-            "#,
-        )
-        .bind(tenant_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        let row = self
+            .fetch_optional(
+                sqlx::query(
+                    r#"
+                    SELECT id, tenant_id, company_name, primary_color, secondary_color,
+                           accent_color, logo_url, favicon_url, created_at, updated_at,
+                           deleted_at, created_by
+                    FROM tenant_branding
+                    WHERE tenant_id = ? AND deleted_at IS NULL
+                    LIMIT 1
+                    "#,
+                )
+                .bind(tenant_id),
+            )
+            .await?;
 
         Ok(row.map(|r| TenantBranding {
             id: r.get("id"),
@@ -251,24 +472,24 @@ impl BrandingStore for SqliteStore {
         let now = Utc::now().to_rfc3339();
 
         if let Some(mut branding) = existing {
-            sqlx::query(
-                r#"
-                UPDATE tenant_branding
-                SET company_name = ?, primary_color = ?, secondary_color = ?,
-                    accent_color = ?, logo_url = ?, updated_at = ?
-                WHERE id = ? AND deleted_at IS NULL
-                "#,
+            self.execute(
+                sqlx::query(
+                    r#"
+                    UPDATE tenant_branding
+                    SET company_name = ?, primary_color = ?, secondary_color = ?,
+                        accent_color = ?, logo_url = ?, updated_at = ?
+                    WHERE id = ? AND deleted_at IS NULL
+                    "#,
+                )
+                .bind(&input.company_name)
+                .bind(&input.primary_color)
+                .bind(&input.secondary_color)
+                .bind(&input.accent_color)
+                .bind(&input.logo_url)
+                .bind(&now)
+                .bind(&branding.id),
             )
-            .bind(&input.company_name)
-            .bind(&input.primary_color)
-            .bind(&input.secondary_color)
-            .bind(&input.accent_color)
-            .bind(&input.logo_url)
-            .bind(&now)
-            .bind(&branding.id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_sqlx_err)?;
+            .await?;
 
             branding.company_name = input.company_name.clone();
             branding.primary_color = input.primary_color.clone();
@@ -281,27 +502,27 @@ impl BrandingStore for SqliteStore {
         } else {
             let new_id = Uuid::now_v7().to_string();
 
-            sqlx::query(
-                r#"
-                INSERT INTO tenant_branding (
-                    id, tenant_id, company_name, primary_color, secondary_color,
-                    accent_color, logo_url, favicon_url, created_at, updated_at,
-                    deleted_at, created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
-                "#,
+            self.execute(
+                sqlx::query(
+                    r#"
+                    INSERT INTO tenant_branding (
+                        id, tenant_id, company_name, primary_color, secondary_color,
+                        accent_color, logo_url, favicon_url, created_at, updated_at,
+                        deleted_at, created_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
+                    "#,
+                )
+                .bind(&new_id)
+                .bind(tenant_id)
+                .bind(&input.company_name)
+                .bind(&input.primary_color)
+                .bind(&input.secondary_color)
+                .bind(&input.accent_color)
+                .bind(&input.logo_url)
+                .bind(&now)
+                .bind(&now),
             )
-            .bind(&new_id)
-            .bind(tenant_id)
-            .bind(&input.company_name)
-            .bind(&input.primary_color)
-            .bind(&input.secondary_color)
-            .bind(&input.accent_color)
-            .bind(&input.logo_url)
-            .bind(&now)
-            .bind(&now)
-            .execute(&self.pool)
-            .await
-            .map_err(map_sqlx_err)?;
+            .await?;
 
             self.get_by_tenant_id(tenant_id)
                 .await?
@@ -313,19 +534,20 @@ impl BrandingStore for SqliteStore {
 #[async_trait]
 impl RoleStore for SqliteStore {
     async fn list_by_tenant(&self, tenant_id: &str) -> Result<Vec<RoleWithPermissions>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT id, tenant_id, name, slug, description, is_system,
-                   created_at, updated_at, deleted_at, created_by
-            FROM role
-            WHERE tenant_id = ? AND deleted_at IS NULL
-            ORDER BY is_system DESC, name ASC
-            "#,
-        )
-        .bind(tenant_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        let rows = self
+            .fetch_all(
+                sqlx::query(
+                    r#"
+                    SELECT id, tenant_id, name, slug, description, is_system,
+                           created_at, updated_at, deleted_at, created_by
+                    FROM role
+                    WHERE tenant_id = ? AND deleted_at IS NULL
+                    ORDER BY is_system DESC, name ASC
+                    "#,
+                )
+                .bind(tenant_id),
+            )
+            .await?;
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
@@ -355,20 +577,21 @@ impl RoleStore for SqliteStore {
         tenant_id: &str,
         role_id: &str,
     ) -> Result<Option<RoleWithPermissions>> {
-        let row = sqlx::query(
-            r#"
-            SELECT id, tenant_id, name, slug, description, is_system,
-                   created_at, updated_at, deleted_at, created_by
-            FROM role
-            WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
-            LIMIT 1
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(role_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        let row = self
+            .fetch_optional(
+                sqlx::query(
+                    r#"
+                    SELECT id, tenant_id, name, slug, description, is_system,
+                           created_at, updated_at, deleted_at, created_by
+                    FROM role
+                    WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+                    LIMIT 1
+                    "#,
+                )
+                .bind(tenant_id)
+                .bind(role_id),
+            )
+            .await?;
 
         let Some(r) = row else {
             return Ok(None);
@@ -398,20 +621,21 @@ impl RoleStore for SqliteStore {
         tenant_id: &str,
         slug: &str,
     ) -> Result<Option<RoleWithPermissions>> {
-        let row = sqlx::query(
-            r#"
-            SELECT id, tenant_id, name, slug, description, is_system,
-                   created_at, updated_at, deleted_at, created_by
-            FROM role
-            WHERE tenant_id = ? AND slug = ? AND deleted_at IS NULL
-            LIMIT 1
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(slug)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        let row = self
+            .fetch_optional(
+                sqlx::query(
+                    r#"
+                    SELECT id, tenant_id, name, slug, description, is_system,
+                           created_at, updated_at, deleted_at, created_by
+                    FROM role
+                    WHERE tenant_id = ? AND slug = ? AND deleted_at IS NULL
+                    LIMIT 1
+                    "#,
+                )
+                .bind(tenant_id)
+                .bind(slug),
+            )
+            .await?;
 
         let Some(r) = row else {
             return Ok(None);
@@ -437,67 +661,78 @@ impl RoleStore for SqliteStore {
     }
 
     async fn create(&self, role: &Role, permissions: &[String]) -> Result<RoleWithPermissions> {
-        let mut tx = self.pool.begin().await.map_err(map_sqlx_err)?;
+        match &self.executor {
+            SqliteExecutor::Pool(pool) => {
+                let tx_mgr = SqliteTxManager { pool: pool.clone() };
+                let role = role.clone();
+                let permissions = permissions.to_vec();
+                run_in_tx(&tx_mgr, &TransactionPolicy::default(), |stores| {
+                    let role = role.clone();
+                    let permissions = permissions.clone();
+                    Box::pin(async move { stores.roles().create(&role, &permissions).await })
+                })
+                .await
+            }
+            SqliteExecutor::Tx(_) => {
+                self.execute(
+                    sqlx::query(
+                        r#"
+                        INSERT INTO role (
+                            id, tenant_id, name, slug, description, is_system,
+                            created_at, updated_at, deleted_at, created_by
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        "#,
+                    )
+                    .bind(&role.id)
+                    .bind(&role.tenant_id)
+                    .bind(&role.name)
+                    .bind(&role.slug)
+                    .bind(&role.description)
+                    .bind(if role.is_system { 1 } else { 0 })
+                    .bind(&role.created_at)
+                    .bind(&role.updated_at)
+                    .bind(&role.deleted_at)
+                    .bind(&role.created_by),
+                )
+                .await?;
 
-        sqlx::query(
-            r#"
-            INSERT INTO role (
-                id, tenant_id, name, slug, description, is_system,
-                created_at, updated_at, deleted_at, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&role.id)
-        .bind(&role.tenant_id)
-        .bind(&role.name)
-        .bind(&role.slug)
-        .bind(&role.description)
-        .bind(if role.is_system { 1 } else { 0 })
-        .bind(&role.created_at)
-        .bind(&role.updated_at)
-        .bind(&role.deleted_at)
-        .bind(&role.created_by)
-        .execute(&mut *tx)
-        .await
-        .map_err(map_sqlx_err)?;
+                for perm in permissions {
+                    let perm_id = Uuid::now_v7().to_string();
+                    self.execute(
+                        sqlx::query(
+                            r#"
+                            INSERT INTO role_permission (
+                                id, tenant_id, role_id, permission,
+                                created_at, updated_at, deleted_at, created_by
+                            ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
+                            "#,
+                        )
+                        .bind(&perm_id)
+                        .bind(&role.tenant_id)
+                        .bind(&role.id)
+                        .bind(perm)
+                        .bind(&role.created_at)
+                        .bind(&role.updated_at)
+                        .bind(&role.created_by),
+                    )
+                    .await?;
+                }
 
-        for perm in permissions {
-            let perm_id = Uuid::now_v7().to_string();
-            sqlx::query(
-                r#"
-                INSERT INTO role_permission (
-                    id, tenant_id, role_id, permission,
-                    created_at, updated_at, deleted_at, created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
-                "#,
-            )
-            .bind(&perm_id)
-            .bind(&role.tenant_id)
-            .bind(&role.id)
-            .bind(perm)
-            .bind(&role.created_at)
-            .bind(&role.updated_at)
-            .bind(&role.created_by)
-            .execute(&mut *tx)
-            .await
-            .map_err(map_sqlx_err)?;
+                Ok(RoleWithPermissions {
+                    id: role.id.clone(),
+                    tenant_id: role.tenant_id.clone(),
+                    name: role.name.clone(),
+                    slug: role.slug.clone(),
+                    description: role.description.clone(),
+                    is_system: role.is_system,
+                    permissions: permissions.to_vec(),
+                    created_at: role.created_at.clone(),
+                    updated_at: role.updated_at.clone(),
+                    deleted_at: role.deleted_at.clone(),
+                    created_by: role.created_by.clone(),
+                })
+            }
         }
-
-        tx.commit().await.map_err(map_sqlx_err)?;
-
-        Ok(RoleWithPermissions {
-            id: role.id.clone(),
-            tenant_id: role.tenant_id.clone(),
-            name: role.name.clone(),
-            slug: role.slug.clone(),
-            description: role.description.clone(),
-            is_system: role.is_system,
-            permissions: permissions.to_vec(),
-            created_at: role.created_at.clone(),
-            updated_at: role.updated_at.clone(),
-            deleted_at: role.deleted_at.clone(),
-            created_by: role.created_by.clone(),
-        })
     }
 
     async fn set_permissions(
@@ -507,68 +742,90 @@ impl RoleStore for SqliteStore {
         permissions: &[String],
         updated_at: &str,
     ) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(map_sqlx_err)?;
+        match &self.executor {
+            SqliteExecutor::Pool(pool) => {
+                let tx_mgr = SqliteTxManager { pool: pool.clone() };
+                let tenant_id = tenant_id.to_string();
+                let role_id = role_id.to_string();
+                let permissions = permissions.to_vec();
+                let updated_at = updated_at.to_string();
+                run_in_tx(&tx_mgr, &TransactionPolicy::default(), |stores| {
+                    let tenant_id = tenant_id.clone();
+                    let role_id = role_id.clone();
+                    let permissions = permissions.clone();
+                    let updated_at = updated_at.clone();
+                    Box::pin(async move {
+                        stores
+                            .roles()
+                            .set_permissions(&tenant_id, &role_id, &permissions, &updated_at)
+                            .await
+                    })
+                })
+                .await
+            }
+            SqliteExecutor::Tx(_) => {
+                self.execute(
+                    sqlx::query(
+                        r#"
+                        UPDATE role_permission
+                        SET deleted_at = ?, updated_at = ?
+                        WHERE tenant_id = ? AND role_id = ? AND deleted_at IS NULL
+                        "#,
+                    )
+                    .bind(updated_at)
+                    .bind(updated_at)
+                    .bind(tenant_id)
+                    .bind(role_id),
+                )
+                .await?;
 
-        sqlx::query(
-            r#"
-            UPDATE role_permission
-            SET deleted_at = ?, updated_at = ?
-            WHERE tenant_id = ? AND role_id = ? AND deleted_at IS NULL
-            "#,
-        )
-        .bind(updated_at)
-        .bind(updated_at)
-        .bind(tenant_id)
-        .bind(role_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(map_sqlx_err)?;
+                for perm in permissions {
+                    let perm_id = Uuid::now_v7().to_string();
+                    self.execute(
+                        sqlx::query(
+                            r#"
+                            INSERT INTO role_permission (
+                                id, tenant_id, role_id, permission,
+                                created_at, updated_at, deleted_at, created_by
+                            ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)
+                            "#,
+                        )
+                        .bind(&perm_id)
+                        .bind(tenant_id)
+                        .bind(role_id)
+                        .bind(perm)
+                        .bind(updated_at)
+                        .bind(updated_at),
+                    )
+                    .await?;
+                }
 
-        for perm in permissions {
-            let perm_id = Uuid::now_v7().to_string();
-            sqlx::query(
-                r#"
-                INSERT INTO role_permission (
-                    id, tenant_id, role_id, permission,
-                    created_at, updated_at, deleted_at, created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)
-                "#,
-            )
-            .bind(&perm_id)
-            .bind(tenant_id)
-            .bind(role_id)
-            .bind(perm)
-            .bind(updated_at)
-            .bind(updated_at)
-            .execute(&mut *tx)
-            .await
-            .map_err(map_sqlx_err)?;
+                Ok(())
+            }
         }
-
-        tx.commit().await.map_err(map_sqlx_err)?;
-        Ok(())
     }
 }
 
 #[async_trait]
 impl UserStore for SqliteStore {
     async fn find_by_id(&self, tenant_id: &str, user_id: &str) -> Result<Option<UserRecord>> {
-        let row = sqlx::query(
-            r#"
-            SELECT id, tenant_id, name, email, password_hash, recovery_key_hash,
-                   role_id, active, last_login_at, failed_attempts, locked_until,
-                   recovery_failed_attempts, recovery_locked_until,
-                   created_at, updated_at, deleted_at, created_by
-            FROM app_user
-            WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
-            LIMIT 1
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        let row = self
+            .fetch_optional(
+                sqlx::query(
+                    r#"
+                    SELECT id, tenant_id, name, email, password_hash, recovery_key_hash,
+                           role_id, active, last_login_at, failed_attempts, locked_until,
+                           recovery_failed_attempts, recovery_locked_until,
+                           created_at, updated_at, deleted_at, created_by
+                    FROM app_user
+                    WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+                    LIMIT 1
+                    "#,
+                )
+                .bind(tenant_id)
+                .bind(user_id),
+            )
+            .await?;
 
         Ok(row.map(|r| {
             let active_int: i64 = r.get("active");
@@ -595,22 +852,23 @@ impl UserStore for SqliteStore {
     }
 
     async fn find_by_email(&self, tenant_id: &str, email: &str) -> Result<Option<UserRecord>> {
-        let row = sqlx::query(
-            r#"
-            SELECT id, tenant_id, name, email, password_hash, recovery_key_hash,
-                   role_id, active, last_login_at, failed_attempts, locked_until,
-                   recovery_failed_attempts, recovery_locked_until,
-                   created_at, updated_at, deleted_at, created_by
-            FROM app_user
-            WHERE tenant_id = ? AND email = ? AND deleted_at IS NULL
-            LIMIT 1
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(email)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        let row = self
+            .fetch_optional(
+                sqlx::query(
+                    r#"
+                    SELECT id, tenant_id, name, email, password_hash, recovery_key_hash,
+                           role_id, active, last_login_at, failed_attempts, locked_until,
+                           recovery_failed_attempts, recovery_locked_until,
+                           created_at, updated_at, deleted_at, created_by
+                    FROM app_user
+                    WHERE tenant_id = ? AND email = ? AND deleted_at IS NULL
+                    LIMIT 1
+                    "#,
+                )
+                .bind(tenant_id)
+                .bind(email),
+            )
+            .await?;
 
         Ok(row.map(|r| {
             let active_int: i64 = r.get("active");
@@ -637,23 +895,24 @@ impl UserStore for SqliteStore {
     }
 
     async fn find_with_role(&self, tenant_id: &str, user_id: &str) -> Result<Option<UserWithRole>> {
-        let row = sqlx::query(
-            r#"
-            SELECT u.id, u.tenant_id, u.name, u.email, u.role_id,
-                   r.name AS role_name, r.slug AS role_slug,
-                   u.active, u.last_login_at, u.failed_attempts, u.locked_until,
-                   u.created_at, u.updated_at, u.deleted_at, u.created_by
-            FROM app_user u
-            INNER JOIN role r ON r.id = u.role_id AND r.deleted_at IS NULL
-            WHERE u.tenant_id = ? AND u.id = ? AND u.deleted_at IS NULL
-            LIMIT 1
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        let row = self
+            .fetch_optional(
+                sqlx::query(
+                    r#"
+                    SELECT u.id, u.tenant_id, u.name, u.email, u.role_id,
+                           r.name AS role_name, r.slug AS role_slug,
+                           u.active, u.last_login_at, u.failed_attempts, u.locked_until,
+                           u.created_at, u.updated_at, u.deleted_at, u.created_by
+                    FROM app_user u
+                    INNER JOIN role r ON r.id = u.role_id AND r.deleted_at IS NULL
+                    WHERE u.tenant_id = ? AND u.id = ? AND u.deleted_at IS NULL
+                    LIMIT 1
+                    "#,
+                )
+                .bind(tenant_id)
+                .bind(user_id),
+            )
+            .await?;
 
         let Some(r) = row else {
             return Ok(None);
@@ -684,22 +943,23 @@ impl UserStore for SqliteStore {
     }
 
     async fn list_by_tenant(&self, tenant_id: &str) -> Result<Vec<UserWithRole>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT u.id, u.tenant_id, u.name, u.email, u.role_id,
-                   r.name AS role_name, r.slug AS role_slug,
-                   u.active, u.last_login_at, u.failed_attempts, u.locked_until,
-                   u.created_at, u.updated_at, u.deleted_at, u.created_by
-            FROM app_user u
-            INNER JOIN role r ON r.id = u.role_id AND r.deleted_at IS NULL
-            WHERE u.tenant_id = ? AND u.deleted_at IS NULL
-            ORDER BY u.created_at ASC
-            "#,
-        )
-        .bind(tenant_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        let rows = self
+            .fetch_all(
+                sqlx::query(
+                    r#"
+                    SELECT u.id, u.tenant_id, u.name, u.email, u.role_id,
+                           r.name AS role_name, r.slug AS role_slug,
+                           u.active, u.last_login_at, u.failed_attempts, u.locked_until,
+                           u.created_at, u.updated_at, u.deleted_at, u.created_by
+                    FROM app_user u
+                    INNER JOIN role r ON r.id = u.role_id AND r.deleted_at IS NULL
+                    WHERE u.tenant_id = ? AND u.deleted_at IS NULL
+                    ORDER BY u.created_at ASC
+                    "#,
+                )
+                .bind(tenant_id),
+            )
+            .await?;
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
@@ -730,73 +990,75 @@ impl UserStore for SqliteStore {
     }
 
     async fn count_active_by_role_slug(&self, tenant_id: &str, role_slug: &str) -> Result<i64> {
-        let row = sqlx::query(
-            r#"
-            SELECT COUNT(*) AS cnt
-            FROM app_user u
-            INNER JOIN role r ON r.id = u.role_id AND r.deleted_at IS NULL
-            WHERE u.tenant_id = ?
-              AND u.deleted_at IS NULL
-              AND u.active = 1
-              AND r.slug = ?
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(role_slug)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        let row = self
+            .fetch_one(
+                sqlx::query(
+                    r#"
+                    SELECT COUNT(*) AS cnt
+                    FROM app_user u
+                    INNER JOIN role r ON r.id = u.role_id AND r.deleted_at IS NULL
+                    WHERE u.tenant_id = ?
+                      AND u.deleted_at IS NULL
+                      AND u.active = 1
+                      AND r.slug = ?
+                    "#,
+                )
+                .bind(tenant_id)
+                .bind(role_slug),
+            )
+            .await?;
 
         Ok(row.get("cnt"))
     }
 
     async fn count_by_tenant(&self, tenant_id: &str) -> Result<i64> {
-        let row = sqlx::query(
-            r#"
-            SELECT COUNT(*) AS cnt
-            FROM app_user
-            WHERE tenant_id = ? AND deleted_at IS NULL
-            "#,
-        )
-        .bind(tenant_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        let row = self
+            .fetch_one(
+                sqlx::query(
+                    r#"
+                    SELECT COUNT(*) AS cnt
+                    FROM app_user
+                    WHERE tenant_id = ? AND deleted_at IS NULL
+                    "#,
+                )
+                .bind(tenant_id),
+            )
+            .await?;
 
         Ok(row.get("cnt"))
     }
 
     async fn create(&self, user: &UserRecord) -> Result<UserWithRole> {
-        sqlx::query(
-            r#"
-            INSERT INTO app_user (
-                id, tenant_id, name, email, password_hash, recovery_key_hash,
-                role_id, active, last_login_at, failed_attempts, locked_until,
-                recovery_failed_attempts, recovery_locked_until,
-                created_at, updated_at, deleted_at, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
+        self.execute(
+            sqlx::query(
+                r#"
+                INSERT INTO app_user (
+                    id, tenant_id, name, email, password_hash, recovery_key_hash,
+                    role_id, active, last_login_at, failed_attempts, locked_until,
+                    recovery_failed_attempts, recovery_locked_until,
+                    created_at, updated_at, deleted_at, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&user.id)
+            .bind(&user.tenant_id)
+            .bind(&user.name)
+            .bind(&user.email)
+            .bind(&user.password_hash)
+            .bind(&user.recovery_key_hash)
+            .bind(&user.role_id)
+            .bind(if user.active { 1 } else { 0 })
+            .bind(&user.last_login_at)
+            .bind(user.failed_attempts)
+            .bind(&user.locked_until)
+            .bind(user.recovery_failed_attempts)
+            .bind(&user.recovery_locked_until)
+            .bind(&user.created_at)
+            .bind(&user.updated_at)
+            .bind(&user.deleted_at)
+            .bind(&user.created_by),
         )
-        .bind(&user.id)
-        .bind(&user.tenant_id)
-        .bind(&user.name)
-        .bind(&user.email)
-        .bind(&user.password_hash)
-        .bind(&user.recovery_key_hash)
-        .bind(&user.role_id)
-        .bind(if user.active { 1 } else { 0 })
-        .bind(&user.last_login_at)
-        .bind(user.failed_attempts)
-        .bind(&user.locked_until)
-        .bind(user.recovery_failed_attempts)
-        .bind(&user.recovery_locked_until)
-        .bind(&user.created_at)
-        .bind(&user.updated_at)
-        .bind(&user.deleted_at)
-        .bind(&user.created_by)
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        .await?;
 
         self.find_with_role(&user.tenant_id, &user.id)
             .await?
@@ -812,22 +1074,22 @@ impl UserStore for SqliteStore {
         role_id: &str,
         updated_at: &str,
     ) -> Result<UserWithRole> {
-        sqlx::query(
-            r#"
-            UPDATE app_user
-            SET name = ?, email = ?, role_id = ?, updated_at = ?
-            WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
-            "#,
+        self.execute(
+            sqlx::query(
+                r#"
+                UPDATE app_user
+                SET name = ?, email = ?, role_id = ?, updated_at = ?
+                WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+                "#,
+            )
+            .bind(name)
+            .bind(email)
+            .bind(role_id)
+            .bind(updated_at)
+            .bind(tenant_id)
+            .bind(user_id),
         )
-        .bind(name)
-        .bind(email)
-        .bind(role_id)
-        .bind(updated_at)
-        .bind(tenant_id)
-        .bind(user_id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        .await?;
 
         self.find_with_role(tenant_id, user_id)
             .await?
@@ -841,20 +1103,20 @@ impl UserStore for SqliteStore {
         active: bool,
         updated_at: &str,
     ) -> Result<UserWithRole> {
-        sqlx::query(
-            r#"
-            UPDATE app_user
-            SET active = ?, updated_at = ?
-            WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
-            "#,
+        self.execute(
+            sqlx::query(
+                r#"
+                UPDATE app_user
+                SET active = ?, updated_at = ?
+                WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+                "#,
+            )
+            .bind(if active { 1 } else { 0 })
+            .bind(updated_at)
+            .bind(tenant_id)
+            .bind(user_id),
         )
-        .bind(if active { 1 } else { 0 })
-        .bind(updated_at)
-        .bind(tenant_id)
-        .bind(user_id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        .await?;
 
         self.find_with_role(tenant_id, user_id)
             .await?
@@ -868,20 +1130,20 @@ impl UserStore for SqliteStore {
         password_hash: &str,
         updated_at: &str,
     ) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE app_user
-            SET password_hash = ?, failed_attempts = 0, locked_until = NULL, updated_at = ?
-            WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
-            "#,
+        self.execute(
+            sqlx::query(
+                r#"
+                UPDATE app_user
+                SET password_hash = ?, failed_attempts = 0, locked_until = NULL, updated_at = ?
+                WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+                "#,
+            )
+            .bind(password_hash)
+            .bind(updated_at)
+            .bind(tenant_id)
+            .bind(user_id),
         )
-        .bind(password_hash)
-        .bind(updated_at)
-        .bind(tenant_id)
-        .bind(user_id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        .await?;
 
         Ok(())
     }
@@ -892,20 +1154,20 @@ impl UserStore for SqliteStore {
         user_id: &str,
         login_at: &str,
     ) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE app_user
-            SET last_login_at = ?, failed_attempts = 0, locked_until = NULL, updated_at = ?
-            WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
-            "#,
+        self.execute(
+            sqlx::query(
+                r#"
+                UPDATE app_user
+                SET last_login_at = ?, failed_attempts = 0, locked_until = NULL, updated_at = ?
+                WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+                "#,
+            )
+            .bind(login_at)
+            .bind(login_at)
+            .bind(tenant_id)
+            .bind(user_id),
         )
-        .bind(login_at)
-        .bind(login_at)
-        .bind(tenant_id)
-        .bind(user_id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        .await?;
 
         Ok(())
     }
@@ -916,20 +1178,21 @@ impl UserStore for SqliteStore {
         user_id: &str,
         updated_at: &str,
     ) -> Result<i32> {
-        let row = sqlx::query(
-            r#"
-            UPDATE app_user
-            SET failed_attempts = failed_attempts + 1, updated_at = ?
-            WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
-            RETURNING failed_attempts
-            "#,
-        )
-        .bind(updated_at)
-        .bind(tenant_id)
-        .bind(user_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        let row = self
+            .fetch_one(
+                sqlx::query(
+                    r#"
+                    UPDATE app_user
+                    SET failed_attempts = failed_attempts + 1, updated_at = ?
+                    WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+                    RETURNING failed_attempts
+                    "#,
+                )
+                .bind(updated_at)
+                .bind(tenant_id)
+                .bind(user_id),
+            )
+            .await?;
 
         Ok(row.get("failed_attempts"))
     }
@@ -941,20 +1204,20 @@ impl UserStore for SqliteStore {
         locked_until: Option<&str>,
         updated_at: &str,
     ) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE app_user
-            SET locked_until = ?, updated_at = ?
-            WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
-            "#,
+        self.execute(
+            sqlx::query(
+                r#"
+                UPDATE app_user
+                SET locked_until = ?, updated_at = ?
+                WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+                "#,
+            )
+            .bind(locked_until)
+            .bind(updated_at)
+            .bind(tenant_id)
+            .bind(user_id),
         )
-        .bind(locked_until)
-        .bind(updated_at)
-        .bind(tenant_id)
-        .bind(user_id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        .await?;
 
         Ok(())
     }
@@ -965,20 +1228,21 @@ impl UserStore for SqliteStore {
         user_id: &str,
         updated_at: &str,
     ) -> Result<i32> {
-        let row = sqlx::query(
-            r#"
-            UPDATE app_user
-            SET recovery_failed_attempts = recovery_failed_attempts + 1, updated_at = ?
-            WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
-            RETURNING recovery_failed_attempts
-            "#,
-        )
-        .bind(updated_at)
-        .bind(tenant_id)
-        .bind(user_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        let row = self
+            .fetch_one(
+                sqlx::query(
+                    r#"
+                    UPDATE app_user
+                    SET recovery_failed_attempts = recovery_failed_attempts + 1, updated_at = ?
+                    WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+                    RETURNING recovery_failed_attempts
+                    "#,
+                )
+                .bind(updated_at)
+                .bind(tenant_id)
+                .bind(user_id),
+            )
+            .await?;
 
         Ok(row.get("recovery_failed_attempts"))
     }
@@ -990,20 +1254,20 @@ impl UserStore for SqliteStore {
         locked_until: Option<&str>,
         updated_at: &str,
     ) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE app_user
-            SET recovery_locked_until = ?, updated_at = ?
-            WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
-            "#,
+        self.execute(
+            sqlx::query(
+                r#"
+                UPDATE app_user
+                SET recovery_locked_until = ?, updated_at = ?
+                WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+                "#,
+            )
+            .bind(locked_until)
+            .bind(updated_at)
+            .bind(tenant_id)
+            .bind(user_id),
         )
-        .bind(locked_until)
-        .bind(updated_at)
-        .bind(tenant_id)
-        .bind(user_id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        .await?;
 
         Ok(())
     }
@@ -1016,27 +1280,27 @@ impl UserStore for SqliteStore {
         recovery_key_hash: &str,
         updated_at: &str,
     ) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE app_user
-            SET password_hash = ?,
-                recovery_key_hash = ?,
-                failed_attempts = 0,
-                locked_until = NULL,
-                recovery_failed_attempts = 0,
-                recovery_locked_until = NULL,
-                updated_at = ?
-            WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
-            "#,
+        self.execute(
+            sqlx::query(
+                r#"
+                UPDATE app_user
+                SET password_hash = ?,
+                    recovery_key_hash = ?,
+                    failed_attempts = 0,
+                    locked_until = NULL,
+                    recovery_failed_attempts = 0,
+                    recovery_locked_until = NULL,
+                    updated_at = ?
+                WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+                "#,
+            )
+            .bind(password_hash)
+            .bind(recovery_key_hash)
+            .bind(updated_at)
+            .bind(tenant_id)
+            .bind(user_id),
         )
-        .bind(password_hash)
-        .bind(recovery_key_hash)
-        .bind(updated_at)
-        .bind(tenant_id)
-        .bind(user_id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        .await?;
 
         Ok(())
     }
@@ -1045,46 +1309,47 @@ impl UserStore for SqliteStore {
 #[async_trait]
 impl AuditStore for SqliteStore {
     async fn append(&self, entry: &AuditLogEntry) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO audit_log (
-                id, tenant_id, actor_user_id, action, entity_type,
-                entity_id, summary, created_at, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
+        self.execute(
+            sqlx::query(
+                r#"
+                INSERT INTO audit_log (
+                    id, tenant_id, actor_user_id, action, entity_type,
+                    entity_id, summary, created_at, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&entry.id)
+            .bind(&entry.tenant_id)
+            .bind(&entry.actor_user_id)
+            .bind(&entry.action)
+            .bind(&entry.entity_type)
+            .bind(&entry.entity_id)
+            .bind(&entry.summary)
+            .bind(&entry.created_at)
+            .bind(&entry.created_by),
         )
-        .bind(&entry.id)
-        .bind(&entry.tenant_id)
-        .bind(&entry.actor_user_id)
-        .bind(&entry.action)
-        .bind(&entry.entity_type)
-        .bind(&entry.entity_id)
-        .bind(&entry.summary)
-        .bind(&entry.created_at)
-        .bind(&entry.created_by)
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        .await?;
 
         Ok(())
     }
 
     async fn list_by_tenant(&self, tenant_id: &str, limit: usize) -> Result<Vec<AuditLogEntry>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT id, tenant_id, actor_user_id, action, entity_type,
-                   entity_id, summary, created_at, created_by
-            FROM audit_log
-            WHERE tenant_id = ?
-            ORDER BY created_at DESC
-            LIMIT ?
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(i64::try_from(limit).unwrap_or(100))
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_sqlx_err)?;
+        let rows = self
+            .fetch_all(
+                sqlx::query(
+                    r#"
+                    SELECT id, tenant_id, actor_user_id, action, entity_type,
+                           entity_id, summary, created_at, created_by
+                    FROM audit_log
+                    WHERE tenant_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    "#,
+                )
+                .bind(tenant_id)
+                .bind(i64::try_from(limit).unwrap_or(100)),
+            )
+            .await?;
 
         Ok(rows
             .into_iter()
