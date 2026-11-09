@@ -253,7 +253,10 @@ pub fn decode_base64(input: &str) -> Option<Vec<u8>> {
         return None;
     }
     let mut out = Vec::with_capacity(clean.len() / 4 * 3);
-    for chunk in clean.chunks_exact(4) {
+    let mut i = 0;
+    while i + 4 <= clean.len() {
+        let chunk = &clean[i..i + 4];
+        i += 4;
         let b0 = decode_b64_char(chunk[0])?;
         let b1 = decode_b64_char(chunk[1])?;
         if chunk[2] == b'=' {
