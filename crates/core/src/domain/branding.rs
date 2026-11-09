@@ -163,7 +163,7 @@ impl BrandingValidator {
             return Err(CoreError::Validation(format!(
                 "{field_name} excede o limite máximo permitido de {} KB (tamanho decodificado: {} KB).",
                 max_size / 1024,
-                (decoded.len() + 1023) / 1024
+                decoded.len().div_ceil(1024)
             )));
         }
 
@@ -171,7 +171,7 @@ impl BrandingValidator {
         match normalized_mime {
             "image/png" => {
                 const PNG_MAGIC: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-                if decoded.len() < 8 || &decoded[0..8] != &PNG_MAGIC {
+                if decoded.len() < 8 || decoded[0..8] != PNG_MAGIC {
                     return Err(CoreError::Validation(format!(
                         "Assinatura mágica do arquivo PNG inválida ou corrompida para {field_name}."
                     )));
@@ -179,7 +179,7 @@ impl BrandingValidator {
             }
             "image/jpeg" => {
                 const JPEG_MAGIC: [u8; 3] = [0xFF, 0xD8, 0xFF];
-                if decoded.len() < 3 || &decoded[0..3] != &JPEG_MAGIC {
+                if decoded.len() < 3 || decoded[0..3] != JPEG_MAGIC {
                     return Err(CoreError::Validation(format!(
                         "Assinatura mágica do arquivo JPEG inválida ou corrompida para {field_name}."
                     )));
