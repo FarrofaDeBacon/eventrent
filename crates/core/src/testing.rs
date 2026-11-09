@@ -283,6 +283,45 @@ pub async fn contract_user_creation_and_rbac(
         .await;
     assert!(matches!(escalate_attempt, Err(CoreError::Forbidden(_))));
 
+    // 0.4: Hierarquia de gestão: Gerente com user:manage não pode agir sobre o Proprietário (permissões superiores)
+    let update_owner_attempt = services
+        .update_user(
+            &limited_manager_session,
+            &owner_session.user_id,
+            &UpdateUserInput {
+                name: "Proprietário Adulterado".to_string(),
+                email: "novo.email@luzesom.com.br".to_string(),
+                role_id: commercial_role.id.clone(),
+            },
+        )
+        .await;
+    assert!(
+        matches!(update_owner_attempt, Err(CoreError::Forbidden(_))),
+        "Gerente não pode editar usuário Proprietário com permissões superiores"
+    );
+
+    let deactivate_owner_attempt = services
+        .set_user_active(&limited_manager_session, &owner_session.user_id, false)
+        .await;
+    assert!(
+        matches!(deactivate_owner_attempt, Err(CoreError::Forbidden(_))),
+        "Gerente não pode desativar usuário Proprietário com permissões superiores"
+    );
+
+    let reset_owner_password_attempt = services
+        .reset_user_password(
+            &limited_manager_session,
+            &owner_session.user_id,
+            &ResetPasswordInput {
+                new_password: "SenhaInvasora#2026".to_string(),
+            },
+        )
+        .await;
+    assert!(
+        matches!(reset_owner_password_attempt, Err(CoreError::Forbidden(_))),
+        "Gerente não pode redefinir senha do Proprietário com permissões superiores"
+    );
+
     (commercial_user, commercial_session)
 }
 

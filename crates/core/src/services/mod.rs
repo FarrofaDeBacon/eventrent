@@ -1084,6 +1084,15 @@ impl CoreServices {
                     .await?
                     .ok_or_else(|| CoreError::NotFound("Usuário não encontrado.".to_string()))?;
 
+                // Hierarquia de gestão (0.4): o usuário só pode editar alvos cujas permissões sejam subconjunto das suas
+                for perm in &target.permissions {
+                    if !session.has_permission(perm) {
+                        return Err(CoreError::Forbidden(format!(
+                            "Não é permitido editar um usuário com permissões superiores às suas: '{perm}'"
+                        )));
+                    }
+                }
+
                 if let Some(existing_email_user) = stores
                     .users()
                     .find_by_email(&session.tenant_id, &email)
@@ -1191,6 +1200,15 @@ impl CoreServices {
                     .await?
                     .ok_or_else(|| CoreError::NotFound("Usuário não encontrado.".to_string()))?;
 
+                // Hierarquia de gestão (0.4): o usuário só pode desativar/reativar alvos cujas permissões sejam subconjunto das suas
+                for perm in &target.permissions {
+                    if !session.has_permission(perm) {
+                        return Err(CoreError::Forbidden(format!(
+                            "Não é permitido alterar o status de um usuário com permissões superiores às suas: '{perm}'"
+                        )));
+                    }
+                }
+
                 if !active && target.active && target.role_slug == ROLE_SLUG_OWNER {
                     let active_owners = stores
                         .users()
@@ -1254,9 +1272,18 @@ impl CoreServices {
             Box::pin(async move {
                 let target = stores
                     .users()
-                    .find_by_id(&session.tenant_id, &user_id)
+                    .find_with_role(&session.tenant_id, &user_id)
                     .await?
                     .ok_or_else(|| CoreError::NotFound("Usuário não encontrado.".to_string()))?;
+
+                // Hierarquia de gestão (0.4): o usuário só pode redefinir a senha de alvos cujas permissões sejam subconjunto das suas
+                for perm in &target.permissions {
+                    if !session.has_permission(perm) {
+                        return Err(CoreError::Forbidden(format!(
+                            "Não é permitido redefinir a senha de um usuário com permissões superiores às suas: '{perm}'"
+                        )));
+                    }
+                }
 
                 let now = Utc::now().to_rfc3339();
                 stores
