@@ -2338,4 +2338,70 @@ mod tests {
             CoreError::Database(_)
         ));
     }
+
+    #[tokio::test]
+    async fn test_save_branding_audit_log_transactional_and_never_logs_image_data() {
+        let pool = init_memory_db()
+            .await
+            .expect("Falha ao criar banco SQLite em memória");
+        let store = SqliteStore::new(pool).into_bundle();
+        let services = CoreServices::new(store.clone());
+        let tenant_id = ensure_default_tenant(store.tenants.as_ref(), store.branding.as_ref())
+            .await
+            .unwrap();
+
+        let setup = services
+            .complete_initial_setup(
+                &tenant_id,
+                &InitialSetupInput {
+                    mode: OperationMode::Local,
+                    company_name: "Locadora Audit Test".to_string(),
+                    owner_name: "Ana Dono".to_string(),
+                    owner_email: "ana.audit@empresa.com".to_string(),
+                    owner_password: "SenhaSegura#2026".to_string(),
+                },
+                30,
+            )
+            .await
+            .unwrap();
+
+        let png_data = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY44YAAAAASUVORK5CYII=";
+        let update_input = UpdateBrandingInput {
+            company_name: "Locadora Visual Novo".to_string(),
+            primary_color: "#1e40af".to_string(),
+            secondary_color: "#3b82f6".to_string(),
+            accent_color: "#f59e0b".to_string(),
+            logo_url: Some(png_data.to_string()),
+            logo_dark_url: Some(png_data.to_string()),
+            icon_url: Some(png_data.to_string()),
+        };
+
+        let updated = services
+            .save_branding(&setup.session, &update_input)
+            .await
+            .expect("save_branding deve ser bem-sucedido");
+
+        assert_eq!(updated.company_name, "Locadora Visual Novo");
+
+        // Consulta a auditoria e comprova que NUNCA há dados binários ou Data URI gravados
+        let audits = store.audit.list_by_tenant(&tenant_id, 20).await.unwrap();
+        let branding_audit = audits
+            .iter()
+            .find(|a| a.action == "branding.updated")
+            .expect("Registro de auditoria branding.updated deve existir");
+
+        assert_eq!(branding_audit.entity_type, "tenant_branding");
+        assert_eq!(branding_audit.entity_id, updated.id);
+        assert_eq!(branding_audit.actor_user_id.as_deref(), Some(setup.session.user_id.as_str()));
+
+        // Prova estrita: o sumário é conciso, informativo e sem payload binário
+        assert!(branding_audit.summary.contains("Identidade visual atualizada para 'Locadora Visual Novo'"));
+        assert!(branding_audit.summary.contains("logo_claro: true"));
+        assert!(branding_audit.summary.contains("logo_escuro: true"));
+        assert!(branding_audit.summary.contains("icone: true"));
+        assert!(!branding_audit.summary.contains("data:image"));
+        assert!(!branding_audit.summary.contains("base64"));
+        assert!(!branding_audit.summary.contains("iVBORw0KGgo"));
+        assert!(branding_audit.summary.len() < 300);
+    }
 }

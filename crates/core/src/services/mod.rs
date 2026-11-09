@@ -1370,6 +1370,17 @@ impl CoreServices {
             Box::pin(async move {
                 let updated = stores.branding().save(&session.tenant_id, &validated).await?;
 
+                let audit_detail = format!(
+                    "Identidade visual atualizada para '{}' (primária: {}, secundária: {}, destaque: {}; logo_claro: {}, logo_escuro: {}, icone: {})",
+                    updated.company_name,
+                    updated.primary_color,
+                    updated.secondary_color,
+                    updated.accent_color,
+                    updated.logo_url.is_some(),
+                    updated.logo_dark_url.is_some(),
+                    updated.icon_url.is_some()
+                );
+
                 stores
                     .audit()
                     .append(&build_audit_entry(
@@ -1378,10 +1389,7 @@ impl CoreServices {
                         "branding.updated",
                         "tenant_branding",
                         &updated.id,
-                        &format!(
-                            "Identidade visual atualizada para '{}'",
-                            updated.company_name
-                        ),
+                        &audit_detail,
                     ))
                     .await?;
 
