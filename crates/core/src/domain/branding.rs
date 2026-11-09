@@ -1,4 +1,6 @@
 use crate::error::{CoreError, Result};
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -65,6 +67,10 @@ impl BrandingValidator {
     pub const MAX_ICON_BYTES: usize = 64 * 1024; // 64 KB decodificados
     pub const MAX_COMPANY_NAME_LEN: usize = 80;
 
+    const PREFIX_PNG: &'static str = "data:image/png;base64,";
+    const PREFIX_JPEG: &'static str = "data:image/jpeg;base64,";
+    const PREFIX_WEBP: &'static str = "data:image/webp;base64,";
+
     /// Valida o nome da empresa: entre 1 e 80 caracteres, sem caracteres de controle.
     pub fn validate_company_name(name: &str) -> Result<String> {
         let trimmed = name.trim();
@@ -111,10 +117,8 @@ impl BrandingValidator {
         data_uri: &str,
         is_icon: bool,
     ) -> Result<String> {
-        let trimmed = data_uri.trim();
-
-        // Rejeição estrita a SVG
-        let lower = trimmed.to_ascii_lowercase();
+        // Rejeição estrita a qualquer presença de SVG no Data URI
+        let lower = data_uri.to_ascii_lowercase();
         if lower.contains("<svg") || lower.contains("image/svg") {
             return Err(CoreError::Validation(
                 "Imagens no formato SVG não são permitidas por motivos de segurança. Utilize PNG, JPEG ou WebP."
@@ -122,53 +126,53 @@ impl BrandingValidator {
             ));
         }
 
-        if !trimmed.starts_with("data:image/") {
+        // Validação estrita do prefixo (sem parâmetros adicionais, sem espaços antes/depois)
+        let (mime, payload) = if let Some(rest) = data_uri.strip_prefix(Self::PREFIX_PNG) {
+            ("image/png", rest)
+        } else if let Some(rest) = data_uri.strip_prefix(Self::PREFIX_JPEG) {
+            ("image/jpeg", rest)
+        } else if let Some(rest) = data_uri.strip_prefix(Self::PREFIX_WEBP) {
+            ("image/webp", rest)
+        } else {
             return Err(CoreError::Validation(format!(
-                "{field_name} deve ser um Data URI iniciando com 'data:image/'."
+                "{field_name} deve conter prefixo exato 'data:image/png;base64,', 'data:image/jpeg;base64,' ou 'data:image/webp;base64,' sem parâmetros ou espaços."
             )));
-        }
-
-        let prefix_end = trimmed.find(";base64,").ok_or_else(|| {
-            CoreError::Validation(format!(
-                "{field_name} deve ser codificado em base64 no formato 'data:image/<tipo>;base64,<dados>'."
-            ))
-        })?;
-
-        let mime = &trimmed[5..prefix_end].trim().to_ascii_lowercase();
-        let normalized_mime = match mime.as_str() {
-            "image/png" => "image/png",
-            "image/jpeg" | "image/jpg" => "image/jpeg",
-            "image/webp" => "image/webp",
-            other => {
-                return Err(CoreError::Validation(format!(
-                    "Formato de imagem '{other}' não suportado para {field_name}. Utilize PNG, JPEG ou WebP."
-                )));
-            }
         };
 
-        let payload = &trimmed[prefix_end + 8..];
-        let decoded = decode_base64(payload).ok_or_else(|| {
-            CoreError::Validation(format!(
-                "Dados de base64 inválidos ou corrompidos para {field_name}."
-            ))
-        })?;
-
-        let max_size = if is_icon {
+        let max_decoded_bytes = if is_icon {
             Self::MAX_ICON_BYTES
         } else {
             Self::MAX_LOGO_BYTES
         };
 
-        if decoded.len() > max_size {
+        // Rejeição pré-decodificação pelo tamanho codificado
+        // Em Base64 com padding, cada bloco de 3 bytes resulta em 4 caracteres
+        let max_encoded_len = max_decoded_bytes.div_ceil(3) * 4;
+        if payload.len() > max_encoded_len {
+            return Err(CoreError::Validation(format!(
+                "{field_name} excede o limite máximo permitido de {} KB antes da decodificação.",
+                max_decoded_bytes / 1024
+            )));
+        }
+
+        // Decodificação estrita RFC 4648 sem tolerância a espaços ou quebras de linha
+        let decoded = BASE64_STANDARD.decode(payload.as_bytes()).map_err(|_| {
+            CoreError::Validation(format!(
+                "Dados de base64 inválidos, com padding incorreto ou caracteres ilegais para {field_name}."
+            ))
+        })?;
+
+        // Verificação final do limite sobre o tamanho decodificado
+        if decoded.len() > max_decoded_bytes {
             return Err(CoreError::Validation(format!(
                 "{field_name} excede o limite máximo permitido de {} KB (tamanho decodificado: {} KB).",
-                max_size / 1024,
+                max_decoded_bytes / 1024,
                 decoded.len().div_ceil(1024)
             )));
         }
 
-        // Validação estrita de magic bytes de acordo com o MIME
-        match normalized_mime {
+        // Validação estrita de magic bytes de acordo com o MIME declarado
+        match mime {
             "image/png" => {
                 const PNG_MAGIC: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
                 if decoded.len() < 8 || decoded[0..8] != PNG_MAGIC {
@@ -195,7 +199,15 @@ impl BrandingValidator {
             _ => unreachable!(),
         }
 
-        Ok(format!("data:{normalized_mime};base64,{payload}"))
+        // Rejeição estrita caso o payload decodificado contenha marcação SVG
+        if decoded.windows(4).any(|w| w.eq_ignore_ascii_case(b"<svg")) {
+            return Err(CoreError::Validation(
+                "Imagens no formato SVG não são permitidas por motivos de segurança. Utilize PNG, JPEG ou WebP."
+                    .to_string(),
+            ));
+        }
+
+        Ok(data_uri.to_string())
     }
 
     /// Valida completamente a entrada de atualização de identidade visual.
@@ -237,55 +249,5 @@ impl BrandingValidator {
             logo_dark_url,
             icon_url,
         })
-    }
-}
-
-/// Decodificador Base64 padrão RFC 4648 sem dependências externas.
-pub fn decode_base64(input: &str) -> Option<Vec<u8>> {
-    let mut clean = Vec::with_capacity(input.len());
-    for b in input.bytes() {
-        if b.is_ascii_whitespace() {
-            continue;
-        }
-        clean.push(b);
-    }
-    if clean.is_empty() || clean.len() % 4 != 0 {
-        return None;
-    }
-    let mut out = Vec::with_capacity(clean.len() / 4 * 3);
-    let mut i = 0;
-    while i + 4 <= clean.len() {
-        let chunk = &clean[i..i + 4];
-        i += 4;
-        let b0 = decode_b64_char(chunk[0])?;
-        let b1 = decode_b64_char(chunk[1])?;
-        if chunk[2] == b'=' {
-            if chunk[3] != b'=' {
-                return None;
-            }
-            out.push((b0 << 2) | (b1 >> 4));
-        } else if chunk[3] == b'=' {
-            let b2 = decode_b64_char(chunk[2])?;
-            out.push((b0 << 2) | (b1 >> 4));
-            out.push(((b1 & 0x0F) << 4) | (b2 >> 2));
-        } else {
-            let b2 = decode_b64_char(chunk[2])?;
-            let b3 = decode_b64_char(chunk[3])?;
-            out.push((b0 << 2) | (b1 >> 4));
-            out.push(((b1 & 0x0F) << 4) | (b2 >> 2));
-            out.push(((b2 & 0x03) << 6) | b3);
-        }
-    }
-    Some(out)
-}
-
-fn decode_b64_char(b: u8) -> Option<u8> {
-    match b {
-        b'A'..=b'Z' => Some(b - b'A'),
-        b'a'..=b'z' => Some(b - b'a' + 26),
-        b'0'..=b'9' => Some(b - b'0' + 52),
-        b'+' => Some(62),
-        b'/' => Some(63),
-        _ => None,
     }
 }

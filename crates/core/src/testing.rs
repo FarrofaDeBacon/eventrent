@@ -1235,6 +1235,8 @@ mod unit_tests {
     #[test]
     fn test_branding_validator_images_magic_bytes_and_formats() {
         use crate::domain::{BrandingValidator, UpdateBrandingInput};
+        use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+        use base64::Engine as _;
 
         // 1. Rejeição estrita a SVG
         let svg_input = UpdateBrandingInput {
@@ -1269,7 +1271,6 @@ mod unit_tests {
         assert!(jpeg_res.is_ok());
 
         // 5. WebP válido (RIFF....WEBP)
-        // b"RIFF\x24\x00\x00\x00WEBP" -> UklGRiQAAABXRUJQ
         let valid_webp_uri = "data:image/webp;base64,UklGRiQAAABXRUJQVlA4";
         let webp_res = BrandingValidator::validate_image_data_uri("Logo", valid_webp_uri, false);
         assert!(webp_res.is_ok());
@@ -1280,41 +1281,98 @@ mod unit_tests {
         let gif_res = BrandingValidator::validate_image_data_uri("Logo", gif_uri, false);
         assert!(gif_res.is_err());
 
-        // 7. Base64 corrompido
-        let corrupt_b64_uri = "data:image/png;base64,!!!NaoEB64!!!";
+        // 7. Alfabeto inválido
+        let corrupt_b64_uri = "data:image/png;base64,***NaoEB64***";
         assert!(
             BrandingValidator::validate_image_data_uri("Logo", corrupt_b64_uri, false).is_err()
         );
 
-        // 8. Limite de tamanho: ícone > 64 KB
-        let large_icon_bytes = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-        let mut large_icon_data = large_icon_bytes;
-        large_icon_data.resize(65 * 1024, 0); // 65 KB (> 64 KB)
+        // 8. Padding errado
+        let invalid_padding_uri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAE===";
+        assert!(
+            BrandingValidator::validate_image_data_uri("Logo", invalid_padding_uri, false).is_err()
+        );
 
-        // Codificação simples para o teste de tamanho
-        let mut encoded = String::new();
-        const B64_CHARS: &[u8] =
-            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        for chunk in large_icon_data.chunks(3) {
-            let b0 = chunk[0];
-            let b1 = if chunk.len() > 1 { chunk[1] } else { 0 };
-            let b2 = if chunk.len() > 2 { chunk[2] } else { 0 };
-            encoded.push(B64_CHARS[(b0 >> 2) as usize] as char);
-            encoded.push(B64_CHARS[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize] as char);
-            if chunk.len() > 1 {
-                encoded.push(B64_CHARS[(((b1 & 0x0F) << 2) | (b2 >> 6)) as usize] as char);
-            } else {
-                encoded.push('=');
-            }
-            if chunk.len() > 2 {
-                encoded.push(B64_CHARS[(b2 & 0x3F) as usize] as char);
-            } else {
-                encoded.push('=');
-            }
-        }
-        let large_icon_uri = format!("data:image/png;base64,{encoded}");
-        let large_res = BrandingValidator::validate_image_data_uri("Ícone", &large_icon_uri, true);
-        assert!(large_res.is_err());
-        assert!(large_res.unwrap_err().to_string().contains("64 KB"));
+        // 9. Espaço ou quebra de linha
+        let whitespace_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEA\nAAABAQMAAAAl21bKAAAA";
+        let whitespace_uri = format!("data:image/png;base64,{whitespace_b64}");
+        assert!(
+            BrandingValidator::validate_image_data_uri("Logo", &whitespace_uri, false).is_err()
+        );
+
+        let leading_space_uri = format!("data:image/png;base64, {valid_png_b64}");
+        assert!(
+            BrandingValidator::validate_image_data_uri("Logo", &leading_space_uri, false).is_err()
+        );
+
+        // 10. MIME declarado diferente dos magic bytes (magic bytes de JPEG com prefixo de PNG)
+        let mismatch_uri = "data:image/png;base64,/9j/4AAQSkZJRg==";
+        let mismatch_res = BrandingValidator::validate_image_data_uri("Logo", mismatch_uri, false);
+        assert!(mismatch_res.is_err());
+        assert!(mismatch_res
+            .unwrap_err()
+            .to_string()
+            .contains("PNG inválida"));
+
+        // 11. Dados truncados (menos que o tamanho mínimo de magic bytes)
+        let truncated_uri = "data:image/png;base64,iVBO";
+        let truncated_res =
+            BrandingValidator::validate_image_data_uri("Logo", truncated_uri, false);
+        assert!(truncated_res.is_err());
+
+        // 12. SVG disfarçado de PNG (inicia com <svg ou contém <svg)
+        let svg_disguised_uri =
+            "data:image/png;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjwvc3ZnPg==";
+        let svg_disguised_res =
+            BrandingValidator::validate_image_data_uri("Logo", svg_disguised_uri, false);
+        assert!(svg_disguised_res.is_err());
+
+        // 13. Prefixo com parâmetros adicionais
+        let param_prefix_uri = format!("data:image/png;charset=utf-8;base64,{valid_png_b64}");
+        let param_res =
+            BrandingValidator::validate_image_data_uri("Logo", &param_prefix_uri, false);
+        assert!(param_res.is_err());
+        assert!(param_res.unwrap_err().to_string().contains("prefixo exato"));
+
+        // 14. Limites de tamanho: exatamente no limite e 1 byte acima
+        const PNG_HEADER: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+        // 14.1. Ícone: exatamente 64 KB (65.536 bytes) -> PASSA
+        let mut exact_icon_bytes = Vec::with_capacity(64 * 1024);
+        exact_icon_bytes.extend_from_slice(&PNG_HEADER);
+        exact_icon_bytes.resize(64 * 1024, 0x00);
+        let exact_icon_b64 = BASE64_STANDARD.encode(&exact_icon_bytes);
+        let exact_icon_uri = format!("data:image/png;base64,{exact_icon_b64}");
+        assert!(BrandingValidator::validate_image_data_uri("Ícone", &exact_icon_uri, true).is_ok());
+
+        // 14.2. Ícone: 1 byte acima de 64 KB (65.537 bytes) -> FALHA
+        let mut over_icon_bytes = Vec::with_capacity(64 * 1024 + 1);
+        over_icon_bytes.extend_from_slice(&PNG_HEADER);
+        over_icon_bytes.resize(64 * 1024 + 1, 0x00);
+        let over_icon_b64 = BASE64_STANDARD.encode(&over_icon_bytes);
+        let over_icon_uri = format!("data:image/png;base64,{over_icon_b64}");
+        let over_icon_res =
+            BrandingValidator::validate_image_data_uri("Ícone", &over_icon_uri, true);
+        assert!(over_icon_res.is_err());
+        assert!(over_icon_res.unwrap_err().to_string().contains("64 KB"));
+
+        // 14.3. Logo: exatamente 256 KB (262.144 bytes) -> PASSA
+        let mut exact_logo_bytes = Vec::with_capacity(256 * 1024);
+        exact_logo_bytes.extend_from_slice(&PNG_HEADER);
+        exact_logo_bytes.resize(256 * 1024, 0x00);
+        let exact_logo_b64 = BASE64_STANDARD.encode(&exact_logo_bytes);
+        let exact_logo_uri = format!("data:image/png;base64,{exact_logo_b64}");
+        assert!(BrandingValidator::validate_image_data_uri("Logo", &exact_logo_uri, false).is_ok());
+
+        // 14.4. Logo: 1 byte acima de 256 KB (262.145 bytes) -> FALHA
+        let mut over_logo_bytes = Vec::with_capacity(256 * 1024 + 1);
+        over_logo_bytes.extend_from_slice(&PNG_HEADER);
+        over_logo_bytes.resize(256 * 1024 + 1, 0x00);
+        let over_logo_b64 = BASE64_STANDARD.encode(&over_logo_bytes);
+        let over_logo_uri = format!("data:image/png;base64,{over_logo_b64}");
+        let over_logo_res =
+            BrandingValidator::validate_image_data_uri("Logo", &over_logo_uri, false);
+        assert!(over_logo_res.is_err());
+        assert!(over_logo_res.unwrap_err().to_string().contains("256 KB"));
     }
 }
