@@ -1,8 +1,14 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { toast } from "svelte-sonner";
   import { KeyRound, LogIn } from "lucide-svelte";
-  import { appSession, getAuthRepository } from "$lib/data";
+  import { mode } from "mode-watcher";
+  import {
+    appSession,
+    getAuthRepository,
+    getBrandingRepository,
+  } from "$lib/data";
   import { _ } from "$lib/i18n";
   import { Button } from "$lib/ui/button";
   import {
@@ -72,17 +78,45 @@
       isRecovering = false;
     }
   }
+
+  onMount(async () => {
+    try {
+      const repo = getBrandingRepository();
+      const pub = await repo.getPublicBranding();
+      if (pub) {
+        appSession.setBranding({
+          ...pub,
+          logo_dark_url: pub.logo_dark_url ?? null,
+          icon_url: pub.icon_url ?? null,
+        });
+      }
+    } catch {
+      // Ignora erro no carregamento da marca pública
+    }
+  });
 </script>
 
 <div
   class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12"
 >
   <div class="mb-6 flex flex-col items-center gap-3 text-center">
-    {#if appSession.logoUrl}
+    {#if $mode === "dark" && appSession.logoDarkUrl}
+      <img
+        src={appSession.logoDarkUrl}
+        alt={appSession.companyName}
+        class="h-12 max-w-48 rounded-sm object-contain"
+      />
+    {:else if appSession.logoUrl}
       <img
         src={appSession.logoUrl}
         alt={appSession.companyName}
-        class="h-12 w-12 rounded-sm object-contain"
+        class="h-12 max-w-48 rounded-sm object-contain"
+      />
+    {:else if appSession.iconUrl}
+      <img
+        src={appSession.iconUrl}
+        alt={appSession.companyName}
+        class="h-12 w-12 rounded-sm object-cover"
       />
     {:else}
       <div

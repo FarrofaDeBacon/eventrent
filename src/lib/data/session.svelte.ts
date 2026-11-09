@@ -14,6 +14,8 @@ class AppSessionState {
   session = $state<SessionInfo | null>(null);
   companyName = $state(DEFAULT_COMPANY_NAME);
   logoUrl = $state<string | null>(null);
+  logoDarkUrl = $state<string | null>(null);
+  iconUrl = $state<string | null>(null);
 
   applyStatus(status: AppStatus) {
     this.defaultTenantId = status.default_tenant_id;
@@ -33,11 +35,38 @@ class AppSessionState {
       | "secondary_color"
       | "accent_color"
       | "logo_url"
+      | "logo_dark_url"
+      | "icon_url"
     >,
   ) {
     this.companyName = branding.company_name || DEFAULT_COMPANY_NAME;
     this.logoUrl = branding.logo_url ?? null;
+    this.logoDarkUrl = branding.logo_dark_url ?? null;
+    this.iconUrl = branding.icon_url ?? null;
     applyBranding(branding);
+
+    if (typeof localStorage !== "undefined") {
+      try {
+        localStorage.setItem(
+          "eventrent:branding",
+          JSON.stringify({
+            company_name: this.companyName,
+            primary_color: branding.primary_color,
+            secondary_color: branding.secondary_color,
+            accent_color: branding.accent_color,
+            logo_url: this.logoUrl,
+            logo_dark_url: this.logoDarkUrl,
+            icon_url: this.iconUrl,
+          }),
+        );
+      } catch {
+        // Ignora erros de quota ou modo privado
+      }
+    }
+
+    if (typeof document !== "undefined") {
+      document.title = `${this.companyName} — EventRent`;
+    }
   }
 
   setSession(session: SessionInfo | null) {

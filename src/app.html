@@ -4,6 +4,41 @@
     <meta charset="utf-8" />
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem("eventrent:branding");
+          if (raw) {
+            var b = JSON.parse(raw);
+            if (b.company_name) {
+              document.title = b.company_name + " — EventRent";
+            }
+            if (b.primary_color) {
+              document.documentElement.style.setProperty(
+                "--primary",
+                b.primary_color,
+              );
+              document.documentElement.style.setProperty(
+                "--ring",
+                b.primary_color,
+              );
+            }
+            if (b.secondary_color) {
+              document.documentElement.style.setProperty(
+                "--secondary",
+                b.secondary_color,
+              );
+            }
+            if (b.accent_color) {
+              document.documentElement.style.setProperty(
+                "--accent",
+                b.accent_color,
+              );
+            }
+          }
+        } catch (e) {}
+      })();
+    </script>
     %sveltekit.head%
   </head>
   <body
