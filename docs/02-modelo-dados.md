@@ -149,3 +149,13 @@ Trilha imutável de auditoria para operações sensíveis de segurança, usuári
 - **Monetário**: Valores financeiros sempre em **inteiro** (centavos de Real, ex.: R$ 1.500,00 -> `150000`). Jamais armazenar ponto flutuante (`float`/`double`).
 - **Datas e Horas**: Strings no formato ISO-8601 UTC.
 - **Campos JSON**: Quando permitidos, serializados como texto estruturado e validados por esquemas de domínio, nunca contendo segredos em texto puro ou hashes de autenticação.
+
+## 6. Versionamento e Congelamento de Migrações (Fase 1B.0+)
+
+A partir da conclusão da Fase 1B.0, as migrações existentes:
+
+- `crates/store-sqlite/migrations/0001_init_tenant_and_branding.sql`
+- `crates/store-sqlite/migrations/0002_users_roles_and_audit.sql`
+
+encontram-se **estritamente congeladas e imutáveis**. Qualquer alteração de esquema estrutural no banco de dados (novas tabelas, novas colunas, índices ou triggers) deve obrigatoriamente ser adicionada como uma nova migração incremental (`0003_...`, etc.).
+O pipeline de CI (`.github/workflows/ci.yml`) verifica via `git diff` se essas migrações foram alteradas em relação à `main` e bloqueia a execução caso ocorra qualquer modificação.

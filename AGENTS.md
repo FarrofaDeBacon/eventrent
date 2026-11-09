@@ -72,6 +72,9 @@ Este documento estabelece as diretrizes arquiteturais, de qualidade de código, 
     - Usar índices únicos parciais `WHERE deleted_at IS NULL`, em migração nova; nunca `UNIQUE` simples em tabela com `deleted_at`.
 12. **Escopo de Migrações**:
     - Migrações contêm apenas estrutura, nunca dados de negócio. Dados iniciais do ambiente desktop (como o tenant padrão) são garantidos via código idempotente na inicialização.
+13. **Imutabilidade e Congelamento de Migrações (Fase 1B.0+)**:
+    - As migrações existentes `0001_init_tenant_and_branding.sql` e `0002_users_roles_and_audit.sql` estão permanentemente congeladas e não podem sofrer qualquer alteração.
+    - Qualquer alteração ou extensão de esquema a partir da Fase 1B deve ser feita obrigatoriamente através de novas migrações versionadas incrementais (`0003_...`, etc.). O CI valida e bloqueia alterações nas migrações congeladas em pull requests.
 
 ---
 

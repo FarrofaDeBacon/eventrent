@@ -86,3 +86,17 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_tenant_created
     ON audit_log (tenant_id, created_at DESC);
+
+-- Triggers no banco garantindo que audit_log seja estritamente append-only.
+-- Qualquer tentativa de UPDATE ou DELETE é imediatamente abortada pela engine SQLite.
+CREATE TRIGGER IF NOT EXISTS trg_audit_log_prevent_update
+BEFORE UPDATE ON audit_log
+BEGIN
+    SELECT RAISE(ABORT, 'audit_log é append-only: UPDATE não permitido');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_audit_log_prevent_delete
+BEFORE DELETE ON audit_log
+BEGIN
+    SELECT RAISE(ABORT, 'audit_log é append-only: DELETE não permitido');
+END;

@@ -22,7 +22,9 @@ Embora instruções SQL básicas possam ser escritas de forma semelhante entre S
      - SQLite: `INTEGER 0/1` para booleanos, `TEXT` ISO 8601 para timestamps.
      - PostgreSQL: `BOOLEAN` nativo (`TRUE`/`FALSE`), `TIMESTAMPTZ` nativo com fuso horário UTC.
    - **Placeholders de Parâmetros**: `?` posicional no SQLite versus `$1, $2, ... $n` no PostgreSQL.
-   - **Auditoria Imutável**: Tabela `audit_log` padronizada como puramente append-only (sem colunas `updated_at` nem `deleted_at`), compatível com partições por data e políticas de retenção do PostgreSQL.
+   - **Auditoria Imutável**: Tabela `audit_log` padronizada como puramente append-only (sem colunas `updated_at` nem `deleted_at`) e protegida por integridade estrutural no próprio banco de dados:
+     - **SQLite**: Triggers `trg_audit_log_prevent_update` e `trg_audit_log_prevent_delete` que invocam `SELECT RAISE(ABORT, 'audit_log é append-only: ...')`.
+     - **PostgreSQL (Fase 2.5)**: Trigger `BEFORE UPDATE OR DELETE` que dispara `RAISE EXCEPTION`, combinado com restrição de privilégios (`REVOKE UPDATE, DELETE ON audit_log FROM app_user;`).
 
 ## Consequências
 

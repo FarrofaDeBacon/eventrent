@@ -1,8 +1,6 @@
-use crate::guards::require_session_and_permission;
+use crate::guards::require_session;
 use crate::AppState;
-use eventrent_core::{
-    PublicBranding, TenantBranding, UpdateBrandingInput, PERM_BRANDING_MANAGE, PERM_BRANDING_READ,
-};
+use eventrent_core::{PublicBranding, TenantBranding, UpdateBrandingInput};
 use tauri::State;
 
 fn resolve_tenant_id<'a>(state: &'a AppState, tenant_id: &'a str) -> &'a str {
@@ -27,7 +25,7 @@ pub async fn get_public_branding(
         .branding
         .get_by_tenant_id(&state.default_tenant_id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::map_core_err)?;
 
     Ok(branding.map(PublicBranding::from))
 }
@@ -35,17 +33,14 @@ pub async fn get_public_branding(
 #[tauri::command]
 pub async fn get_branding(
     state: State<'_, AppState>,
-    tenant_id: String,
+    _tenant_id: String,
 ) -> Result<Option<TenantBranding>, String> {
-    let _session = require_session_and_permission(&state, Some(PERM_BRANDING_READ))?;
-    let resolved_id = resolve_tenant_id(&state, &tenant_id);
+    let session = require_session(&state)?;
     state
         .services
-        .stores
-        .branding
-        .get_by_tenant_id(resolved_id)
+        .get_branding(&session)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::map_core_err)
 }
 
 #[tauri::command]
@@ -55,10 +50,10 @@ pub async fn save_branding(
     input: UpdateBrandingInput,
 ) -> Result<TenantBranding, String> {
     let _ = resolve_tenant_id(&state, &tenant_id);
-    let session = require_session_and_permission(&state, Some(PERM_BRANDING_MANAGE))?;
+    let session = require_session(&state)?;
     state
         .services
         .save_branding(&session, &input)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::map_core_err)
 }

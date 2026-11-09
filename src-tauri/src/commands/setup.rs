@@ -23,15 +23,15 @@ pub async fn get_app_status(state: State<'_, AppState>) -> Result<AppStatus, Str
         .users
         .count_by_tenant(&state.default_tenant_id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::map_core_err)?;
     let branding = state
         .services
         .stores
         .branding
         .get_by_tenant_id(&state.default_tenant_id)
         .await
-        .map_err(|e| e.to_string())?;
-    let session = state.touch_and_get_session();
+        .map_err(crate::map_core_err)?;
+    let session = state.get_session_without_touch();
 
     Ok(AppStatus {
         config,
@@ -56,7 +56,7 @@ pub async fn complete_initial_setup(
             current_cfg.inactivity_timeout_minutes,
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::map_core_err)?;
 
     let updated_cfg = AppConfig {
         mode: Some(OperationMode::Local),

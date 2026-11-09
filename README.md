@@ -66,7 +66,7 @@ pnpm tauri dev
 
 Abre a janela nativa do desktop com SQLite integrado no diretório de dados do app.
 
-> **Aviso de Desenvolvimento (Fase 1A)**: A migração `0001_init_tenant_and_branding.sql` foi movida para `crates/store-sqlite/migrations/` e ajustada para substituir `UNIQUE` em linha por índices únicos parciais (`WHERE deleted_at IS NULL`), além da inclusão da migração `0002_users_roles_and_audit.sql`. Bancos locais de desenvolvimento criados na Fase 0 (`eventrent.db`, `eventrent.db-wal`, `eventrent.db-shm` e `config.json` em `%APPDATA%\com.eventrent.app\` no Windows ou `~/.local/share/com.eventrent.app/` no Linux) **devem ser apagados** antes de executar o aplicativo para evitar divergência de checksum do SQLx.
+> **Aviso de Desenvolvimento (Fase 1B.0 — Congelamento de Migrações)**: As migrações `0001_init_tenant_and_branding.sql` e `0002_users_roles_and_audit.sql` foram atualizadas e consolidadas (renomeação da tabela `user` para `app_user`, tabela `audit_log` estritamente append-only protegida por triggers contra UPDATE/DELETE, e índices de performance). Bancos locais de desenvolvimento criados anteriormente (`eventrent.db`, `eventrent.db-wal`, `eventrent.db-shm` e `config.json` em `%APPDATA%\com.eventrent.app\` no Windows ou `~/.local/share/com.eventrent.app/` no Linux) **devem ser apagados** antes de executar a aplicação para evitar conflito de checksum no `sqlx::migrate!`. A partir da Fase 1B, as migrações 0001 e 0002 ficam permanentemente congeladas.
 
 ---
 

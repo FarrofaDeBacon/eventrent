@@ -1,7 +1,7 @@
 pub mod commands;
 pub mod guards;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use eventrent_core::{
     ensure_default_tenant, ensure_system_roles, AppConfig, CoreServices, SessionInfo,
 };
@@ -42,22 +42,52 @@ impl AppState {
         *guard = session;
     }
 
-    pub fn touch_and_get_session(&self) -> Option<SessionInfo> {
+    /// Retorna a sessão ativa se ainda válida, SEM renovar o timestamp de última atividade (touch).
+    /// Garante que polling periódico do frontend (get_current_session) não mantenha a sessão viva indefinidamente.
+    pub fn get_session_without_touch(&self) -> Option<SessionInfo> {
+        self.get_session_at(Utc::now())
+    }
+
+    pub fn get_session_at(&self, now: DateTime<Utc>) -> Option<SessionInfo> {
         let mut guard = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         let current = guard.as_mut()?;
 
-        if self.services.verify_session_active(current).is_err() {
+        if CoreServices::verify_session_active_at(current, now).is_err() {
             *guard = None;
             return None;
         }
 
-        current.last_activity_at = Utc::now().to_rfc3339();
         Some(current.clone())
     }
 
+    /// Exige sessão ativa e RENOVA o timestamp de última atividade (touch).
+    /// Usado exclusivamente pela guarda de comandos protegidos.
     pub fn require_session(&self) -> Result<SessionInfo, String> {
-        self.touch_and_get_session()
-            .ok_or_else(|| "Sessão expirada ou usuário não autenticado.".to_string())
+        self.require_session_at(Utc::now())
+    }
+
+    pub fn require_session_at(&self, now: DateTime<Utc>) -> Result<SessionInfo, String> {
+        let mut guard = self.session.lock().unwrap_or_else(PoisonError::into_inner);
+        let current = guard
+            .as_mut()
+            .ok_or_else(|| "Sessão expirada ou usuário não autenticado.".to_string())?;
+
+        if CoreServices::verify_session_active_at(current, now).is_err() {
+            *guard = None;
+            return Err("Sessão expirada por inatividade.".to_string());
+        }
+
+        current.last_activity_at = now.to_rfc3339();
+        Ok(current.clone())
+    }
+}
+
+pub fn map_core_err(err: eventrent_core::CoreError) -> String {
+    match &err {
+        eventrent_core::CoreError::TransientConflict(msg) => {
+            format!("O sistema está temporariamente ocupado processando outra operação concorrente ({msg}). Por favor, tente novamente em instantes.")
+        }
+        _ => err.to_string(),
     }
 }
 
@@ -232,7 +262,7 @@ async fn initialize_app(app_handle: &AppHandle) -> Result<(AppState, PathBuf), (
     ensure_system_roles(
         &default_tenant_id,
         store_bundle.roles.as_ref(),
-        Some(store_bundle.audit.as_ref()),
+        store_bundle.audit.as_ref(),
     )
     .await
     .map_err(|e| {
@@ -359,5 +389,112 @@ mod tests {
         assert!(loaded.setup_completed);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_get_current_session_does_not_renew_last_activity_at() {
+        use chrono::Duration;
+        use eventrent_core::SessionInfo;
+        use eventrent_store_sqlite::init_memory_db;
+
+        let pool = init_memory_db().await.unwrap();
+        let stores = eventrent_store_sqlite::SqliteStore::new(pool).into_bundle();
+        let services = CoreServices::new(stores);
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "eventrent_session_test_{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        let config_path = temp_dir.join("config.json");
+
+        let app_state = AppState {
+            services,
+            default_tenant_id: "test-tenant".to_string(),
+            config_path,
+            config: Mutex::new(AppConfig::default()),
+            session: Mutex::new(None),
+        };
+
+        let base_time = Utc::now();
+        let session = SessionInfo {
+            user_id: "u1".to_string(),
+            tenant_id: "test-tenant".to_string(),
+            name: "Operador".to_string(),
+            email: "op@luzesom.com.br".to_string(),
+            role_id: "r1".to_string(),
+            role_name: "Comercial".to_string(),
+            role_slug: "commercial".to_string(),
+            permissions: vec!["customer:read".to_string()],
+            authenticated_at: base_time.to_rfc3339(),
+            last_activity_at: base_time.to_rfc3339(),
+            inactivity_timeout_minutes: 30,
+        };
+        app_state.set_session(Some(session));
+
+        // 1. Chamada de polling (get_session_without_touch) 15 minutos depois:
+        // A sessão é retornada, MAS last_activity_at NÃO é renovado
+        let t15 = base_time + Duration::minutes(15);
+        let s15 = app_state
+            .get_session_at(t15)
+            .expect("Sessão deve estar ativa aos 15 min");
+        assert_eq!(
+            s15.last_activity_at,
+            base_time.to_rfc3339(),
+            "Polling não deve alterar last_activity_at"
+        );
+
+        // 2. Chamada de polling aos 25 minutos: ainda não renovou
+        let t25 = base_time + Duration::minutes(25);
+        let s25 = app_state
+            .get_session_at(t25)
+            .expect("Sessão deve estar ativa aos 25 min");
+        assert_eq!(
+            s25.last_activity_at,
+            base_time.to_rfc3339(),
+            "Polling contínuo não pode renovar a sessão"
+        );
+
+        // 3. Chamada de polling aos 31 minutos (sem nenhum comando protegido invocado):
+        // Expirou!
+        let t31 = base_time + Duration::minutes(31);
+        let s31 = app_state.get_session_at(t31);
+        assert!(
+            s31.is_none(),
+            "Sessão deve expirar aos 31 min se apenas polling ocorreu"
+        );
+
+        // 4. Cenário com comando protegido: reinicia sessão e executa require_session_at aos 20 min
+        let new_session = SessionInfo {
+            user_id: "u1".to_string(),
+            tenant_id: "test-tenant".to_string(),
+            name: "Operador".to_string(),
+            email: "op@luzesom.com.br".to_string(),
+            role_id: "r1".to_string(),
+            role_name: "Comercial".to_string(),
+            role_slug: "commercial".to_string(),
+            permissions: vec!["customer:read".to_string()],
+            authenticated_at: base_time.to_rfc3339(),
+            last_activity_at: base_time.to_rfc3339(),
+            inactivity_timeout_minutes: 30,
+        };
+        app_state.set_session(Some(new_session));
+
+        let t20 = base_time + Duration::minutes(20);
+        let s_touched = app_state
+            .require_session_at(t20)
+            .expect("Comando protegido deve ter sucesso aos 20 min");
+        assert_eq!(
+            s_touched.last_activity_at,
+            t20.to_rfc3339(),
+            "Comando protegido DEVE renovar last_activity_at"
+        );
+
+        // Agora aos 40 min do início (20 min após o comando protegido), a sessão continua viva:
+        let t40 = base_time + Duration::minutes(40);
+        let s40 = app_state.get_session_at(t40);
+        assert!(
+            s40.is_some(),
+            "Sessão deve continuar viva porque comando protegido aos 20 min renovou a atividade"
+        );
     }
 }

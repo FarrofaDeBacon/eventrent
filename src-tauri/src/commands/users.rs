@@ -1,19 +1,18 @@
-use crate::guards::require_session_and_permission;
+use crate::guards::require_session;
 use crate::AppState;
 use eventrent_core::{
     CreateUserInput, ResetPasswordInput, RoleWithPermissions, UpdateUserInput, UserWithRole,
-    PERM_ROLE_READ, PERM_USER_MANAGE, PERM_USER_READ,
 };
 use tauri::State;
 
 #[tauri::command]
 pub async fn list_users(state: State<'_, AppState>) -> Result<Vec<UserWithRole>, String> {
-    let session = require_session_and_permission(&state, Some(PERM_USER_READ))?;
+    let session = require_session(&state)?;
     state
         .services
         .list_users(&session)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::map_core_err)
 }
 
 #[tauri::command]
@@ -21,12 +20,12 @@ pub async fn create_user(
     state: State<'_, AppState>,
     input: CreateUserInput,
 ) -> Result<UserWithRole, String> {
-    let session = require_session_and_permission(&state, Some(PERM_USER_MANAGE))?;
+    let session = require_session(&state)?;
     state
         .services
         .create_user(&session, &input)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::map_core_err)
 }
 
 #[tauri::command]
@@ -35,12 +34,12 @@ pub async fn update_user(
     user_id: String,
     input: UpdateUserInput,
 ) -> Result<UserWithRole, String> {
-    let session = require_session_and_permission(&state, Some(PERM_USER_MANAGE))?;
+    let session = require_session(&state)?;
     state
         .services
         .update_user(&session, &user_id, &input)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::map_core_err)
 }
 
 #[tauri::command]
@@ -49,12 +48,12 @@ pub async fn set_user_active(
     user_id: String,
     active: bool,
 ) -> Result<UserWithRole, String> {
-    let session = require_session_and_permission(&state, Some(PERM_USER_MANAGE))?;
+    let session = require_session(&state)?;
     state
         .services
         .set_user_active(&session, &user_id, active)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::map_core_err)
 }
 
 #[tauri::command]
@@ -63,20 +62,20 @@ pub async fn reset_user_password(
     user_id: String,
     input: ResetPasswordInput,
 ) -> Result<(), String> {
-    let session = require_session_and_permission(&state, Some(PERM_USER_MANAGE))?;
+    let session = require_session(&state)?;
     state
         .services
         .reset_user_password(&session, &user_id, &input)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::map_core_err)
 }
 
 #[tauri::command]
 pub async fn list_roles(state: State<'_, AppState>) -> Result<Vec<RoleWithPermissions>, String> {
-    let session = require_session_and_permission(&state, Some(PERM_ROLE_READ))?;
+    let session = require_session(&state)?;
     state
         .services
         .list_roles(&session)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::map_core_err)
 }

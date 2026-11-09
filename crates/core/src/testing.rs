@@ -1,5 +1,5 @@
 use crate::domain::{
-    CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput, OperationMode,
+    CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
     RecoverPasswordInput, ResetPasswordInput, SessionInfo, UpdateBrandingInput, UpdateUserInput,
     UserRecord, UserWithRole, ROLE_SLUG_COMMERCIAL, ROLE_SLUG_OWNER,
 };
@@ -35,22 +35,14 @@ pub async fn contract_default_seeds(stores: &StoreBundle) -> String {
 
 /// 2. Contrato: Idempotência de ensure_system_roles (5 perfis de sistema com permissões granulares e reparo com auditoria).
 pub async fn contract_system_roles(stores: &StoreBundle, tenant_id: &str) {
-    let roles = ensure_system_roles(
-        tenant_id,
-        stores.roles.as_ref(),
-        Some(stores.audit.as_ref()),
-    )
-    .await
-    .expect("Falha em ensure_system_roles");
+    let roles = ensure_system_roles(tenant_id, stores.roles.as_ref(), stores.audit.as_ref())
+        .await
+        .expect("Falha em ensure_system_roles");
     assert_eq!(roles.len(), 5);
 
-    let roles_again = ensure_system_roles(
-        tenant_id,
-        stores.roles.as_ref(),
-        Some(stores.audit.as_ref()),
-    )
-    .await
-    .expect("Segunda chamada a ensure_system_roles falhou");
+    let roles_again = ensure_system_roles(tenant_id, stores.roles.as_ref(), stores.audit.as_ref())
+        .await
+        .expect("Segunda chamada a ensure_system_roles falhou");
     assert_eq!(roles_again.len(), 5);
 
     // B5: Simula adulteração de permissões para validar detecção por conjunto e auditoria
@@ -70,13 +62,9 @@ pub async fn contract_system_roles(stores: &StoreBundle, tenant_id: &str) {
         .await
         .expect("Falha ao adulterar permissões para teste");
 
-    let repaired = ensure_system_roles(
-        tenant_id,
-        stores.roles.as_ref(),
-        Some(stores.audit.as_ref()),
-    )
-    .await
-    .expect("Falha ao reparar perfis divergentes");
+    let repaired = ensure_system_roles(tenant_id, stores.roles.as_ref(), stores.audit.as_ref())
+        .await
+        .expect("Falha ao reparar perfis divergentes");
     let repaired_comm = repaired
         .iter()
         .find(|r| r.slug == ROLE_SLUG_COMMERCIAL)
@@ -209,6 +197,7 @@ pub async fn contract_user_creation_and_rbac(
                 email: "carlos@luzesom.com.br".to_string(),
                 password: "Carlos#2026".to_string(),
             },
+            &LoginPolicy::default(),
             30,
         )
         .await
@@ -250,6 +239,7 @@ pub async fn contract_user_creation_and_rbac(
                 email: "inexistente@luzesom.com.br".to_string(),
                 password: "SenhaQualquer#123".to_string(),
             },
+            &LoginPolicy::default(),
             30,
         )
         .await;
@@ -306,6 +296,7 @@ pub async fn contract_user_lockout(services: &CoreServices, tenant_id: &str) {
                     email: "carlos@luzesom.com.br".to_string(),
                     password: "SenhaErrada".to_string(),
                 },
+                &LoginPolicy::default(),
                 30,
             )
             .await;
@@ -315,12 +306,16 @@ pub async fn contract_user_lockout(services: &CoreServices, tenant_id: &str) {
         );
     }
 
+    // 5ª tentativa com política Desktop (reveal_account_locked: true) revela AccountLocked
     let fifth_attempt = services
         .login(
             tenant_id,
             &LoginInput {
                 email: "carlos@luzesom.com.br".to_string(),
                 password: "SenhaErrada".to_string(),
+            },
+            &LoginPolicy {
+                reveal_account_locked: true,
             },
             30,
         )
@@ -330,13 +325,35 @@ pub async fn contract_user_lockout(services: &CoreServices, tenant_id: &str) {
         Err(CoreError::AccountLocked { .. })
     ));
 
-    // Mesmo com a senha correta, enquanto bloqueado deve recusar com AccountLocked
+    // Com política de nuvem/padrão (reveal_account_locked: false), não revela o bloqueio (anti-enumeração e DoS)
+    let obscured_locked_try = services
+        .login(
+            tenant_id,
+            &LoginInput {
+                email: "carlos@luzesom.com.br".to_string(),
+                password: "Carlos#2026".to_string(),
+            },
+            &LoginPolicy {
+                reveal_account_locked: false,
+            },
+            30,
+        )
+        .await;
+    assert!(matches!(
+        obscured_locked_try,
+        Err(CoreError::InvalidCredentials)
+    ));
+
+    // Mesmo com a senha correta, enquanto bloqueado no desktop deve recusar com AccountLocked
     let locked_try = services
         .login(
             tenant_id,
             &LoginInput {
                 email: "carlos@luzesom.com.br".to_string(),
                 password: "Carlos#2026".to_string(),
+            },
+            &LoginPolicy {
+                reveal_account_locked: true,
             },
             30,
         )
@@ -369,6 +386,7 @@ pub async fn contract_password_reset_clears_lockout(
                 email: "carlos@luzesom.com.br".to_string(),
                 password: "NovaSenhaCarlos#2026".to_string(),
             },
+            &LoginPolicy::default(),
             30,
         )
         .await;
@@ -418,6 +436,7 @@ pub async fn contract_recovery_key_rotation_and_lockout(
                 email: "ana@luzesom.com.br".to_string(),
                 password: "AnaRecuperada#2026".to_string(),
             },
+            &LoginPolicy::default(),
             30,
         )
         .await;
@@ -780,5 +799,159 @@ mod unit_tests {
         assert!(validate_email(".ponto-inicio@dominio.com").is_err());
         assert!(validate_email("ponto..duplo@dominio.com").is_err());
         assert!(validate_email("usuario@-hifen-inicio.com").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_dummy_argon2_hash_validity_and_params() {
+        use crate::services::{verify_secret, DUMMY_ARGON2_HASH};
+        use argon2::password_hash::PasswordHash;
+
+        // 1. O hash fictício deve ser sintaticamente válido segundo o padrão PHC
+        let parsed = PasswordHash::new(DUMMY_ARGON2_HASH)
+            .expect("DUMMY_ARGON2_HASH deve ser um hash PHC válido");
+
+        // 2. O algoritmo deve ser Argon2id
+        assert_eq!(parsed.algorithm.as_str(), "argon2id");
+
+        // 3. A versão do Argon2 deve ser 0x13 (19 decimal)
+        assert_eq!(parsed.version, Some(19));
+
+        // 4. Os parâmetros devem ser idênticos aos parâmetros de produção (OWASP):
+        // m = 19456 (19 MiB), t = 2 (iterações), p = 1 (grau de paralelismo)
+        let m_param = parsed.params.get("m").expect("Parâmetro 'm' ausente");
+        let t_param = parsed.params.get("t").expect("Parâmetro 't' ausente");
+        let p_param = parsed.params.get("p").expect("Parâmetro 'p' ausente");
+
+        assert_eq!(m_param.decimal().unwrap(), 19456);
+        assert_eq!(t_param.decimal().unwrap(), 2);
+        assert_eq!(p_param.decimal().unwrap(), 1);
+
+        // 5. A verificação criptográfica com qualquer senha deve executar a carga do Argon2id
+        // e retornar Ok(false) sem erro
+        let verification = verify_secret("senha_qualquer", DUMMY_ARGON2_HASH).await;
+        assert!(verification.is_ok());
+        assert!(!verification.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_run_in_tx_retry_and_max_retries() {
+        use crate::error::{CoreError, Result};
+        use crate::store::{
+            run_in_tx, AuditStore, BrandingStore, RoleStore, TenantStore, TransactionManager,
+            TransactionPolicy, TxStoreBundle, UserStore,
+        };
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        struct DummyTxBundle;
+        #[async_trait]
+        impl TxStoreBundle for DummyTxBundle {
+            fn tenants(&self) -> &dyn TenantStore {
+                unreachable!()
+            }
+            fn branding(&self) -> &dyn BrandingStore {
+                unreachable!()
+            }
+            fn roles(&self) -> &dyn RoleStore {
+                unreachable!()
+            }
+            fn users(&self) -> &dyn UserStore {
+                unreachable!()
+            }
+            fn audit(&self) -> &dyn AuditStore {
+                unreachable!()
+            }
+            async fn commit(self: Box<Self>) -> Result<()> {
+                Ok(())
+            }
+            async fn rollback(self: Box<Self>) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        struct MockTxManager {
+            pub begin_count: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl TransactionManager for MockTxManager {
+            async fn begin_transaction(&self) -> Result<Box<dyn TxStoreBundle>> {
+                self.begin_count.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::new(DummyTxBundle))
+            }
+        }
+
+        let policy = TransactionPolicy {
+            max_retries: 3,
+            initial_backoff_ms: 1,
+        };
+
+        // Cenário 1: Sucesso após 2 TransientConflict (tentativa 1 falha, 2 falha, 3 sucesso)
+        let begin_count = Arc::new(AtomicUsize::new(0));
+        let mgr = MockTxManager {
+            begin_count: begin_count.clone(),
+        };
+        let exec_count = Arc::new(AtomicUsize::new(0));
+        let exec_count_clone = exec_count.clone();
+
+        let res: Result<&str> = run_in_tx(&mgr, &policy, move |_| {
+            let exec_count = exec_count_clone.clone();
+            Box::pin(async move {
+                let current = exec_count.fetch_add(1, Ordering::SeqCst);
+                if current < 2 {
+                    Err(CoreError::TransientConflict("lock contend".into()))
+                } else {
+                    Ok("sucesso")
+                }
+            })
+        })
+        .await;
+
+        assert_eq!(res.unwrap(), "sucesso");
+        assert_eq!(begin_count.load(Ordering::SeqCst), 3);
+        assert_eq!(exec_count.load(Ordering::SeqCst), 3);
+
+        // Cenário 2: Excede max_retries (falha 4 vezes, excede max_retries = 3)
+        let begin_count2 = Arc::new(AtomicUsize::new(0));
+        let mgr2 = MockTxManager {
+            begin_count: begin_count2.clone(),
+        };
+        let exec_count2 = Arc::new(AtomicUsize::new(0));
+        let exec_count2_clone = exec_count2.clone();
+
+        let res2: Result<()> = run_in_tx(&mgr2, &policy, move |_| {
+            let exec_count = exec_count2_clone.clone();
+            Box::pin(async move {
+                exec_count.fetch_add(1, Ordering::SeqCst);
+                Err(CoreError::TransientConflict("sqlite busy".into()))
+            })
+        })
+        .await;
+
+        assert!(matches!(res2, Err(CoreError::TransientConflict(_))));
+        assert_eq!(begin_count2.load(Ordering::SeqCst), 4); // 1 tentativa inicial + 3 retries
+        assert_eq!(exec_count2.load(Ordering::SeqCst), 4);
+
+        // Cenário 3: Erro não transiente (Validation) aborta imediatamente sem retry
+        let begin_count3 = Arc::new(AtomicUsize::new(0));
+        let mgr3 = MockTxManager {
+            begin_count: begin_count3.clone(),
+        };
+        let exec_count3 = Arc::new(AtomicUsize::new(0));
+        let exec_count3_clone = exec_count3.clone();
+
+        let res3: Result<()> = run_in_tx(&mgr3, &policy, move |_| {
+            let exec_count = exec_count3_clone.clone();
+            Box::pin(async move {
+                exec_count.fetch_add(1, Ordering::SeqCst);
+                Err(CoreError::Validation("dados inválidos".into()))
+            })
+        })
+        .await;
+
+        assert!(matches!(res3, Err(CoreError::Validation(_))));
+        assert_eq!(begin_count3.load(Ordering::SeqCst), 1);
+        assert_eq!(exec_count3.load(Ordering::SeqCst), 1);
     }
 }
