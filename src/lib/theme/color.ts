@@ -11,17 +11,7 @@ export interface OklchColor {
 }
 
 export type ScaleStep =
-  | 50
-  | 100
-  | 200
-  | 300
-  | 400
-  | 500
-  | 600
-  | 700
-  | 800
-  | 900
-  | 950;
+  50 | 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900 | 950;
 
 export interface ScaleItem {
   hex: string;
@@ -222,11 +212,7 @@ export function oklchToGamutMappedRgb(
   for (let i = 0; i < 20; i++) {
     const mid = (low + high) / 2;
     raw = oklchToLinearRgbInternal(l, mid, h);
-    srgb = [
-      linearToSrgb(raw[0]),
-      linearToSrgb(raw[1]),
-      linearToSrgb(raw[2]),
-    ];
+    srgb = [linearToSrgb(raw[0]), linearToSrgb(raw[1]), linearToSrgb(raw[2])];
     if (inGamut(srgb)) {
       bestRgb = [
         Math.min(1, Math.max(0, srgb[0])),
@@ -321,7 +307,9 @@ export interface ForegroundOption {
  * Escolhe automaticamente a cor de texto (foreground) acessível (branco ou escuro)
  * garantindo taxa de contraste >= 4.5:1 (WCAG AA) em relação ao fundo.
  */
-export function getAccessibleForeground(backgroundHex: string): ForegroundOption {
+export function getAccessibleForeground(
+  backgroundHex: string,
+): ForegroundOption {
   const whiteHex = "#ffffff";
   const darkHex = "#090d16"; // Escuro neutro de alta fidelidade
   const whiteCss = "oklch(0.99 0 0)";

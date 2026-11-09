@@ -54,6 +54,8 @@ describe("Color Engine - OKLCH & WCAG Contrast (src/lib/theme/color.ts)", () => 
     it("formata string CSS oklch válida", () => {
       const css = oklchToCss(0.65, 0.2, 260);
       expect(css).toBe("oklch(0.65 0.2 260)");
+      expect(oklchToHex(1, 0, 0)).toBe("#ffffff");
+      expect(oklchToHex(0, 0, 0)).toBe("#000000");
     });
   });
 

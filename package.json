@@ -12,7 +12,8 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:e2e": "playwright test",
-    "lint": "prettier --check . && eslint .",
+    "lint": "node scripts/check-no-hardcoded-colors.js && prettier --check . && eslint .",
+    "lint:colors": "node scripts/check-no-hardcoded-colors.js",
     "format": "prettier --write .",
     "tauri": "tauri"
   },
