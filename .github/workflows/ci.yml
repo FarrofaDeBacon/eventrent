@@ -22,19 +22,17 @@ jobs:
     steps:
       - name: Checkout do Repositório
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Validar congelamento das migrações 0001 e 0002
         if: github.event_name == 'pull_request'
         shell: bash
         run: |
-          if [ "${{ github.head_ref }}" = "fase-1b0-transacoes" ]; then
-            echo "Fase 1B.0 é a fase de congelamento das migrações 0001 e 0002. Verificação ativa para próximas fases."
-            exit 0
-          fi
-          git fetch origin ${{ github.base_ref }} --depth=1
+          git fetch origin ${{ github.base_ref }}
           MODIFIED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '^crates/store-sqlite/migrations/000[12]_' || true)
           if [ -n "$MODIFIED" ]; then
-            echo "::error::As migrações 0001 e 0002 foram congeladas na Fase 1B.0 e não podem ser modificadas:"
+            echo "::error::As migrações 0001 e 0002 foram congeladas e não podem ser modificadas:"
             echo "$MODIFIED"
             echo "Crie uma nova migração (ex: 0003_...) para qualquer evolução de esquema."
             exit 1
