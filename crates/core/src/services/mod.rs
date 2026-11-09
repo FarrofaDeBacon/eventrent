@@ -248,6 +248,8 @@ pub async fn ensure_default_tenant(
             secondary_color: "#475569".to_string(),
             accent_color: "#7c3aed".to_string(),
             logo_url: None,
+            logo_dark_url: None,
+            icon_url: None,
         };
         branding.save(&tenant_id, &default_branding).await?;
     }
@@ -501,7 +503,9 @@ impl CoreServices {
                         .as_ref()
                         .map(|b| b.accent_color.clone())
                         .unwrap_or_else(|| "#7c3aed".to_string()),
-                    logo_url: current_branding.and_then(|b| b.logo_url),
+                    logo_url: current_branding.as_ref().and_then(|b| b.logo_url.clone()),
+                    logo_dark_url: current_branding.as_ref().and_then(|b| b.logo_dark_url.clone()),
+                    icon_url: current_branding.as_ref().and_then(|b| b.icon_url.clone()),
                 };
                 let branding = stores.branding().save(&tenant_id, &branding_input).await?;
 

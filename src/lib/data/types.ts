@@ -112,6 +112,8 @@ export interface TenantBranding {
   secondary_color: string;
   accent_color: string;
   logo_url: string | null;
+  logo_dark_url: string | null;
+  icon_url: string | null;
   favicon_url: string | null;
   created_at: string;
   updated_at: string;
@@ -125,6 +127,8 @@ export interface UpdateBrandingInput {
   secondary_color: string;
   accent_color: string;
   logo_url?: string | null;
+  logo_dark_url?: string | null;
+  icon_url?: string | null;
 }
 
 export interface PublicBranding {
@@ -133,6 +137,8 @@ export interface PublicBranding {
   secondary_color: string;
   accent_color: string;
   logo_url: string | null;
+  logo_dark_url: string | null;
+  icon_url: string | null;
 }
 
 /**

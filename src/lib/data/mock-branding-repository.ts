@@ -23,6 +23,8 @@ export class MockBrandingRepository implements BrandingRepository {
         secondary_color: initialBranding.secondary_color ?? "#475569",
         accent_color: initialBranding.accent_color ?? "#7c3aed",
         logo_url: initialBranding.logo_url ?? null,
+        logo_dark_url: initialBranding.logo_dark_url ?? null,
+        icon_url: initialBranding.icon_url ?? null,
         favicon_url: null,
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-01T00:00:00Z",
@@ -41,6 +43,8 @@ export class MockBrandingRepository implements BrandingRepository {
       secondary_color: current.secondary_color,
       accent_color: current.accent_color,
       logo_url: current.logo_url ?? null,
+      logo_dark_url: current.logo_dark_url ?? null,
+      icon_url: current.icon_url ?? null,
     };
   }
 
@@ -65,6 +69,8 @@ export class MockBrandingRepository implements BrandingRepository {
       secondary_color: input.secondary_color,
       accent_color: input.accent_color,
       logo_url: input.logo_url ?? null,
+      logo_dark_url: input.logo_dark_url ?? null,
+      icon_url: input.icon_url ?? null,
       updated_at: new Date().toISOString(),
     };
 

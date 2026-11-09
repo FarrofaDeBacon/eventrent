@@ -9,6 +9,8 @@ pub struct TenantBranding {
     pub secondary_color: String,
     pub accent_color: String,
     pub logo_url: Option<String>,
+    pub logo_dark_url: Option<String>,
+    pub icon_url: Option<String>,
     pub favicon_url: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -23,6 +25,8 @@ pub struct UpdateBrandingInput {
     pub secondary_color: String,
     pub accent_color: String,
     pub logo_url: Option<String>,
+    pub logo_dark_url: Option<String>,
+    pub icon_url: Option<String>,
 }
 
 /// Dados públicos de identidade visual (não sensíveis).
@@ -35,6 +39,8 @@ pub struct PublicBranding {
     pub secondary_color: String,
     pub accent_color: String,
     pub logo_url: Option<String>,
+    pub logo_dark_url: Option<String>,
+    pub icon_url: Option<String>,
 }
 
 impl From<TenantBranding> for PublicBranding {
@@ -45,6 +51,8 @@ impl From<TenantBranding> for PublicBranding {
             secondary_color: b.secondary_color,
             accent_color: b.accent_color,
             logo_url: b.logo_url,
+            logo_dark_url: b.logo_dark_url,
+            icon_url: b.icon_url,
         }
     }
 }

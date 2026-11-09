@@ -449,8 +449,8 @@ impl BrandingStore for SqliteStore {
                 sqlx::query(
                     r#"
                     SELECT id, tenant_id, company_name, primary_color, secondary_color,
-                           accent_color, logo_url, favicon_url, created_at, updated_at,
-                           deleted_at, created_by
+                           accent_color, logo_url, logo_dark_url, icon_url, favicon_url,
+                           created_at, updated_at, deleted_at, created_by
                     FROM tenant_branding
                     WHERE tenant_id = ? AND deleted_at IS NULL
                     LIMIT 1
@@ -468,6 +468,8 @@ impl BrandingStore for SqliteStore {
             secondary_color: r.get("secondary_color"),
             accent_color: r.get("accent_color"),
             logo_url: r.get("logo_url"),
+            logo_dark_url: r.get("logo_dark_url"),
+            icon_url: r.get("icon_url"),
             favicon_url: r.get("favicon_url"),
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),
@@ -486,7 +488,7 @@ impl BrandingStore for SqliteStore {
                     r#"
                     UPDATE tenant_branding
                     SET company_name = ?, primary_color = ?, secondary_color = ?,
-                        accent_color = ?, logo_url = ?, updated_at = ?
+                        accent_color = ?, logo_url = ?, logo_dark_url = ?, icon_url = ?, updated_at = ?
                     WHERE id = ? AND deleted_at IS NULL
                     "#,
                 )
@@ -495,6 +497,8 @@ impl BrandingStore for SqliteStore {
                 .bind(&input.secondary_color)
                 .bind(&input.accent_color)
                 .bind(&input.logo_url)
+                .bind(&input.logo_dark_url)
+                .bind(&input.icon_url)
                 .bind(&now)
                 .bind(&branding.id),
             )
@@ -505,6 +509,8 @@ impl BrandingStore for SqliteStore {
             branding.secondary_color = input.secondary_color.clone();
             branding.accent_color = input.accent_color.clone();
             branding.logo_url = input.logo_url.clone();
+            branding.logo_dark_url = input.logo_dark_url.clone();
+            branding.icon_url = input.icon_url.clone();
             branding.updated_at = now;
 
             Ok(branding)
@@ -516,9 +522,9 @@ impl BrandingStore for SqliteStore {
                     r#"
                     INSERT INTO tenant_branding (
                         id, tenant_id, company_name, primary_color, secondary_color,
-                        accent_color, logo_url, favicon_url, created_at, updated_at,
-                        deleted_at, created_by
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
+                        accent_color, logo_url, logo_dark_url, icon_url, favicon_url,
+                        created_at, updated_at, deleted_at, created_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
                     "#,
                 )
                 .bind(&new_id)
@@ -528,6 +534,8 @@ impl BrandingStore for SqliteStore {
                 .bind(&input.secondary_color)
                 .bind(&input.accent_color)
                 .bind(&input.logo_url)
+                .bind(&input.logo_dark_url)
+                .bind(&input.icon_url)
                 .bind(&now)
                 .bind(&now),
             )

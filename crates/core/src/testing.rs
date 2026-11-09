@@ -226,6 +226,8 @@ pub async fn contract_user_creation_and_rbac(
                 secondary_color: "#000000".to_string(),
                 accent_color: "#000000".to_string(),
                 logo_url: None,
+                logo_dark_url: None,
+                icon_url: None,
             },
         )
         .await;
@@ -576,6 +578,41 @@ pub async fn contract_unique_partial_indexes(stores: &StoreBundle, tenant_id: &s
     );
 }
 
+/// 11. Contrato: Branding suporta logo claro, logo escuro e ícone (migração 0003).
+pub async fn contract_branding_dark_logo_and_icon(stores: &StoreBundle, tenant_id: &str) {
+    let input = UpdateBrandingInput {
+        company_name: "Locadora White Label".to_string(),
+        primary_color: "#1e40af".to_string(),
+        secondary_color: "#3b82f6".to_string(),
+        accent_color: "#f59e0b".to_string(),
+        logo_url: Some("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY44YAAAAASUVORK5CYII=".to_string()),
+        logo_dark_url: Some("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY44YAAAAASUVORK5CYII=".to_string()),
+        icon_url: Some("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY44YAAAAASUVORK5CYII=".to_string()),
+    };
+
+    let saved = stores
+        .branding
+        .save(tenant_id, &input)
+        .await
+        .expect("Falha ao salvar tenant_branding com logo escuro e ícone");
+
+    assert_eq!(saved.company_name, "Locadora White Label");
+    assert_eq!(saved.logo_url, input.logo_url);
+    assert_eq!(saved.logo_dark_url, input.logo_dark_url);
+    assert_eq!(saved.icon_url, input.icon_url);
+
+    let retrieved = stores
+        .branding
+        .get_by_tenant_id(tenant_id)
+        .await
+        .expect("Falha ao buscar tenant_branding")
+        .expect("Branding deve existir");
+
+    assert_eq!(retrieved.logo_url, input.logo_url);
+    assert_eq!(retrieved.logo_dark_url, input.logo_dark_url);
+    assert_eq!(retrieved.icon_url, input.icon_url);
+}
+
 /// Suíte genérica agregadora de testes de contrato.
 /// Executa todos os testes comportamentais sequencialmente sobre um mesmo ambiente.
 pub async fn run_store_contract_suite<F, Fut>(factory: F)
@@ -611,6 +648,7 @@ where
 
     contract_audit_log(&stores, &tenant_id).await;
     contract_unique_partial_indexes(&stores, &tenant_id).await;
+    contract_branding_dark_logo_and_icon(&stores, &tenant_id).await;
 }
 
 #[cfg(test)]
@@ -767,6 +805,8 @@ mod unit_tests {
                 secondary_color: "#000".to_string(),
                 accent_color: "#000".to_string(),
                 logo_url: None,
+                logo_dark_url: None,
+                icon_url: None,
                 favicon_url: None,
                 created_at: "2026-01-01T00:00:00Z".to_string(),
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
