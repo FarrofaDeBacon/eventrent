@@ -53,6 +53,8 @@ Todos os itens foram desenvolvidos e commitados individualmente (um commit por i
 Histórico linear da branch `fase-1b1-marca` a partir da tag `v0.3.0-fase1b0`:
 
 ```text
+45293c6 style: formata codigo rust com cargo fmt de acordo com as regras de ci
+2c5543c docs: adiciona relatorio completo de conclusao da fase 1b.1
 e5e4157 docs: atualiza design-system e modelo de dados com tokens e colunas de marca
 908188f test(branding): adiciona testes e2e playwright e testes de contrato para white label
 829baf4 feat(branding): registra auditoria transacional resumida sem dados binarios de imagens
