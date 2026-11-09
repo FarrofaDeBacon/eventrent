@@ -82,4 +82,3 @@ test.describe("E2E — Identidade Visual e White Label (Fase 1B.1)", () => {
     await expect(page.locator("h1")).toContainText("EventRent White Label Pro");
   });
 });
-

@@ -44,24 +44,29 @@ Armazena a identificação das empresas locadoras (em modo local há o tenant pa
 
 ### 3.2. `tenant_branding`
 
-Configurações de identidade visual e personalização da empresa locadora.
+Configurações de identidade visual e personalização da empresa locadora (white label).
 
-| Coluna            | Tipo | Restrições              | Descrição                                         |
-| ----------------- | ---- | ----------------------- | ------------------------------------------------- |
-| `id`              | TEXT | PRIMARY KEY             | UUID v7                                           |
-| `tenant_id`       | TEXT | NOT NULL, FK(tenant.id) | Tenant associado                                  |
-| `company_name`    | TEXT | NOT NULL                | Nome de exibição no app (padrão: `Minha empresa`) |
-| `primary_color`   | TEXT | NOT NULL                | Cor primária                                      |
-| `secondary_color` | TEXT | NOT NULL                | Cor secundária                                    |
-| `accent_color`    | TEXT | NOT NULL                | Cor de destaque                                   |
-| `logo_url`        | TEXT |                         | Caminho relativo, URI local ou data URL do logo   |
-| `favicon_url`     | TEXT |                         | Ícone do tenant                                   |
-| `created_at`      | TEXT | NOT NULL                | Data de criação UTC                               |
-| `updated_at`      | TEXT | NOT NULL                | Data de atualização UTC                           |
-| `deleted_at`      | TEXT |                         | Soft delete                                       |
-| `created_by`      | TEXT |                         | Usuário criador                                   |
+| Coluna            | Tipo | Restrições              | Descrição                                                        |
+| ----------------- | ---- | ----------------------- | ---------------------------------------------------------------- |
+| `id`              | TEXT | PRIMARY KEY             | UUID v7                                                          |
+| `tenant_id`       | TEXT | NOT NULL, FK(tenant.id) | Tenant associado                                                 |
+| `company_name`    | TEXT | NOT NULL                | Nome de exibição no app (padrão: `Minha empresa`, máx 80 chars)  |
+| `primary_color`   | TEXT | NOT NULL                | Cor primária (#RRGGBB normalizado)                               |
+| `secondary_color` | TEXT | NOT NULL                | Cor secundária (#RRGGBB normalizado)                             |
+| `accent_color`    | TEXT | NOT NULL                | Cor de destaque (#RRGGBB normalizado)                            |
+| `logo_url`        | TEXT |                         | Data URI base64 do logo claro (PNG, JPEG ou WebP, máx 256 KB)    |
+| `logo_dark_url`   | TEXT |                         | Data URI base64 do logo escuro (PNG, JPEG ou WebP, máx 256 KB)   |
+| `icon_url`        | TEXT |                         | Data URI base64 do ícone quadrado (PNG, JPEG ou WebP, máx 64 KB) |
+| `favicon_url`     | TEXT |                         | Ícone do tenant                                                  |
+| `created_at`      | TEXT | NOT NULL                | Data de criação UTC                                              |
+| `updated_at`      | TEXT | NOT NULL                | Data de atualização UTC                                          |
+| `deleted_at`      | TEXT |                         | Soft delete                                                      |
+| `created_by`      | TEXT |                         | Usuário criador                                                  |
 
 - **Índice único parcial**: `idx_tenant_branding_tenant_active ON tenant_branding(tenant_id) WHERE deleted_at IS NULL`
+- **Evolução de Esquema (Migração 0003)**:
+  - Adicionadas as colunas `logo_dark_url TEXT` e `icon_url TEXT` via `ALTER TABLE` em `0003_branding_dark_logo_and_icon.sql`.
+  - As migrações `0001` e `0002` encontram-se estritamente congeladas para preservar retrocompatibilidade em ambientes de produção e SQLite locais existentes.
 
 ## 4. Tabelas de Usuários, Perfis e Auditoria (`0002_users_roles_and_audit.sql`)
 
