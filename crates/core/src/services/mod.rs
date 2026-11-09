@@ -41,33 +41,48 @@ pub fn validate_password(password: &str) -> Result<()> {
     Ok(())
 }
 
-/// Valida formato de e-mail sem dependências externas.
+/// Valida formato de e-mail sem dependências externas nem unwrap().
 ///
-/// Regras aplicadas:
-/// 1. Comprimento total entre 5 e 254 caracteres (RFC 5321).
-/// 2. Presença de exatamente um caractere '@', separando parte local e domínio.
-/// 3. Parte local: não vazia, sem pontos no início/fim, sem pontos consecutivos.
-/// 4. Domínio: não vazio, sem pontos ou hífens no início/fim, com pelo menos uma extensão (TLD).
-/// 5. TLD (Top-Level Domain): no mínimo 2 caracteres exclusivamente alfabéticos.
+/// Regras aplicadas (RFC 5321 e RFC 5890 para IDN/Punycode):
+/// 1. Sem espaços em branco ou caracteres de controle.
+/// 2. Comprimento total entre 5 e 254 caracteres.
+/// 3. Presença de exatamente um caractere '@', separando parte local e domínio.
+/// 4. Parte local: 1 a 64 caracteres, sem pontos no início/fim e sem pontos consecutivos.
+/// 5. Domínio: não vazio, sem pontos ou hífens no início/fim, com pelo menos uma extensão (TLD).
+/// 6. TLD (Top-Level Domain): no mínimo 2 caracteres, alfanumérico ou hífen (ex: punycode xn--p1ai), sem iniciar/terminar com hífen.
 pub fn validate_email(email: &str) -> Result<String> {
-    let trimmed = email.trim().to_lowercase();
-    if trimmed.len() < 5 || trimmed.len() > 254 {
+    if email.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(CoreError::Validation(
+            "O e-mail não pode conter espaços ou caracteres de controle.".to_string(),
+        ));
+    }
+
+    let lowered = email.to_lowercase();
+    if lowered.len() < 5 || lowered.len() > 254 {
         return Err(CoreError::Validation(
             "O e-mail deve ter entre 5 e 254 caracteres.".to_string(),
         ));
     }
-    let parts: Vec<&str> = trimmed.split('@').collect();
+
+    let parts: Vec<&str> = lowered.split('@').collect();
     if parts.len() != 2 {
         return Err(CoreError::Validation(
             "Informe um e-mail válido contendo um único '@'.".to_string(),
         ));
     }
+
     let (local, domain) = (parts[0], parts[1]);
-    if local.is_empty() || local.starts_with('.') || local.ends_with('.') || local.contains("..") {
+    if local.is_empty()
+        || local.len() > 64
+        || local.starts_with('.')
+        || local.ends_with('.')
+        || local.contains("..")
+    {
         return Err(CoreError::Validation(
-            "Parte local do e-mail inválida.".to_string(),
+            "Parte local do e-mail inválida (máximo 64 caracteres, sem pontos nas extremidades ou consecutivos).".to_string(),
         ));
     }
+
     if domain.is_empty()
         || domain.starts_with('.')
         || domain.ends_with('.')
@@ -79,19 +94,31 @@ pub fn validate_email(email: &str) -> Result<String> {
             "Domínio do e-mail inválido.".to_string(),
         ));
     }
+
     let domain_labels: Vec<&str> = domain.split('.').collect();
     if domain_labels.len() < 2 {
         return Err(CoreError::Validation(
             "Domínio do e-mail deve conter pelo menos uma extensão (ex: .com).".to_string(),
         ));
     }
-    let tld = domain_labels.last().unwrap();
-    if tld.len() < 2 || !tld.chars().all(|c| c.is_ascii_alphabetic()) {
+
+    let Some(tld) = domain_labels.last() else {
+        return Err(CoreError::Validation(
+            "Extensão do e-mail inválida.".to_string(),
+        ));
+    };
+
+    if tld.len() < 2
+        || tld.starts_with('-')
+        || tld.ends_with('-')
+        || !tld.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
         return Err(CoreError::Validation(
             "Extensão do e-mail inválida.".to_string(),
         ));
     }
-    Ok(trimmed)
+
+    Ok(lowered)
 }
 
 /// Configuração recomendada pelo OWASP Password Storage Cheat Sheet para Argon2id:

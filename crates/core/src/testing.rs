@@ -826,6 +826,11 @@ mod unit_tests {
         // E-mails válidos
         assert!(validate_email("usuario@dominio.com").is_ok());
         assert!(validate_email("user.name+tag@sub.empresa.com.br").is_ok());
+        // IDN / Punycode TLD
+        assert!(validate_email("usuario@dominio.xn--p1ai").is_ok());
+        // Limite máximo exato de 64 caracteres na parte local
+        let local_64 = format!("{}@dominio.com", "a".repeat(64));
+        assert!(validate_email(&local_64).is_ok());
 
         // E-mails inválidos (RFC 5321 edge cases)
         assert!(validate_email("").is_err());
@@ -838,6 +843,16 @@ mod unit_tests {
         assert!(validate_email(".ponto-inicio@dominio.com").is_err());
         assert!(validate_email("ponto..duplo@dominio.com").is_err());
         assert!(validate_email("usuario@-hifen-inicio.com").is_err());
+        // Espaços em branco e caracteres de controle
+        assert!(validate_email("usuario @dominio.com").is_err());
+        assert!(validate_email("usuario@ dominio.com").is_err());
+        assert!(validate_email(" usuario@dominio.com ").is_err());
+        assert!(validate_email("usuario\n@dominio.com").is_err());
+        // Parte local excedendo 64 caracteres
+        let local_65 = format!("{}@dominio.com", "a".repeat(65));
+        assert!(validate_email(&local_65).is_err());
+        // TLD inválido terminando em hífen
+        assert!(validate_email("usuario@dominio.com-").is_err());
     }
 
     #[tokio::test]
