@@ -1954,6 +1954,111 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_recovery_failure_persists_counter_and_lockout_despite_returning_err() {
+        let pool = init_memory_db()
+            .await
+            .expect("Falha ao inicializar banco em memória");
+        let store = SqliteStore::new(pool).into_bundle();
+        let services = CoreServices::new(store.clone());
+        let tenant_id = ensure_default_tenant(store.tenants.as_ref(), store.branding.as_ref())
+            .await
+            .unwrap();
+
+        let setup = services
+            .complete_initial_setup(
+                &tenant_id,
+                &InitialSetupInput {
+                    mode: OperationMode::Local,
+                    company_name: "Empresa Recovery Test".to_string(),
+                    owner_name: "Dono".to_string(),
+                    owner_email: "dono.recovery@empresa.com".to_string(),
+                    owner_password: "SenhaCerta#2026".to_string(),
+                },
+                30,
+            )
+            .await
+            .unwrap();
+
+        // Tentativa 1 com chave de recuperação inválida
+        let err1 = services
+            .recover_password(
+                &tenant_id,
+                &RecoverPasswordInput {
+                    email: setup.session.email.clone(),
+                    recovery_key: "ER-CHAVE-INVALIDA-0001".to_string(),
+                    new_password: "NovaSenha#2026".to_string(),
+                },
+            )
+            .await;
+        assert!(matches!(err1, Err(CoreError::InvalidCredentials)));
+
+        // Prova que recovery_failed_attempts foi gravado (1) e auditoria de falha gerada
+        let user = store
+            .users
+            .find_by_email(&tenant_id, &setup.session.email)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user.recovery_failed_attempts, 1);
+        assert!(user.recovery_locked_until.is_none());
+        let audits = store.audit.list_by_tenant(&tenant_id, 10).await.unwrap();
+        assert!(audits.iter().any(|a| a.action == "auth.recovery_failed"));
+
+        // Tentativas 2, 3 e 4
+        for i in 2..=4 {
+            let res = services
+                .recover_password(
+                    &tenant_id,
+                    &RecoverPasswordInput {
+                        email: setup.session.email.clone(),
+                        recovery_key: format!("ER-CHAVE-INVALIDA-000{i}"),
+                        new_password: "NovaSenha#2026".to_string(),
+                    },
+                )
+                .await;
+            assert!(matches!(res, Err(CoreError::InvalidCredentials)));
+            let user = store
+                .users
+                .find_by_email(&tenant_id, &setup.session.email)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(user.recovery_failed_attempts, i);
+            assert!(user.recovery_locked_until.is_none());
+        }
+
+        // Tentativa 5: atinge o limite e bloqueia a recuperação
+        let err5 = services
+            .recover_password(
+                &tenant_id,
+                &RecoverPasswordInput {
+                    email: setup.session.email.clone(),
+                    recovery_key: "ER-CHAVE-INVALIDA-0005".to_string(),
+                    new_password: "NovaSenha#2026".to_string(),
+                },
+            )
+            .await;
+        assert!(matches!(err5, Err(CoreError::AccountLocked { .. })));
+
+        let user_locked = store
+            .users
+            .find_by_email(&tenant_id, &setup.session.email)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user_locked.recovery_failed_attempts, 5);
+        assert!(
+            user_locked.recovery_locked_until.is_some(),
+            "recovery_locked_until deve estar preenchido no banco"
+        );
+
+        let audits_locked = store.audit.list_by_tenant(&tenant_id, 20).await.unwrap();
+        assert!(audits_locked
+            .iter()
+            .any(|a| a.action == "auth.recovery_locked"));
+    }
+
+    #[tokio::test]
     async fn test_c3_concurrency_with_multiple_connections_on_temp_file() {
         let temp_dir =
             std::env::temp_dir().join(format!("eventrent_concurrency_{}", Uuid::now_v7()));
