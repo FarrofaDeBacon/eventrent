@@ -14,11 +14,18 @@ use uuid::Uuid;
 
 pub type DbPool = Pool<Sqlite>;
 
-fn map_sqlx_err(err: sqlx::Error) -> CoreError {
+pub(crate) fn map_sqlx_err(err: sqlx::Error) -> CoreError {
     match &err {
         sqlx::Error::Database(db_err) => {
             if let Some(code) = db_err.code() {
-                if code == "5" || code == "6" || code == "261" || code == "517" {
+                if code == "5"
+                    || code == "6"
+                    || code == "261"
+                    || code == "517"
+                    || code == "773"
+                    || code == "262"
+                    || code == "518"
+                {
                     return CoreError::TransientConflict(format!(
                         "SQLite ocupado ou bloqueado (código {code}): {}",
                         db_err.message()
@@ -2105,5 +2112,117 @@ mod tests {
             .commit()
             .await
             .expect("Falha ao comitar transação da suíte de contrato");
+    }
+
+    #[test]
+    fn test_map_sqlx_err_transient_and_permanent_classification() {
+        use std::borrow::Cow;
+
+        #[derive(Debug)]
+        struct MockDbError {
+            code: Option<String>,
+            message: String,
+        }
+
+        impl std::fmt::Display for MockDbError {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.message)
+            }
+        }
+
+        impl std::error::Error for MockDbError {}
+
+        impl sqlx::error::DatabaseError for MockDbError {
+            fn message(&self) -> &str {
+                &self.message
+            }
+            fn code(&self) -> Option<Cow<'_, str>> {
+                self.code.as_deref().map(Cow::Borrowed)
+            }
+            fn kind(&self) -> sqlx::error::ErrorKind {
+                sqlx::error::ErrorKind::Other
+            }
+            fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+                self
+            }
+            fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+                self
+            }
+            fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+                self
+            }
+        }
+
+        fn make_db_err(code: Option<&str>, msg: &str) -> sqlx::Error {
+            sqlx::Error::Database(Box::new(MockDbError {
+                code: code.map(String::from),
+                message: msg.to_string(),
+            }))
+        }
+
+        // 1. Códigos SQLite de conflito transitório
+        let transient_codes = [
+            ("5", "database is locked / busy"),
+            ("6", "database table is locked"),
+            ("261", "database busy: recovery in progress"),
+            ("517", "database busy: snapshot conflict"),
+            ("773", "database busy: timeout expired"),
+            ("262", "table locked: shared cache"),
+            ("518", "virtual table locked"),
+        ];
+
+        for (code, msg) in transient_codes {
+            let err = make_db_err(Some(code), msg);
+            let mapped = map_sqlx_err(err);
+            assert!(
+                matches!(mapped, CoreError::TransientConflict(_)),
+                "Código {code} ({msg}) deveria virar CoreError::TransientConflict, mas virou: {mapped:?}"
+            );
+        }
+
+        // 2. Erros com mensagens de busy/locked sem código explícito
+        let msg_busy = make_db_err(None, "operational error: database is busy");
+        assert!(matches!(
+            map_sqlx_err(msg_busy),
+            CoreError::TransientConflict(_)
+        ));
+
+        let msg_locked = make_db_err(None, "locking protocol error: table locked");
+        assert!(matches!(
+            map_sqlx_err(msg_locked),
+            CoreError::TransientConflict(_)
+        ));
+
+        // 3. PoolTimedOut
+        let pool_timeout = sqlx::Error::PoolTimedOut;
+        assert!(matches!(
+            map_sqlx_err(pool_timeout),
+            CoreError::TransientConflict(_)
+        ));
+
+        // 4. Códigos e erros permanentes NÃO viram TransientConflict
+        let permanent_codes = [
+            ("1", "syntax error in SQL statement"),
+            ("19", "UNIQUE constraint failed: user.email"),
+            ("2067", "UNIQUE constraint failed"),
+            ("14", "unable to open database file"),
+            ("8", "attempt to write a readonly database"),
+        ];
+
+        for (code, msg) in permanent_codes {
+            let err = make_db_err(Some(code), msg);
+            let mapped = map_sqlx_err(err);
+            assert!(
+                matches!(mapped, CoreError::Database(_)),
+                "Código permanente {code} ({msg}) deveria virar CoreError::Database, mas virou: {mapped:?}"
+            );
+        }
+
+        // 5. Outros tipos de sqlx::Error que não são transitórios
+        let row_not_found = sqlx::Error::RowNotFound;
+        assert!(matches!(
+            map_sqlx_err(row_not_found),
+            CoreError::Database(_)
+        ));
     }
 }
