@@ -62,7 +62,7 @@ pub struct BrandingValidator;
 
 impl BrandingValidator {
     pub const MAX_LOGO_BYTES: usize = 256 * 1024; // 256 KB decodificados
-    pub const MAX_ICON_BYTES: usize = 64 * 1024;  // 64 KB decodificados
+    pub const MAX_ICON_BYTES: usize = 64 * 1024; // 64 KB decodificados
     pub const MAX_COMPANY_NAME_LEN: usize = 80;
 
     /// Valida o nome da empresa: entre 1 e 80 caracteres, sem caracteres de controle.
@@ -106,7 +106,11 @@ impl BrandingValidator {
 
     /// Valida um Data URI de imagem (PNG, JPEG ou WebP) verificando limite de tamanho e magic bytes.
     /// Rejeita estritamente imagens SVG por motivos de segurança (sanitização complexa e PDF).
-    pub fn validate_image_data_uri(field_name: &str, data_uri: &str, is_icon: bool) -> Result<String> {
+    pub fn validate_image_data_uri(
+        field_name: &str,
+        data_uri: &str,
+        is_icon: bool,
+    ) -> Result<String> {
         let trimmed = data_uri.trim();
 
         // Rejeição estrita a SVG
@@ -216,9 +220,11 @@ impl BrandingValidator {
         };
 
         let icon_url = match &input.icon_url {
-            Some(uri) if !uri.trim().is_empty() => {
-                Some(Self::validate_image_data_uri("Ícone da empresa", uri, true)?)
-            }
+            Some(uri) if !uri.trim().is_empty() => Some(Self::validate_image_data_uri(
+                "Ícone da empresa",
+                uri,
+                true,
+            )?),
             _ => None,
         };
 

@@ -500,7 +500,9 @@ impl CoreServices {
                         .map(|b| b.accent_color.clone())
                         .unwrap_or_else(|| "#7c3aed".to_string()),
                     logo_url: current_branding.as_ref().and_then(|b| b.logo_url.clone()),
-                    logo_dark_url: current_branding.as_ref().and_then(|b| b.logo_dark_url.clone()),
+                    logo_dark_url: current_branding
+                        .as_ref()
+                        .and_then(|b| b.logo_dark_url.clone()),
                     icon_url: current_branding.as_ref().and_then(|b| b.icon_url.clone()),
                 };
                 let branding = stores.branding().save(&tenant_id, &branding_input).await?;

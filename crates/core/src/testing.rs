@@ -1258,7 +1258,8 @@ mod unit_tests {
 
         // 3. PNG com assinatura mágica inválida
         let invalid_png_uri = "data:image/png;base64,QUJDREVGR0hJSktMTU5PUA=="; // "ABCDEFGHIJKLMNOP"
-        let invalid_png_res = BrandingValidator::validate_image_data_uri("Logo", invalid_png_uri, false);
+        let invalid_png_res =
+            BrandingValidator::validate_image_data_uri("Logo", invalid_png_uri, false);
         assert!(invalid_png_res.is_err());
         assert!(invalid_png_res.unwrap_err().to_string().contains("PNG"));
 
@@ -1274,22 +1275,26 @@ mod unit_tests {
         assert!(webp_res.is_ok());
 
         // 6. Formato não suportado (ex: GIF)
-        let gif_uri = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+        let gif_uri =
+            "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
         let gif_res = BrandingValidator::validate_image_data_uri("Logo", gif_uri, false);
         assert!(gif_res.is_err());
 
         // 7. Base64 corrompido
         let corrupt_b64_uri = "data:image/png;base64,!!!NaoEB64!!!";
-        assert!(BrandingValidator::validate_image_data_uri("Logo", corrupt_b64_uri, false).is_err());
+        assert!(
+            BrandingValidator::validate_image_data_uri("Logo", corrupt_b64_uri, false).is_err()
+        );
 
         // 8. Limite de tamanho: ícone > 64 KB
         let large_icon_bytes = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
         let mut large_icon_data = large_icon_bytes;
         large_icon_data.resize(65 * 1024, 0); // 65 KB (> 64 KB)
-        
+
         // Codificação simples para o teste de tamanho
         let mut encoded = String::new();
-        const B64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        const B64_CHARS: &[u8] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         for chunk in large_icon_data.chunks(3) {
             let b0 = chunk[0];
             let b1 = if chunk.len() > 1 { chunk[1] } else { 0 };

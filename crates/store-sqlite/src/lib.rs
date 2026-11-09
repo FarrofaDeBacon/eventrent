@@ -2392,10 +2392,15 @@ mod tests {
 
         assert_eq!(branding_audit.entity_type, "tenant_branding");
         assert_eq!(branding_audit.entity_id, updated.id);
-        assert_eq!(branding_audit.actor_user_id.as_deref(), Some(setup.session.user_id.as_str()));
+        assert_eq!(
+            branding_audit.actor_user_id.as_deref(),
+            Some(setup.session.user_id.as_str())
+        );
 
         // Prova estrita: o sumário é conciso, informativo e sem payload binário
-        assert!(branding_audit.summary.contains("Identidade visual atualizada para 'Locadora Visual Novo'"));
+        assert!(branding_audit
+            .summary
+            .contains("Identidade visual atualizada para 'Locadora Visual Novo'"));
         assert!(branding_audit.summary.contains("logo_claro: true"));
         assert!(branding_audit.summary.contains("logo_escuro: true"));
         assert!(branding_audit.summary.contains("icone: true"));
