@@ -21,34 +21,45 @@ describe("BrandingRepository (Data Layer Port & Adapter)", () => {
     expect(branding?.secondary_color).toBe("#475569");
   });
 
-  it("deve atualizar e persistir as alterações de branding do tenant", async () => {
+  it("deve atualizar e persistir as alterações de branding do tenant incluindo logo escuro e ícone", async () => {
+    const pngSample =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY44YAAAAASUVORK5CYII=";
     const updated = await repository.saveBranding(tenantId, {
       company_name: "Som & Iluminação Prime",
       primary_color: "#10b981",
       secondary_color: "#0f172a",
       accent_color: "#f59e0b",
-      logo_url: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+      logo_url: pngSample,
+      logo_dark_url: pngSample,
+      icon_url: pngSample,
     });
 
     expect(updated.company_name).toBe("Som & Iluminação Prime");
     expect(updated.primary_color).toBe("#10b981");
     expect(updated.secondary_color).toBe("#0f172a");
     expect(updated.accent_color).toBe("#f59e0b");
-    expect(updated.logo_url).toBe("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=");
+    expect(updated.logo_url).toBe(pngSample);
+    expect(updated.logo_dark_url).toBe(pngSample);
+    expect(updated.icon_url).toBe(pngSample);
 
     // Confirma que a nova consulta retorna o estado atualizado
     const reloaded = await repository.getBranding(tenantId);
     expect(reloaded?.company_name).toBe("Som & Iluminação Prime");
     expect(reloaded?.primary_color).toBe("#10b981");
+    expect(reloaded?.logo_dark_url).toBe(pngSample);
+    expect(reloaded?.icon_url).toBe(pngSample);
   });
 
-  it("deve carregar o branding público sem requerer autenticação", async () => {
+  it("deve carregar o branding público sem requerer autenticação contendo campos de logo e ícone", async () => {
     const publicBranding = await repository.getPublicBranding();
     expect(publicBranding).not.toBeNull();
     expect(publicBranding?.company_name).toBe(DEFAULT_COMPANY_NAME);
     expect(publicBranding?.primary_color).toBe("#2563eb");
     expect(publicBranding?.secondary_color).toBe("#475569");
     expect(publicBranding?.accent_color).toBe("#7c3aed");
+    expect(publicBranding).toHaveProperty("logo_url");
+    expect(publicBranding).toHaveProperty("logo_dark_url");
+    expect(publicBranding).toHaveProperty("icon_url");
   });
 
   it("deve retornar null para tenant inexistente", async () => {
