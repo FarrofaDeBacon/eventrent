@@ -7,13 +7,13 @@ use crate::domain::{
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
-    run_in_tx, BrandingStore, RoleStore, StoreBundle, TenantStore, TransactionPolicy,
-    TxBoxFuture, TxStoreBundle, UserStore,
+    run_in_tx, BrandingStore, RoleStore, StoreBundle, TenantStore, TransactionPolicy, TxBoxFuture,
+    TxStoreBundle, UserStore,
 };
-use async_trait::async_trait;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::{Algorithm, Argon2, Params, Version};
+use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use rand::Rng;
 use std::collections::HashSet;
@@ -519,7 +519,9 @@ impl CoreServices {
                         "tenant.setup_completed",
                         "tenant",
                         &tenant_id,
-                        &format!("Configuração inicial concluída para '{company_name}' em modo local"),
+                        &format!(
+                            "Configuração inicial concluída para '{company_name}' em modo local"
+                        ),
                     ))
                     .await?;
 
@@ -909,7 +911,9 @@ impl CoreServices {
                         "user.password_recovered",
                         "user",
                         &user_id,
-                        &format!("Senha redefinida com sucesso via chave de recuperação para {email}"),
+                        &format!(
+                            "Senha redefinida com sucesso via chave de recuperação para {email}"
+                        ),
                     ))
                     .await?;
 
@@ -921,7 +925,9 @@ impl CoreServices {
                         "auth.recovery_key_rotated",
                         "user",
                         &user_id,
-                        &format!("Chave de recuperação rotacionada com 80 bits de entropia para {email}"),
+                        &format!(
+                            "Chave de recuperação rotacionada com 80 bits de entropia para {email}"
+                        ),
                     ))
                     .await?;
 

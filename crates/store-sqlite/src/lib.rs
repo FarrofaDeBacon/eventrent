@@ -28,7 +28,9 @@ fn map_sqlx_err(err: sqlx::Error) -> CoreError {
             let msg = db_err.message();
             let lower = msg.to_lowercase();
             if lower.contains("busy") || lower.contains("locked") {
-                return CoreError::TransientConflict(format!("SQLite conflito de concorrência: {msg}"));
+                return CoreError::TransientConflict(format!(
+                    "SQLite conflito de concorrência: {msg}"
+                ));
             }
             CoreError::Database(err.to_string())
         }
@@ -189,7 +191,7 @@ impl TransactionManager for SqliteTxManager {
 }
 
 pub struct SqliteTxStoreBundle {
-    tx: Arc<tokio::sync::Mutex<Option<sqlx::Transaction<'static, Sqlite>>>>,
+    pub(crate) tx: Arc<tokio::sync::Mutex<Option<sqlx::Transaction<'static, Sqlite>>>>,
     pub tenants: Arc<dyn TenantStore>,
     pub branding: Arc<dyn BrandingStore>,
     pub roles: Arc<dyn RoleStore>,
@@ -1371,7 +1373,11 @@ impl AuditStore for SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eventrent_core::services::ensure_default_tenant;
+    use eventrent_core::domain::{
+        CreateUserInput, InitialSetupInput, LoginInput, LoginPolicy, OperationMode,
+        RecoverPasswordInput,
+    };
+    use eventrent_core::services::{ensure_default_tenant, CoreServices};
     use eventrent_core::testing::{
         contract_audit_log, contract_default_seeds, contract_initial_setup_and_recovery_key,
         contract_last_owner_protection, contract_password_reset_clears_lockout,
@@ -1379,6 +1385,7 @@ mod tests {
         contract_unique_partial_indexes, contract_user_creation_and_rbac, contract_user_lockout,
         run_store_contract_suite,
     };
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     async fn create_isolated_store() -> StoreBundle {
         let pool = init_memory_db()
@@ -1590,5 +1597,513 @@ mod tests {
 
         pool.close().await;
         let _ = std::fs::remove_dir_all(&temp_base);
+    }
+
+    struct FailingAuditStore {
+        inner: Arc<dyn AuditStore>,
+        should_fail: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl AuditStore for FailingAuditStore {
+        async fn append(&self, entry: &AuditLogEntry) -> Result<()> {
+            if self.should_fail.load(Ordering::SeqCst) {
+                return Err(CoreError::Internal(
+                    "Falha injetada no append de auditoria para teste de rollback".to_string(),
+                ));
+            }
+            self.inner.append(entry).await
+        }
+
+        async fn list_by_tenant(
+            &self,
+            tenant_id: &str,
+            limit: usize,
+        ) -> Result<Vec<AuditLogEntry>> {
+            self.inner.list_by_tenant(tenant_id, limit).await
+        }
+    }
+
+    struct FailingTxManager {
+        pool: DbPool,
+        should_fail_audit: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl TransactionManager for FailingTxManager {
+        async fn begin_transaction(&self) -> Result<Box<dyn TxStoreBundle>> {
+            let tx = self
+                .pool
+                .begin_with("BEGIN IMMEDIATE")
+                .await
+                .map_err(map_sqlx_err)?;
+            let tx_mutex = Arc::new(tokio::sync::Mutex::new(Some(tx)));
+            let store = Arc::new(SqliteStore {
+                executor: SqliteExecutor::Tx(tx_mutex.clone()),
+            });
+            let failing_audit = Arc::new(FailingAuditStore {
+                inner: store.clone(),
+                should_fail: self.should_fail_audit.clone(),
+            });
+
+            Ok(Box::new(SqliteTxStoreBundle {
+                tx: tx_mutex,
+                tenants: store.clone(),
+                branding: store.clone(),
+                roles: store.clone(),
+                users: store.clone(),
+                audit: failing_audit,
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_c1_transaction_rollback_guarantee() {
+        let pool = init_memory_db()
+            .await
+            .expect("Falha ao inicializar banco em memória");
+        let should_fail_audit = Arc::new(AtomicBool::new(false));
+        let tx_manager = Arc::new(FailingTxManager {
+            pool: pool.clone(),
+            should_fail_audit: should_fail_audit.clone(),
+        });
+        let normal_store = SqliteStore::new(pool.clone());
+        let bundle = StoreBundle {
+            tenants: Arc::new(normal_store.clone()),
+            branding: Arc::new(normal_store.clone()),
+            roles: Arc::new(normal_store.clone()),
+            users: Arc::new(normal_store.clone()),
+            audit: Arc::new(normal_store.clone()),
+            tx_manager: Some(tx_manager),
+        };
+        let services = CoreServices::new(bundle.clone());
+        let tenant_id = ensure_default_tenant(bundle.tenants.as_ref(), bundle.branding.as_ref())
+            .await
+            .expect("Falha ao criar tenant padrão");
+
+        // 1. Falha injetada no complete_initial_setup
+        should_fail_audit.store(true, Ordering::SeqCst);
+        let setup_input = InitialSetupInput {
+            mode: OperationMode::Local,
+            company_name: "Empresa Rollback LTDA".to_string(),
+            owner_name: "Dono Teste".to_string(),
+            owner_email: "dono.rollback@empresa.com".to_string(),
+            owner_password: "SenhaSegura#2026".to_string(),
+        };
+        let setup_err = services
+            .complete_initial_setup(&tenant_id, &setup_input, 30)
+            .await;
+        assert!(
+            setup_err.is_err(),
+            "Setup inicial deve falhar com erro injetado"
+        );
+
+        // Prova que NADA foi gravado:
+        let users_count = bundle.users.count_by_tenant(&tenant_id).await.unwrap();
+        assert_eq!(
+            users_count, 0,
+            "Nenhum usuário deve ter sido gravado após rollback"
+        );
+
+        let branding = bundle
+            .branding
+            .get_by_tenant_id(&tenant_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            branding.company_name, "Minha empresa",
+            "Nome da empresa não deve ter sido alterado"
+        );
+
+        let audits = bundle.audit.list_by_tenant(&tenant_id, 10).await.unwrap();
+        assert_eq!(
+            audits.len(),
+            0,
+            "Nenhum registro de auditoria deve existir após rollback"
+        );
+
+        // 2. Agora permite o setup inicial ser concluído com sucesso
+        should_fail_audit.store(false, Ordering::SeqCst);
+        let setup_ok = services
+            .complete_initial_setup(&tenant_id, &setup_input, 30)
+            .await
+            .expect("Setup deve suceder com auditoria habilitada");
+        let session = setup_ok.session;
+
+        // 3. Falha injetada no create_user
+        should_fail_audit.store(true, Ordering::SeqCst);
+        let roles = bundle.roles.list_by_tenant(&tenant_id).await.unwrap();
+        let comm_role = roles.iter().find(|r| r.slug == "commercial").unwrap();
+
+        let create_err = services
+            .create_user(
+                &session,
+                &CreateUserInput {
+                    name: "Vendedor Rollback".to_string(),
+                    email: "vendedor.rollback@empresa.com".to_string(),
+                    password: "SenhaVendedor#2026".to_string(),
+                    role_id: comm_role.id.clone(),
+                },
+            )
+            .await;
+        assert!(
+            create_err.is_err(),
+            "create_user deve falhar com erro injetado"
+        );
+
+        // Prova que NADA foi gravado no create_user:
+        let created_user = bundle
+            .users
+            .find_by_email(&tenant_id, "vendedor.rollback@empresa.com")
+            .await
+            .unwrap();
+        assert!(
+            created_user.is_none(),
+            "Usuário NÃO deve existir no banco após rollback"
+        );
+
+        let audits_after_create_fail = bundle.audit.list_by_tenant(&tenant_id, 20).await.unwrap();
+        assert!(
+            !audits_after_create_fail
+                .iter()
+                .any(|a| a.action == "user.created" && a.summary.contains("Vendedor Rollback")),
+            "Auditoria de user.created NÃO deve existir após rollback"
+        );
+
+        // 4. Falha injetada no recover_password
+        let original_password = "SenhaSegura#2026";
+        let new_password = "NovaSenhaTentada#2026";
+        should_fail_audit.store(true, Ordering::SeqCst);
+
+        let recover_err = services
+            .recover_password(
+                &tenant_id,
+                &RecoverPasswordInput {
+                    email: session.email.clone(),
+                    recovery_key: setup_ok.recovery_key.clone(),
+                    new_password: new_password.to_string(),
+                },
+            )
+            .await;
+        assert!(
+            recover_err.is_err(),
+            "recover_password deve falhar com erro injetado"
+        );
+
+        // Desativa a falha injetada para permitir verificar as credenciais normalmente
+        should_fail_audit.store(false, Ordering::SeqCst);
+
+        // Prova que NADA foi gravado no recover_password:
+        let login_with_new = services
+            .login(
+                &tenant_id,
+                &LoginInput {
+                    email: session.email.clone(),
+                    password: new_password.to_string(),
+                },
+                &LoginPolicy::default(),
+                30,
+            )
+            .await;
+        assert!(matches!(login_with_new, Err(CoreError::InvalidCredentials)));
+
+        // Login com a senha original ainda funciona
+        let login_with_original = services
+            .login(
+                &tenant_id,
+                &LoginInput {
+                    email: session.email.clone(),
+                    password: original_password.to_string(),
+                },
+                &LoginPolicy::default(),
+                30,
+            )
+            .await;
+        assert!(
+            login_with_original.is_ok(),
+            "Senha original deve continuar intacta após rollback"
+        );
+
+        let audits_after_recover_fail = bundle.audit.list_by_tenant(&tenant_id, 50).await.unwrap();
+        assert!(
+            !audits_after_recover_fail
+                .iter()
+                .any(|a| a.action == "user.password_recovered"),
+            "Auditoria de password_recovered NÃO deve existir após rollback"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_c2_login_failure_persists_counter_and_lockout_despite_returning_err() {
+        let pool = init_memory_db()
+            .await
+            .expect("Falha ao inicializar banco em memória");
+        let store = SqliteStore::new(pool).into_bundle();
+        let services = CoreServices::new(store.clone());
+        let tenant_id = ensure_default_tenant(store.tenants.as_ref(), store.branding.as_ref())
+            .await
+            .unwrap();
+
+        let setup = services
+            .complete_initial_setup(
+                &tenant_id,
+                &InitialSetupInput {
+                    mode: OperationMode::Local,
+                    company_name: "Empresa Login Test".to_string(),
+                    owner_name: "Dono".to_string(),
+                    owner_email: "dono.login@empresa.com".to_string(),
+                    owner_password: "SenhaCerta#2026".to_string(),
+                },
+                30,
+            )
+            .await
+            .unwrap();
+
+        let policy = LoginPolicy {
+            reveal_account_locked: true,
+        };
+
+        // Tentativa 1 com senha incorreta
+        let err1 = services
+            .login(
+                &tenant_id,
+                &LoginInput {
+                    email: setup.session.email.clone(),
+                    password: "SenhaIncorreta#1".to_string(),
+                },
+                &policy,
+                30,
+            )
+            .await;
+        assert!(matches!(err1, Err(CoreError::InvalidCredentials)));
+
+        // Prova que failed_attempts foi gravado (1) e auditoria gerada
+        let user = store
+            .users
+            .find_by_email(&tenant_id, &setup.session.email)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user.failed_attempts, 1);
+        assert!(user.locked_until.is_none());
+        let audits = store.audit.list_by_tenant(&tenant_id, 10).await.unwrap();
+        assert!(audits.iter().any(|a| a.action == "auth.login_failed"));
+
+        // Tentativas 2, 3 e 4
+        for i in 2..=4 {
+            let res = services
+                .login(
+                    &tenant_id,
+                    &LoginInput {
+                        email: setup.session.email.clone(),
+                        password: format!("SenhaIncorreta#{i}"),
+                    },
+                    &policy,
+                    30,
+                )
+                .await;
+            assert!(matches!(res, Err(CoreError::InvalidCredentials)));
+            let user = store
+                .users
+                .find_by_email(&tenant_id, &setup.session.email)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(user.failed_attempts, i);
+            assert!(user.locked_until.is_none());
+        }
+
+        // Tentativa 5: atinge o limite e bloqueia a conta
+        let err5 = services
+            .login(
+                &tenant_id,
+                &LoginInput {
+                    email: setup.session.email.clone(),
+                    password: "SenhaIncorreta#5".to_string(),
+                },
+                &policy,
+                30,
+            )
+            .await;
+        assert!(matches!(err5, Err(CoreError::AccountLocked { .. })));
+
+        let user_locked = store
+            .users
+            .find_by_email(&tenant_id, &setup.session.email)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user_locked.failed_attempts, 5);
+        assert!(
+            user_locked.locked_until.is_some(),
+            "locked_until deve estar preenchido"
+        );
+
+        let audits_locked = store.audit.list_by_tenant(&tenant_id, 20).await.unwrap();
+        assert!(audits_locked
+            .iter()
+            .any(|a| a.action == "auth.account_locked"));
+    }
+
+    #[tokio::test]
+    async fn test_c3_concurrency_with_multiple_connections_on_temp_file() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("eventrent_concurrency_{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&temp_dir).expect("Falha ao criar pasta temporária");
+        let db_path = temp_dir.join("concurrency_test.db");
+
+        let pool = init_db(&db_path)
+            .await
+            .expect("Falha ao inicializar banco em arquivo com múltiplas conexões");
+        let store = SqliteStore::new(pool.clone()).into_bundle();
+        let services = Arc::new(CoreServices::new(store.clone()));
+
+        let tenant_id = ensure_default_tenant(store.tenants.as_ref(), store.branding.as_ref())
+            .await
+            .unwrap();
+
+        let setup = services
+            .complete_initial_setup(
+                &tenant_id,
+                &InitialSetupInput {
+                    mode: OperationMode::Local,
+                    company_name: "Locadora Concorrente".to_string(),
+                    owner_name: "Proprietário".to_string(),
+                    owner_email: "dono@concorrencia.com".to_string(),
+                    owner_password: "SenhaForte#2026".to_string(),
+                },
+                30,
+            )
+            .await
+            .unwrap();
+
+        let num_tasks = 10;
+        let mut handles = Vec::with_capacity(num_tasks);
+
+        for i in 0..num_tasks {
+            let services = services.clone();
+            let tenant_id = tenant_id.clone();
+            let email = setup.session.email.clone();
+            let wrong_pw = format!("SenhaErradaConcorrente#{i}");
+
+            handles.push(tokio::spawn(async move {
+                services
+                    .login(
+                        &tenant_id,
+                        &LoginInput {
+                            email,
+                            password: wrong_pw,
+                        },
+                        &LoginPolicy {
+                            reveal_account_locked: false,
+                        },
+                        30,
+                    )
+                    .await
+            }));
+        }
+
+        for handle in handles {
+            let res = handle.await.expect("Task tokio em pânico");
+            assert!(
+                matches!(res, Err(CoreError::InvalidCredentials)),
+                "Todas as tarefas concorrentes devem retornar InvalidCredentials sem erro de lock/busy: {:?}",
+                res
+            );
+        }
+
+        let user = store
+            .users
+            .find_by_email(&tenant_id, &setup.session.email)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            user.failed_attempts, 10,
+            "Contagem exata de 10 tentativas falhas esperada sem perda por concorrência"
+        );
+        assert!(
+            user.locked_until.is_some(),
+            "Usuário deve ter sido bloqueado"
+        );
+
+        let audits = store.audit.list_by_tenant(&tenant_id, 50).await.unwrap();
+        let failure_audits: Vec<_> = audits
+            .iter()
+            .filter(|a| a.action == "auth.login_failed" || a.action == "auth.account_locked")
+            .collect();
+        assert_eq!(
+            failure_audits.len(),
+            10,
+            "Auditoria deve conter exatamente 10 registros de falha/bloqueio persistidos"
+        );
+
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_c5_contract_suite_running_inside_transaction() {
+        let pool = init_memory_db()
+            .await
+            .expect("Falha ao criar banco SQLite em memória");
+
+        let tx = pool
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .expect("Falha ao iniciar BEGIN IMMEDIATE");
+        let tx_mutex = Arc::new(tokio::sync::Mutex::new(Some(tx)));
+        let store = Arc::new(SqliteStore {
+            executor: SqliteExecutor::Tx(tx_mutex.clone()),
+        });
+
+        let bundle = StoreBundle {
+            tenants: store.clone(),
+            branding: store.clone(),
+            roles: store.clone(),
+            users: store.clone(),
+            audit: store.clone(),
+            tx_manager: None,
+        };
+
+        let tenant_id = contract_default_seeds(&bundle).await;
+        contract_system_roles(&bundle, &tenant_id).await;
+
+        let (setup_result, services) =
+            contract_initial_setup_and_recovery_key(&bundle, &tenant_id).await;
+
+        contract_last_owner_protection(&services, &setup_result.session, &tenant_id).await;
+
+        let (commercial_user, _commercial_session) =
+            contract_user_creation_and_rbac(&services, &setup_result.session, &tenant_id).await;
+
+        contract_user_lockout(&services, &tenant_id).await;
+
+        contract_password_reset_clears_lockout(
+            &services,
+            &setup_result.session,
+            &tenant_id,
+            &commercial_user.id,
+        )
+        .await;
+
+        contract_recovery_key_rotation_and_lockout(
+            &services,
+            &tenant_id,
+            &setup_result.recovery_key,
+        )
+        .await;
+
+        contract_audit_log(&bundle, &tenant_id).await;
+
+        contract_unique_partial_indexes(&bundle, &tenant_id).await;
+
+        let mut guard = tx_mutex.lock().await;
+        let tx_handle = guard.take().expect("Transação deve estar aberta");
+        tx_handle
+            .commit()
+            .await
+            .expect("Falha ao comitar transação da suíte de contrato");
     }
 }

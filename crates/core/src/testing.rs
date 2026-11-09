@@ -832,4 +832,126 @@ mod unit_tests {
         assert!(verification.is_ok());
         assert!(!verification.unwrap());
     }
+
+    #[tokio::test]
+    async fn test_run_in_tx_retry_and_max_retries() {
+        use crate::error::{CoreError, Result};
+        use crate::store::{
+            run_in_tx, AuditStore, BrandingStore, RoleStore, TenantStore, TransactionManager,
+            TransactionPolicy, TxStoreBundle, UserStore,
+        };
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        struct DummyTxBundle;
+        #[async_trait]
+        impl TxStoreBundle for DummyTxBundle {
+            fn tenants(&self) -> &dyn TenantStore {
+                unreachable!()
+            }
+            fn branding(&self) -> &dyn BrandingStore {
+                unreachable!()
+            }
+            fn roles(&self) -> &dyn RoleStore {
+                unreachable!()
+            }
+            fn users(&self) -> &dyn UserStore {
+                unreachable!()
+            }
+            fn audit(&self) -> &dyn AuditStore {
+                unreachable!()
+            }
+            async fn commit(self: Box<Self>) -> Result<()> {
+                Ok(())
+            }
+            async fn rollback(self: Box<Self>) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        struct MockTxManager {
+            pub begin_count: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl TransactionManager for MockTxManager {
+            async fn begin_transaction(&self) -> Result<Box<dyn TxStoreBundle>> {
+                self.begin_count.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::new(DummyTxBundle))
+            }
+        }
+
+        let policy = TransactionPolicy {
+            max_retries: 3,
+            initial_backoff_ms: 1,
+        };
+
+        // Cenário 1: Sucesso após 2 TransientConflict (tentativa 1 falha, 2 falha, 3 sucesso)
+        let begin_count = Arc::new(AtomicUsize::new(0));
+        let mgr = MockTxManager {
+            begin_count: begin_count.clone(),
+        };
+        let exec_count = Arc::new(AtomicUsize::new(0));
+        let exec_count_clone = exec_count.clone();
+
+        let res: Result<&str> = run_in_tx(&mgr, &policy, move |_| {
+            let exec_count = exec_count_clone.clone();
+            Box::pin(async move {
+                let current = exec_count.fetch_add(1, Ordering::SeqCst);
+                if current < 2 {
+                    Err(CoreError::TransientConflict("lock contend".into()))
+                } else {
+                    Ok("sucesso")
+                }
+            })
+        })
+        .await;
+
+        assert_eq!(res.unwrap(), "sucesso");
+        assert_eq!(begin_count.load(Ordering::SeqCst), 3);
+        assert_eq!(exec_count.load(Ordering::SeqCst), 3);
+
+        // Cenário 2: Excede max_retries (falha 4 vezes, excede max_retries = 3)
+        let begin_count2 = Arc::new(AtomicUsize::new(0));
+        let mgr2 = MockTxManager {
+            begin_count: begin_count2.clone(),
+        };
+        let exec_count2 = Arc::new(AtomicUsize::new(0));
+        let exec_count2_clone = exec_count2.clone();
+
+        let res2: Result<()> = run_in_tx(&mgr2, &policy, move |_| {
+            let exec_count = exec_count2_clone.clone();
+            Box::pin(async move {
+                exec_count.fetch_add(1, Ordering::SeqCst);
+                Err(CoreError::TransientConflict("sqlite busy".into()))
+            })
+        })
+        .await;
+
+        assert!(matches!(res2, Err(CoreError::TransientConflict(_))));
+        assert_eq!(begin_count2.load(Ordering::SeqCst), 4); // 1 tentativa inicial + 3 retries
+        assert_eq!(exec_count2.load(Ordering::SeqCst), 4);
+
+        // Cenário 3: Erro não transiente (Validation) aborta imediatamente sem retry
+        let begin_count3 = Arc::new(AtomicUsize::new(0));
+        let mgr3 = MockTxManager {
+            begin_count: begin_count3.clone(),
+        };
+        let exec_count3 = Arc::new(AtomicUsize::new(0));
+        let exec_count3_clone = exec_count3.clone();
+
+        let res3: Result<()> = run_in_tx(&mgr3, &policy, move |_| {
+            let exec_count = exec_count3_clone.clone();
+            Box::pin(async move {
+                exec_count.fetch_add(1, Ordering::SeqCst);
+                Err(CoreError::Validation("dados inválidos".into()))
+            })
+        })
+        .await;
+
+        assert!(matches!(res3, Err(CoreError::Validation(_))));
+        assert_eq!(begin_count3.load(Ordering::SeqCst), 1);
+        assert_eq!(exec_count3.load(Ordering::SeqCst), 1);
+    }
 }
