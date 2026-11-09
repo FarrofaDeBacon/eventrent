@@ -1182,4 +1182,134 @@ mod unit_tests {
         assert_eq!(exec_count2.load(Ordering::SeqCst), 3);
         assert_eq!(commit_attempts2.load(Ordering::SeqCst), 3);
     }
+
+    #[test]
+    fn test_branding_validator_company_name() {
+        use crate::domain::BrandingValidator;
+
+        assert_eq!(
+            BrandingValidator::validate_company_name("  Locadora Luz & Som  ").unwrap(),
+            "Locadora Luz & Som"
+        );
+        assert!(BrandingValidator::validate_company_name("").is_err());
+        assert!(BrandingValidator::validate_company_name("   ").is_err());
+
+        let exactly_80 = "A".repeat(80);
+        assert_eq!(
+            BrandingValidator::validate_company_name(&exactly_80).unwrap(),
+            exactly_80
+        );
+
+        let over_80 = "A".repeat(81);
+        assert!(BrandingValidator::validate_company_name(&over_80).is_err());
+
+        assert!(BrandingValidator::validate_company_name("Locadora\nLtda").is_err());
+        assert!(BrandingValidator::validate_company_name("Locadora\0Ltda").is_err());
+    }
+
+    #[test]
+    fn test_branding_validator_hex_color() {
+        use crate::domain::BrandingValidator;
+
+        assert_eq!(
+            BrandingValidator::validate_hex_color("primária", "#2563EB").unwrap(),
+            "#2563eb"
+        );
+        assert_eq!(
+            BrandingValidator::validate_hex_color("secundária", "#000000").unwrap(),
+            "#000000"
+        );
+
+        // Rejeições de formato
+        assert!(BrandingValidator::validate_hex_color("cor", "2563eb").is_err());
+        assert!(BrandingValidator::validate_hex_color("cor", "#fff").is_err());
+        assert!(BrandingValidator::validate_hex_color("cor", "#12345678").is_err());
+        assert!(BrandingValidator::validate_hex_color("cor", "#gggggg").is_err());
+
+        // Rejeições de CSS injection
+        assert!(BrandingValidator::validate_hex_color("cor", "red; background: blue").is_err());
+        assert!(BrandingValidator::validate_hex_color("cor", "#2563eb; color: red").is_err());
+        assert!(BrandingValidator::validate_hex_color("cor", "rgb(0,0,0)").is_err());
+    }
+
+    #[test]
+    fn test_branding_validator_images_magic_bytes_and_formats() {
+        use crate::domain::{BrandingValidator, UpdateBrandingInput};
+
+        // 1. Rejeição estrita a SVG
+        let svg_input = UpdateBrandingInput {
+            company_name: "Locadora".to_string(),
+            primary_color: "#2563eb".to_string(),
+            secondary_color: "#475569".to_string(),
+            accent_color: "#7c3aed".to_string(),
+            logo_url: Some("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=".to_string()),
+            logo_dark_url: None,
+            icon_url: None,
+        };
+        let svg_err = BrandingValidator::validate_input(&svg_input);
+        assert!(svg_err.is_err());
+        assert!(svg_err.unwrap_err().to_string().contains("SVG"));
+
+        // 2. PNG válido
+        let valid_png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY44YAAAAASUVORK5CYII=";
+        let valid_png_uri = format!("data:image/png;base64,{valid_png_b64}");
+        let png_res = BrandingValidator::validate_image_data_uri("Logo", &valid_png_uri, false);
+        assert!(png_res.is_ok());
+
+        // 3. PNG com assinatura mágica inválida
+        let invalid_png_uri = "data:image/png;base64,QUJDREVGR0hJSktMTU5PUA=="; // "ABCDEFGHIJKLMNOP"
+        let invalid_png_res = BrandingValidator::validate_image_data_uri("Logo", invalid_png_uri, false);
+        assert!(invalid_png_res.is_err());
+        assert!(invalid_png_res.unwrap_err().to_string().contains("PNG"));
+
+        // 4. JPEG válido (\xFF\xD8\xFF\xE0)
+        let valid_jpeg_uri = "data:image/jpeg;base64,/9j/4AAQSkZJRg==";
+        let jpeg_res = BrandingValidator::validate_image_data_uri("Logo", valid_jpeg_uri, false);
+        assert!(jpeg_res.is_ok());
+
+        // 5. WebP válido (RIFF....WEBP)
+        // b"RIFF\x24\x00\x00\x00WEBP" -> UklGRiQAAABXRUJQ
+        let valid_webp_uri = "data:image/webp;base64,UklGRiQAAABXRUJQVlA4";
+        let webp_res = BrandingValidator::validate_image_data_uri("Logo", valid_webp_uri, false);
+        assert!(webp_res.is_ok());
+
+        // 6. Formato não suportado (ex: GIF)
+        let gif_uri = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+        let gif_res = BrandingValidator::validate_image_data_uri("Logo", gif_uri, false);
+        assert!(gif_res.is_err());
+
+        // 7. Base64 corrompido
+        let corrupt_b64_uri = "data:image/png;base64,!!!NaoEB64!!!";
+        assert!(BrandingValidator::validate_image_data_uri("Logo", corrupt_b64_uri, false).is_err());
+
+        // 8. Limite de tamanho: ícone > 64 KB
+        let large_icon_bytes = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        let mut large_icon_data = large_icon_bytes;
+        large_icon_data.resize(65 * 1024, 0); // 65 KB (> 64 KB)
+        
+        // Codificação simples para o teste de tamanho
+        let mut encoded = String::new();
+        const B64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for chunk in large_icon_data.chunks(3) {
+            let b0 = chunk[0];
+            let b1 = if chunk.len() > 1 { chunk[1] } else { 0 };
+            let b2 = if chunk.len() > 2 { chunk[2] } else { 0 };
+            encoded.push(B64_CHARS[(b0 >> 2) as usize] as char);
+            encoded.push(B64_CHARS[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize] as char);
+            if chunk.len() > 1 {
+                encoded.push(B64_CHARS[(((b1 & 0x0F) << 2) | (b2 >> 6)) as usize] as char);
+            } else {
+                encoded.push('=');
+            }
+            if chunk.len() > 2 {
+                encoded.push(B64_CHARS[(b2 & 0x3F) as usize] as char);
+            } else {
+                encoded.push('=');
+            }
+        }
+        let large_icon_uri = format!("data:image/png;base64,{encoded}");
+        let large_res = BrandingValidator::validate_image_data_uri("Ícone", &large_icon_uri, true);
+        assert!(large_res.is_err());
+        assert!(large_res.unwrap_err().to_string().contains("64 KB"));
+    }
 }

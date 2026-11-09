@@ -1,9 +1,10 @@
 use crate::domain::{
-    AuditLogEntry, CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy,
-    OperationMode, PublicBranding, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput,
-    Role, RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput,
-    UpdateUserInput, UserRecord, UserWithRole, PERM_BRANDING_MANAGE, PERM_BRANDING_READ,
-    PERM_ROLE_READ, PERM_USER_MANAGE, PERM_USER_READ, ROLE_SLUG_OWNER, SYSTEM_ROLES,
+    AuditLogEntry, BrandingValidator, CreateUserInput, InitialSetupInput, InitialSetupResult,
+    LoginInput, LoginPolicy, OperationMode, PublicBranding, RecoverPasswordInput,
+    RecoverPasswordResult, ResetPasswordInput, Role, RoleWithPermissions, SessionInfo, Tenant,
+    TenantBranding, UpdateBrandingInput, UpdateUserInput, UserRecord, UserWithRole,
+    PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_ROLE_READ, PERM_USER_MANAGE, PERM_USER_READ,
+    ROLE_SLUG_OWNER, SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
@@ -440,16 +441,11 @@ impl CoreServices {
             ));
         }
 
-        let company_name = input.company_name.trim();
+        let company_name = BrandingValidator::validate_company_name(&input.company_name)?;
         let owner_name = input.owner_name.trim();
         let owner_email = validate_email(&input.owner_email)?;
         validate_password(&input.owner_password)?;
 
-        if company_name.is_empty() {
-            return Err(CoreError::Validation(
-                "Informe o nome da empresa.".to_string(),
-            ));
-        }
         if owner_name.is_empty() {
             return Err(CoreError::Validation(
                 "Informe o nome do proprietário.".to_string(),
@@ -1364,15 +1360,15 @@ impl CoreServices {
         input: &UpdateBrandingInput,
     ) -> Result<TenantBranding> {
         self.check_session_and_permission(session, PERM_BRANDING_MANAGE)?;
+        let validated = BrandingValidator::validate_input(input)?;
         let session = session.clone();
-        let input = input.clone();
 
         self.run_transaction(|stores| {
             let session = session.clone();
-            let input = input.clone();
+            let validated = validated.clone();
 
             Box::pin(async move {
-                let updated = stores.branding().save(&session.tenant_id, &input).await?;
+                let updated = stores.branding().save(&session.tenant_id, &validated).await?;
 
                 stores
                     .audit()

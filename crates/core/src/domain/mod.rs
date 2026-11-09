@@ -7,7 +7,7 @@ pub mod tenant;
 pub mod user;
 
 pub use audit::AuditLogEntry;
-pub use branding::{PublicBranding, TenantBranding, UpdateBrandingInput};
+pub use branding::{BrandingValidator, PublicBranding, TenantBranding, UpdateBrandingInput};
 pub use config::{AppConfig, InitialSetupInput, InitialSetupResult, OperationMode};
 pub use permission::*;
 pub use role::{Role, RoleWithPermissions};
