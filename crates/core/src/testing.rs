@@ -954,4 +954,138 @@ mod unit_tests {
         assert_eq!(begin_count3.load(Ordering::SeqCst), 1);
         assert_eq!(exec_count3.load(Ordering::SeqCst), 1);
     }
+
+    #[tokio::test]
+    async fn test_run_in_tx_retry_on_begin_and_commit() {
+        use crate::error::{CoreError, Result};
+        use crate::store::{
+            run_in_tx, AuditStore, BrandingStore, RoleStore, TenantStore, TransactionManager,
+            TransactionPolicy, TxStoreBundle, UserStore,
+        };
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        struct FailingCommitTxBundle {
+            commit_fails_remaining: Arc<AtomicUsize>,
+            commit_attempts: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl TxStoreBundle for FailingCommitTxBundle {
+            fn tenants(&self) -> &dyn TenantStore {
+                unreachable!()
+            }
+            fn branding(&self) -> &dyn BrandingStore {
+                unreachable!()
+            }
+            fn roles(&self) -> &dyn RoleStore {
+                unreachable!()
+            }
+            fn users(&self) -> &dyn UserStore {
+                unreachable!()
+            }
+            fn audit(&self) -> &dyn AuditStore {
+                unreachable!()
+            }
+            async fn commit(self: Box<Self>) -> Result<()> {
+                self.commit_attempts.fetch_add(1, Ordering::SeqCst);
+                let remaining = self.commit_fails_remaining.load(Ordering::SeqCst);
+                if remaining > 0 {
+                    self.commit_fails_remaining.fetch_sub(1, Ordering::SeqCst);
+                    Err(CoreError::TransientConflict("Commit busy/locked".into()))
+                } else {
+                    Ok(())
+                }
+            }
+            async fn rollback(self: Box<Self>) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        struct FlakyTxManager {
+            begin_fails_remaining: Arc<AtomicUsize>,
+            begin_attempts: Arc<AtomicUsize>,
+            commit_fails_remaining: Arc<AtomicUsize>,
+            commit_attempts: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl TransactionManager for FlakyTxManager {
+            async fn begin_transaction(&self) -> Result<Box<dyn TxStoreBundle>> {
+                self.begin_attempts.fetch_add(1, Ordering::SeqCst);
+                let remaining = self.begin_fails_remaining.load(Ordering::SeqCst);
+                if remaining > 0 {
+                    self.begin_fails_remaining.fetch_sub(1, Ordering::SeqCst);
+                    Err(CoreError::TransientConflict("BEGIN IMMEDIATE busy".into()))
+                } else {
+                    Ok(Box::new(FailingCommitTxBundle {
+                        commit_fails_remaining: self.commit_fails_remaining.clone(),
+                        commit_attempts: self.commit_attempts.clone(),
+                    }))
+                }
+            }
+        }
+
+        let policy = TransactionPolicy {
+            max_retries: 3,
+            initial_backoff_ms: 1,
+        };
+
+        // Cenário 1: Falha transitória no BEGIN (2 falhas de BEGIN, sucesso no 3º)
+        let begin_fails = Arc::new(AtomicUsize::new(2));
+        let begin_attempts = Arc::new(AtomicUsize::new(0));
+        let commit_fails = Arc::new(AtomicUsize::new(0));
+        let commit_attempts = Arc::new(AtomicUsize::new(0));
+        let mgr1 = FlakyTxManager {
+            begin_fails_remaining: begin_fails,
+            begin_attempts: begin_attempts.clone(),
+            commit_fails_remaining: commit_fails,
+            commit_attempts: commit_attempts.clone(),
+        };
+
+        let exec_count = Arc::new(AtomicUsize::new(0));
+        let exec_count_clone = exec_count.clone();
+        let res1: Result<&str> = run_in_tx(&mgr1, &policy, move |_| {
+            let exec_count = exec_count_clone.clone();
+            Box::pin(async move {
+                exec_count.fetch_add(1, Ordering::SeqCst);
+                Ok("ok_apos_begin_retry")
+            })
+        })
+        .await;
+
+        assert_eq!(res1.unwrap(), "ok_apos_begin_retry");
+        assert_eq!(begin_attempts.load(Ordering::SeqCst), 3);
+        assert_eq!(exec_count.load(Ordering::SeqCst), 1);
+        assert_eq!(commit_attempts.load(Ordering::SeqCst), 1);
+
+        // Cenário 2: Falha transitória no COMMIT (2 falhas de COMMIT, sucesso no 3º)
+        let begin_fails2 = Arc::new(AtomicUsize::new(0));
+        let begin_attempts2 = Arc::new(AtomicUsize::new(0));
+        let commit_fails2 = Arc::new(AtomicUsize::new(2));
+        let commit_attempts2 = Arc::new(AtomicUsize::new(0));
+        let mgr2 = FlakyTxManager {
+            begin_fails_remaining: begin_fails2,
+            begin_attempts: begin_attempts2.clone(),
+            commit_fails_remaining: commit_fails2,
+            commit_attempts: commit_attempts2.clone(),
+        };
+
+        let exec_count2 = Arc::new(AtomicUsize::new(0));
+        let exec_count2_clone = exec_count2.clone();
+        let res2: Result<&str> = run_in_tx(&mgr2, &policy, move |_| {
+            let exec_count = exec_count2_clone.clone();
+            Box::pin(async move {
+                exec_count.fetch_add(1, Ordering::SeqCst);
+                Ok("ok_apos_commit_retry")
+            })
+        })
+        .await;
+
+        assert_eq!(res2.unwrap(), "ok_apos_commit_retry");
+        assert_eq!(begin_attempts2.load(Ordering::SeqCst), 3);
+        assert_eq!(exec_count2.load(Ordering::SeqCst), 3);
+        assert_eq!(commit_attempts2.load(Ordering::SeqCst), 3);
+    }
 }
