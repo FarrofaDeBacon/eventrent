@@ -138,6 +138,34 @@ mod tests {
     }
 
     #[test]
+    fn test_commands_call_only_core_services_never_stores() {
+        use std::path::Path;
+
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let commands_dir = manifest_dir.join("src").join("commands");
+
+        let mut forbidden_files = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&commands_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                    let content =
+                        std::fs::read_to_string(&path).expect("Falha ao ler arquivo de comando");
+                    if content.contains(".stores") {
+                        forbidden_files.push(path.display().to_string());
+                    }
+                }
+            }
+        }
+
+        assert!(
+            forbidden_files.is_empty(),
+            "Comandos Tauri devem chamar SOMENTE métodos de CoreServices, nunca stores direto! Arquivos com violação: {:?}",
+            forbidden_files
+        );
+    }
+
+    #[test]
     fn test_public_commands_are_strictly_whitelisted() {
         let expected_public = [
             "get_app_status",

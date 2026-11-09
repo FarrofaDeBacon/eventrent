@@ -19,15 +19,11 @@ fn resolve_tenant_id<'a>(state: &'a AppState, tenant_id: &'a str) -> &'a str {
 pub async fn get_public_branding(
     state: State<'_, AppState>,
 ) -> Result<Option<PublicBranding>, String> {
-    let branding = state
+    state
         .services
-        .stores
-        .branding
-        .get_by_tenant_id(&state.default_tenant_id)
+        .get_public_branding(&state.default_tenant_id)
         .await
-        .map_err(crate::map_core_err)?;
-
-    Ok(branding.map(PublicBranding::from))
+        .map_err(crate::map_core_err)
 }
 
 #[tauri::command]

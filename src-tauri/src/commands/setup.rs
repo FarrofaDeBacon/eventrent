@@ -17,18 +17,14 @@ pub struct AppStatus {
 #[tauri::command]
 pub async fn get_app_status(state: State<'_, AppState>) -> Result<AppStatus, String> {
     let config = state.get_config()?;
-    let user_count = state
+    let has_owner = state
         .services
-        .stores
-        .users
-        .count_by_tenant(&state.default_tenant_id)
+        .has_owner(&state.default_tenant_id)
         .await
         .map_err(crate::map_core_err)?;
     let branding = state
         .services
-        .stores
-        .branding
-        .get_by_tenant_id(&state.default_tenant_id)
+        .get_tenant_branding(&state.default_tenant_id)
         .await
         .map_err(crate::map_core_err)?;
     let session = state.get_session_without_touch();
@@ -36,7 +32,7 @@ pub async fn get_app_status(state: State<'_, AppState>) -> Result<AppStatus, Str
     Ok(AppStatus {
         config,
         default_tenant_id: state.default_tenant_id.clone(),
-        has_owner: user_count > 0,
+        has_owner,
         session,
         branding,
     })

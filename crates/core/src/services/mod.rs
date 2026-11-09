@@ -1,9 +1,9 @@
 use crate::domain::{
     AuditLogEntry, CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy,
-    OperationMode, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput, Role,
-    RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput, UpdateUserInput,
-    UserRecord, UserWithRole, PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_ROLE_READ,
-    PERM_USER_MANAGE, PERM_USER_READ, ROLE_SLUG_OWNER, SYSTEM_ROLES,
+    OperationMode, PublicBranding, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput,
+    Role, RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput,
+    UpdateUserInput, UserRecord, UserWithRole, PERM_BRANDING_MANAGE, PERM_BRANDING_READ,
+    PERM_ROLE_READ, PERM_USER_MANAGE, PERM_USER_READ, ROLE_SLUG_OWNER, SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
@@ -1362,5 +1362,23 @@ impl CoreServices {
             })
         })
         .await
+    }
+
+    /// Obtém a identidade visual pública de um tenant para telas pré-login (/login, /setup).
+    /// Devolve um DTO com lista fechada de campos (nome, cores, logos), sem ids internos.
+    pub async fn get_public_branding(&self, tenant_id: &str) -> Result<Option<PublicBranding>> {
+        let branding = self.stores.branding.get_by_tenant_id(tenant_id).await?;
+        Ok(branding.map(PublicBranding::from))
+    }
+
+    /// Verifica se o tenant já possui ao menos um usuário registrado (ex.: proprietário).
+    pub async fn has_owner(&self, tenant_id: &str) -> Result<bool> {
+        let count = self.stores.users.count_by_tenant(tenant_id).await?;
+        Ok(count > 0)
+    }
+
+    /// Obtém as configurações de identidade visual do tenant para verificação de status do app.
+    pub async fn get_tenant_branding(&self, tenant_id: &str) -> Result<Option<TenantBranding>> {
+        self.stores.branding.get_by_tenant_id(tenant_id).await
     }
 }
