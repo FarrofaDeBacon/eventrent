@@ -53,6 +53,7 @@ Todos os itens foram desenvolvidos e commitados individualmente (um commit por i
 Histórico linear da branch `fase-1b1-marca` a partir da tag `v0.3.0-fase1b0`:
 
 ```text
+140eca9 refactor(core): itera fatias de base64 por indice para compatibilidade universal com clippy
 f40633f refactor(core): atende recomendacoes do clippy no brandingvalidator
 c2a0903 docs: atualiza historico de commits no relatorio da fase 1b.1
 45293c6 style: formata codigo rust com cargo fmt de acordo com as regras de ci
@@ -448,3 +449,11 @@ export function getAccessibleForeground(
   - `pnpm lint`: linter de cores literais, Prettier e ESLint 100% aprovados.
   - `vitest run`: 18 testes unitários/integração aprovados.
   - `playwright test`: 2 testes E2E aprovados (`smoke.spec.ts` e `branding.spec.ts`).
+
+---
+
+## 6. Links da Execução Verde no GitHub Actions (PR #5)
+
+- **Workflow Run**: [Run #42691366628](https://github.com/FarrofaDeBacon/eventrent/actions/runs/42691366628)
+- **Job Ubuntu (ubuntu-latest)**: [129411639767 (Verde - 3m34s)](https://github.com/FarrofaDeBacon/eventrent/actions/runs/42691366628/job/129411639767)
+- **Job Windows (windows-latest)**: [129411640458 (Verde - 3m25s)](https://github.com/FarrofaDeBacon/eventrent/actions/runs/42691366628/job/129411640458)
