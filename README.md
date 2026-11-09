@@ -117,6 +117,20 @@ pnpm build
 
 Os artefatos estáticos são gerados no diretório `build/`.
 
+### 5. Portão de Qualidade Local e Git Hooks
+
+Para garantir conformidade com as regras de CI antes de cada commit e push, ative os hooks versionados do projeto:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Para rodar manualmente toda a suíte de verificação (frontend check, lint, vitest, cargo fmt, clippy e testes Rust):
+
+```bash
+pnpm verify
+```
+
 ### Build do Aplicativo Desktop Instalável
 
 ```bash
