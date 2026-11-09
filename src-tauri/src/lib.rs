@@ -113,9 +113,24 @@ pub fn load_or_create_app_config(config_path: &Path) -> Result<AppConfig, String
     })
 }
 
-/// Grava o arquivo config.json de forma atômica (arquivo temporário + rename).
+/// Grava o arquivo config.json de forma atômica (arquivo temporário + sync_all + rename).
 /// Previne corrupção de arquivo caso ocorra queda de energia ou terminação abrupta durante a escrita.
 pub fn save_app_config_file(config_path: &Path, config: &AppConfig) -> Result<(), String> {
+    save_app_config_file_internal(config_path, config, |src, dst| {
+        std::fs::rename(src, dst).map_err(|e| e.to_string())
+    })
+}
+
+pub(crate) fn save_app_config_file_internal<F>(
+    config_path: &Path,
+    config: &AppConfig,
+    rename_op: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&Path, &Path) -> Result<(), String>,
+{
+    use std::io::Write;
+
     let serialized = serde_json::to_string_pretty(config)
         .map_err(|e| format!("Falha ao serializar config.json: {e}"))?;
 
@@ -125,24 +140,35 @@ pub fn save_app_config_file(config_path: &Path, config: &AppConfig) -> Result<()
         Utc::now().timestamp_nanos_opt().unwrap_or(0)
     ));
 
-    std::fs::write(&temp_file, &serialized).map_err(|e| {
-        format!(
-            "Falha ao gravar arquivo temporário de configuração ({}): {e}",
-            temp_file.display()
-        )
-    })?;
-
-    #[cfg(windows)]
     {
-        if config_path.exists() {
-            let _ = std::fs::remove_file(config_path);
-        }
+        let mut file = std::fs::File::create(&temp_file).map_err(|e| {
+            format!(
+                "Falha ao criar arquivo temporário de configuração ({}): {e}",
+                temp_file.display()
+            )
+        })?;
+
+        file.write_all(serialized.as_bytes()).map_err(|e| {
+            let _ = std::fs::remove_file(&temp_file);
+            format!(
+                "Falha ao gravar arquivo temporário de configuração ({}): {e}",
+                temp_file.display()
+            )
+        })?;
+
+        file.sync_all().map_err(|e| {
+            let _ = std::fs::remove_file(&temp_file);
+            format!(
+                "Falha ao sincronizar arquivo temporário no disco ({}): {e}",
+                temp_file.display()
+            )
+        })?;
     }
 
-    std::fs::rename(&temp_file, config_path).map_err(|e| {
+    rename_op(&temp_file, config_path).map_err(|err_msg| {
         let _ = std::fs::remove_file(&temp_file);
         format!(
-            "Falha ao mover arquivo temporário para configuração final ({}): {e}",
+            "Falha ao mover arquivo temporário para configuração final ({}): {err_msg}",
             config_path.display()
         )
     })?;
@@ -387,6 +413,53 @@ mod tests {
         let loaded = load_or_create_app_config(&cfg_path).unwrap();
         assert_eq!(loaded.inactivity_timeout_minutes, 45);
         assert!(loaded.setup_completed);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_save_app_config_file_never_deletes_original_on_rename_failure() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "eventrent_cfg_fail_test_{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let cfg_path = temp_dir.join("config.json");
+
+        // 1. Grava configuração inicial com sucesso (versão 1: 30 minutos)
+        let initial_cfg = AppConfig {
+            mode: Some(eventrent_core::OperationMode::Local),
+            setup_completed: true,
+            inactivity_timeout_minutes: 30,
+        };
+        save_app_config_file(&cfg_path, &initial_cfg).unwrap();
+        assert!(cfg_path.exists());
+
+        // 2. Tenta gravar nova configuração (versão 2: 90 minutos) simulando falha no rename
+        let new_cfg = AppConfig {
+            mode: Some(eventrent_core::OperationMode::Local),
+            setup_completed: true,
+            inactivity_timeout_minutes: 90,
+        };
+
+        let fail_res = save_app_config_file_internal(&cfg_path, &new_cfg, |_src, _dst| {
+            Err("Simulação de falha catastrófica de I/O no rename".to_string())
+        });
+        assert!(
+            fail_res.is_err(),
+            "Deve retornar erro quando o rename falha"
+        );
+
+        // 3. O arquivo original NUNCA deve sumir e deve manter o conteúdo íntegro da versão 1
+        assert!(
+            cfg_path.exists(),
+            "config.json original deve permanecer intacto"
+        );
+        let loaded = load_or_create_app_config(&cfg_path).unwrap();
+        assert_eq!(
+            loaded.inactivity_timeout_minutes, 30,
+            "Conteúdo anterior deve ser preservado sem corrupção"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
