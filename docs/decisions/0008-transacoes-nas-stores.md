@@ -1,8 +1,8 @@
-# ADR-0008: Proposta de Transações nas Stores (Atomicidade Multi-Store)
+# ADR-0008: Transações nas Stores (Atomicidade Multi-Store e run_in_tx)
 
 ## Status
 
-**Proposta** (Aguardando aprovação para implementação na fase apropriada)
+**Aceito** (Decisão da Diretoria de Engenharia na Fase 1B.0)
 
 ## Contexto
 
@@ -10,19 +10,19 @@ Atualmente, `crates/core` consome persistência via traits assíncronas desacopl
 
 Entretanto, fluxos de negócio críticos realizam múltiplas escritas correlacionadas sem garantia de atomicidade ACID:
 
-1. **Configuração Inicial (`complete_initial_setup`)**: Cria o tenant, salva branding inicial, cria o usuário proprietário e gera evento de auditoria. Caso a criação do usuário falhe, o tenant já persiste gravado.
-2. **Criação/Edição de Usuário e Segurança**: Criação de usuário seguida por inserção em `audit_log`. Se o sistema cair entre as duas chamadas, perde-se a rastreabilidade do evento.
+1. **Configuração Inicial (`complete_initial_setup`)**: Cria o tenant, salva branding inicial, cria o usuário proprietário e gera evento de auditoria. Caso a criação do usuário falhasse, o tenant já persistia gravado.
+2. **Criação/Edição de Usuário e Segurança**: Criação de usuário seguida por inserção em `audit_log`. Se o sistema caísse entre as duas chamadas, perdia-se a rastreabilidade do evento.
 3. **Motor de Disponibilidade de Equipamentos (Fase 3)**: O requisito central da Fase 3 exige _“verificar disponibilidade de estoque e gravar a reserva na mesma transação”_, prevenindo race conditions e overbooking sob concorrência (especialmente no modo nuvem/PostgreSQL da Fase 2.5).
 
-Com as traits atuais operando diretamente contra pools de conexão individuais, não há como compor operações de diferentes stores em uma única transação atômica gerenciada pelo serviço do `core`.
+Com as traits originais operando diretamente contra pools de conexão individuais, não havia como compor operações de diferentes stores em uma única transação atômica gerenciada pelo serviço do `core`.
 
 ---
 
-## Opções Analisadas
+## Decisão
 
-### Opção 1: Unit of Work (UoW) com Stores Transacionais (`TransactionManager`)
+Adotou-se a **Opção 1 (Unit of Work com `TransactionManager` / `TxStoreBundle`)**, complementada pela função genérica de orquestração **`run_in_tx` no `crates/core`** (como função livre, não método de trait, garantindo total _object-safety_).
 
-Criação de uma abstração de transação no `crates/core`:
+### 1. Modelo no Core (`crates/core`)
 
 ```rust
 #[async_trait]
@@ -41,78 +41,63 @@ pub trait TxStoreBundle: Send + Sync {
     async fn commit(self: Box<Self>) -> Result<()>;
     async fn rollback(self: Box<Self>) -> Result<()>;
 }
+
+pub type TxBoxFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
+
+pub async fn run_in_tx<F, T>(
+    manager: &dyn TransactionManager,
+    policy: &TransactionPolicy,
+    f: F,
+) -> Result<T>
+where
+    F: for<'a> Fn(&'a dyn TxStoreBundle) -> TxBoxFuture<'a, T>;
 ```
 
-- **Prós**:
-  - **Preservação das Traits**: As traits existentes (`UserStore`, `TenantStore`, etc.) continuam intactas. A implementação SQLite/Postgres simplesmente instancia implementações que usam `sqlx::Transaction<'_, DB>` em vez de `sqlx::Pool<DB>`.
-  - **Flexibilidade Total**: O serviço orquestra a lógica de negócio, decidindo explicitamente a fronteira transacional.
-  - **Essencial para a Fase 3**: Permite que o motor de disponibilidade consulte itens e insira locações sob o mesmo isolamento transacional (`SERIALIZABLE` ou `REPEATABLE READ`).
-- **Contras**:
-  - Exige gerenciamento cuidadoso do ciclo de vida da transação (garantir rollback via RAII/`Drop` se o commit não for invocado).
-  - Custo mínimo de dispatch dinâmico (`Box<dyn TxStoreBundle>`).
+**Garantias do `run_in_tx`:**
+
+- **Commit automático**: Ao retornar `Ok(T)`, invoca `commit().await`.
+- **Rollback automático**: Ao retornar `Err(E)` ou ocorrer pânico na execução do closure (RAII / `Drop`), a transação é abortada e descartada com segurança.
+- **Retry com Backoff Exponencial**: Quando o erro for classificado como `CoreError::TransientConflict(String)`, novas tentativas imediatas com backoff exponencial (padrão: até 3 tentativas) são executadas antes de propagar o erro.
 
 ---
 
-### Opção 2: Callback Transacional de Orquestração (`run_in_transaction`)
+### 2. Implementação no SQLite (`crates/store-sqlite`)
 
-Implementação de um runner no `crates/core` que recebe um closure assíncrono:
+1. **Abstração de Executor (`SqliteExecutor`)**:
+   Implementado como `enum SqliteExecutor { Pool(DbPool), Tx(Arc<tokio::sync::Mutex<Option<sqlx::Transaction<'static, Sqlite>>>>) }`.
+   Todas as stores (`TenantStore`, `BrandingStore`, `RoleStore`, `UserStore`, `AuditStore`) executam suas queries via `self.executor` (`fetch_optional`, `fetch_one`, `fetch_all`, `execute`).
+   **Benefício fundamental**: Zero duplicação de SQL ou bindings de parâmetros entre operações comuns no pool e operações dentro de transação.
 
-```rust
-#[async_trait]
-pub trait TransactionRunner: Send + Sync {
-    async fn run_in_tx<F, T>(&self, f: F) -> Result<T>
-    where
-        F: for<'a> FnOnce(&'a StoreBundle) -> Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>> + Send;
-}
-```
+2. **Transações com `BEGIN IMMEDIATE`**:
+   No SQLite, `BEGIN` padrão é diferido (`DEFERRED`). Se duas conexões realizam leitura e depois tentam elevar para escrita simultaneamente, ocorre deadlock ou erro `database is locked`.
+   O `SqliteTxManager` inicia conexões transacionais estritamente com `self.pool.begin_with("BEGIN IMMEDIATE")`, obtendo a trava de escrita imediatamente antes de qualquer leitura ou escrita.
 
-- **Prós**:
-  - **Segurança de Commit/Rollback**: `commit` ocorre automaticamente se o closure retornar `Ok(T)`, e `rollback` imediato se retornar `Err` ou ocorrer pânico.
-  - Não há risco do desenvolvedor esquecer de finalizar a transação.
-- **Contras**:
-  - Tipagem complexa em Rust assíncrono: lifetimes de Higher-Ranked Trait Bounds (`for<'a>`) e necessidade de `Pin<Box<dyn Future>>`.
-  - Menor flexibilidade quando a transação precisa ser passada entre métodos auxiliares privados.
+3. **Tempo Limite de Espera (`busy_timeout`)**:
+   Tanto `init_db` quanto `init_memory_db` configuram explicitamente `.busy_timeout(std::time::Duration::from_secs(5))` no driver do SQLite, concedendo até 5 segundos para que transações concorrentes concluam antes de devolver erro de lock.
 
----
+4. **Mapeamento de Conflitos Transitórios**:
+   Erros de SQLite com códigos 5 (`SQLITE_BUSY`), 6 (`SQLITE_LOCKED`), 261 (`SQLITE_BUSY_RECOVERY`), 517 (`SQLITE_BUSY_SNAPSHOT`), mensagens contendo `busy`/`locked` ou `PoolTimedOut` são mapeados como `CoreError::TransientConflict(msg)`, acionando a esteira de retry do `run_in_tx`.
 
-### Opção 3: Operações Compostas no Store (Coarse-Grained / Fachadas por Agregado)
-
-Evitar abstrações transacionais no `core` e criar métodos específicos nas traits que embutem a transação internamente no store (ex: `complete_initial_setup_atomic(...)`, `reserve_items_if_available(...)`).
-
-- **Prós**:
-  - Zero alteração na infraestrutura atual de traits do `core`.
-  - Sem closures assíncronas nem structs de Unit of Work.
-- **Contras**:
-  - **Acoplamento e Violação de SRP**: Empurra regras de orquestração de domínio para dentro do driver de persistência SQL.
-  - **Inflexibilidade**: Cada nova combinação de escrita exige criar um método gigante no store.
-  - Inviável para regras complexas da Fase 3 (onde consultas de disponibilidade dependem de regras dinâmicas de catálogo, kits, períodos de locação e buffers operacionais).
+5. **Tratamento no Tauri**:
+   O Tauri mapeia `CoreError::TransientConflict` para mensagens amigáveis ao usuário final indicando que o sistema está processando concorrência e que uma nova tentativa em instantes terá sucesso.
 
 ---
 
-## Comparativo: SQLite vs PostgreSQL
+### 3. Considerações Críticas para PostgreSQL (Fase 2.5 e Fase 3)
 
-| Critério                        | SQLite (`crates/store-sqlite`)                                                                              | PostgreSQL (`crates/store-postgres` - Fase 2.5)                                                   |
-| :------------------------------ | :---------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------ |
-| **Concorrência de Escrita**     | Um único escritor simultâneo por arquivo (`BEGIN IMMEDIATE`). Transações longas podem causar `SQLITE_BUSY`. | Concorrência multi-conexão com MVCC (Postgres suporta múltiplos escritores em linhas diferentes). |
-| **Níveis de Isolamento**        | `SERIALIZABLE` inerente no modo WAL para escritores.                                                        | Configurável (`READ COMMITTED`, `REPEATABLE READ`, `SERIALIZABLE`).                               |
-| **Compatibilidade com Opção 1** | `sqlx::Transaction<'_, Sqlite>` implementa perfeitamente as traits dos stores.                              | `sqlx::Transaction<'_, Postgres>` implementa a mesma interface com suporte nativo a savepoints.   |
+No PostgreSQL (arquitetura cliente-servidor com MVCC):
 
----
-
-## Impacto nas Traits Atuais
-
-- As assinaturas de consulta e escrita individuais em `TenantStore`, `UserStore`, etc., **não mudam**.
-- A struct `StoreBundle` em `crates/core` passa a conter opcionalmente uma referência a `Arc<dyn TransactionManager>` (ou `StoreBundle` é a visão de leitura/escrita padrão fora de tx e `TxStoreBundle` a visão dentro de tx).
-- Nenhuma dependência externa nova é necessária no `crates/core` (continua sem `sqlx`).
+- O nível `REPEATABLE READ` sozinho **não é suficiente** para evitar o problema clássico de verificação-e-gravação (_check-then-act_) em reservas simultâneas de estoque. Em `REPEATABLE READ`, duas transações concorrentes que leem a disponibilidade de um item simultaneamente verão o mesmo saldo positivo; ambas gravarão a reserva e comitarão, gerando **overbooking**.
+- Para a Fase 3 (Motor de Disponibilidade), será obrigatório adotar uma das seguintes estratégias suportadas pela arquitetura:
+  1. **Trava explícita de linha**: `SELECT ... FOR UPDATE` nas linhas dos equipamentos/kits sendo reservados.
+  2. **Restrições de Exclusão**: `EXCLUDE USING gist` com ranges temporais (`tsrange`) para impedir sobreposição física no banco.
+  3. **Nível `SERIALIZABLE` estrito**: Com a infraestrutura do `run_in_tx` já provendo captura de conflitos de serialização (código `40001` no Postgres) e novas tentativas com backoff exponencial.
 
 ---
 
-## Recomendação
+### 4. Cuidados de Auditoria e Persistência de Tentativas Falhas
 
-Recomenda-se a **Opção 1 (Unit of Work com `TransactionManager` / `TxStoreBundle`)**, combinada com um helper ergonômico no core para garantir rollback automático em caso de erro.
+Em operações de autenticação (`login` e `recover_password`):
 
-Essa abordagem:
-
-1. Mantém `crates/core` 100% puro e agnóstico de SQL.
-2. Resolve de forma limpa a atomicidade do setup inicial e auditoria.
-3. Prepara arquiteturalmente o sistema para o motor de disponibilidade e reservas em tempo real da Fase 3, atendendo tanto o SQLite local quanto o PostgreSQL do servidor Axum (Fase 2.5).
+- O incremento do contador de tentativas falhas e a aplicação de bloqueio temporário por brute-force **devem ser comitados no banco antes de devolver o erro ao chamador**.
+- Se a transação fosse abortada (rollback) pelo retorno do erro `CoreError::InvalidCredentials`, o contador de falhas seria desfeito, neutralizando a proteção contra força bruta. Portanto, a gravação da falha e da auditoria é finalizada com commit antes do retorno do erro na camada de serviço.
