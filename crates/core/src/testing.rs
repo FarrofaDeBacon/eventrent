@@ -1593,4 +1593,60 @@ mod unit_tests {
             );
         }
     }
+
+    #[test]
+    fn test_customer_search_normalization_and_cursor() {
+        use crate::domain::customer::{
+            build_customer_search_text, build_name_sort, normalize_for_search, remove_diacritics,
+            CustomerCursor,
+        };
+
+        // 1. Remoção de acentos em português e normalização
+        let accented = "José da Conceição & Filhos — Produções Audiovisuais Ltda.";
+        let unaccented = remove_diacritics(accented);
+        assert_eq!(
+            unaccented,
+            "jose da conceicao & filhos — producoes audiovisuais ltda."
+        );
+
+        // 2. Colapso de múltiplos espaços e trim
+        let raw_spacing = "   Som   &   Luz    Avançada   ";
+        assert_eq!(normalize_for_search(raw_spacing), "som & luz avancada");
+
+        // 3. build_name_sort
+        assert_eq!(build_name_sort("  Álvaro  Silveira "), "alvaro silveira");
+        assert_eq!(build_name_sort("Bruno Alves"), "bruno alves");
+        assert!(build_name_sort("Álvaro") < build_name_sort("Bruno"));
+
+        // 4. build_customer_search_text
+        let search_text = build_customer_search_text(
+            "Empresa de Eventos São Paulo",
+            Some("SP Som e Luz"),
+            "12345678000195",
+            "12.345.678/0001-95",
+            &[
+                "contato@spsom.com".to_string(),
+                "(11) 98765-4321".to_string(),
+            ],
+        );
+        assert!(search_text.contains("empresa de eventos sao paulo"));
+        assert!(search_text.contains("sp som e luz"));
+        assert!(search_text.contains("12345678000195"));
+        assert!(search_text.contains("12.345.678/0001-95"));
+        assert!(search_text.contains("contato@spsom.com"));
+        assert!(search_text.contains("(11) 98765-4321"));
+
+        // 5. CustomerCursor (encode / decode)
+        let cursor = CustomerCursor::new("carlos silva", "018f0000-0000-7000-8000-000000000042");
+        let encoded = cursor.encode();
+        assert!(!encoded.is_empty());
+
+        let decoded =
+            CustomerCursor::decode(&encoded).expect("cursor deve decodificar com sucesso");
+        assert_eq!(decoded, cursor);
+
+        // Cursor inválido deve retornar None de forma segura
+        assert!(CustomerCursor::decode("cursor-invalido-!@#").is_none());
+        assert!(CustomerCursor::decode("").is_none());
+    }
 }
