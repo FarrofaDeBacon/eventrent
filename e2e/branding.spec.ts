@@ -51,12 +51,21 @@ test.describe("E2E — Identidade Visual e White Label (Fase 1B.1)", () => {
       "EventRent White Label Pro",
     );
 
-    // 6. Alterna toggle de prévia Claro / Escuro
+    // 6. Alterna toggle de prévia Claro / Escuro e valida componentes do preview (botão, badge, card, sidebar, tabela)
+    await expect(
+      page.locator(".sticky").getByText("Barra Lateral (Navegação)"),
+    ).toBeVisible();
+    await expect(
+      page.locator(".sticky").getByText("Tabela de Itens"),
+    ).toBeVisible();
+    await expect(page.locator(".sticky table")).toBeVisible();
+
     const darkPreviewBtn = page.getByRole("button", {
       name: "Visualizar Escuro",
     });
     await darkPreviewBtn.click();
     await expect(page.locator(".sticky .dark")).toBeVisible();
+    await expect(page.locator(".sticky .dark table")).toBeVisible();
 
     const lightPreviewBtn = page.getByRole("button", {
       name: "Visualizar Claro",

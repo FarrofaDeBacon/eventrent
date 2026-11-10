@@ -985,7 +985,7 @@
 
               <!-- 4. Mini Card de Item com Preço -->
               <div
-                class="rounded-lg border border-border bg-card p-3 shadow-2xs space-y-2"
+                class="rounded-lg border border-border bg-card p-3 shadow-2xs space-y-2 mb-4"
               >
                 <div class="flex items-center justify-between">
                   <span class="text-xs font-semibold"
@@ -1000,6 +1000,92 @@
                   <Button size="sm" class="w-full text-xs h-7">
                     Reservar Equipamento
                   </Button>
+                </div>
+              </div>
+
+              <!-- 5. Mini Barra Lateral (Navegação) -->
+              <div class="space-y-2 mb-4">
+                <span
+                  class="text-2xs font-medium text-muted-foreground uppercase tracking-wider"
+                  >Barra Lateral (Navegação)</span
+                >
+                <div
+                  class="rounded-lg border border-border bg-card p-2 space-y-1"
+                >
+                  <div
+                    class="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-semibold shadow-2xs"
+                  >
+                    <span class="h-2 w-2 rounded-full bg-current"></span>
+                    <span>Dashboard</span>
+                  </div>
+                  <div
+                    class="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-muted-foreground text-xs hover:bg-muted/50 transition-colors"
+                  >
+                    <span class="h-2 w-2 rounded-full bg-muted-foreground/40"
+                    ></span>
+                    <span>Locações Ativas</span>
+                  </div>
+                  <div
+                    class="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-muted-foreground text-xs hover:bg-muted/50 transition-colors"
+                  >
+                    <span class="h-2 w-2 rounded-full bg-muted-foreground/40"
+                    ></span>
+                    <span>Catálogo de Itens</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 6. Mini Tabela de Dados -->
+              <div class="space-y-2">
+                <span
+                  class="text-2xs font-medium text-muted-foreground uppercase tracking-wider"
+                  >Tabela de Itens</span
+                >
+                <div
+                  class="rounded-lg border border-border overflow-hidden bg-card text-2xs"
+                >
+                  <table class="w-full text-left">
+                    <thead
+                      class="bg-muted/50 text-muted-foreground border-b border-border"
+                    >
+                      <tr>
+                        <th class="p-2 font-medium">Equipamento</th>
+                        <th class="p-2 font-medium">Status</th>
+                        <th class="p-2 font-medium text-right">Diária</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-border">
+                      <tr class="hover:bg-muted/30">
+                        <td class="p-2 font-medium text-foreground"
+                          >Projetor Laser 4K</td
+                        >
+                        <td class="p-2">
+                          <Badge variant="default" class="text-3xs py-0 px-1.5"
+                            >Alugado</Badge
+                          >
+                        </td>
+                        <td
+                          class="p-2 text-right font-mono text-primary font-semibold"
+                          >R$ 450</td
+                        >
+                      </tr>
+                      <tr class="hover:bg-muted/30">
+                        <td class="p-2 font-medium text-foreground"
+                          >Caixa JBL PRX</td
+                        >
+                        <td class="p-2">
+                          <Badge
+                            variant="secondary"
+                            class="text-3xs py-0 px-1.5">Disponível</Badge
+                          >
+                        </td>
+                        <td
+                          class="p-2 text-right font-mono text-muted-foreground"
+                          >R$ 180</td
+                        >
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
