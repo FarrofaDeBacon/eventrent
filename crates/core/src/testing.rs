@@ -226,6 +226,8 @@ pub async fn contract_user_creation_and_rbac(
                 secondary_color: "#000000".to_string(),
                 accent_color: "#000000".to_string(),
                 logo_url: None,
+                logo_dark_url: None,
+                icon_url: None,
             },
         )
         .await;
@@ -282,6 +284,45 @@ pub async fn contract_user_creation_and_rbac(
         )
         .await;
     assert!(matches!(escalate_attempt, Err(CoreError::Forbidden(_))));
+
+    // 0.4: Hierarquia de gestão: Gerente com user:manage não pode agir sobre o Proprietário (permissões superiores)
+    let update_owner_attempt = services
+        .update_user(
+            &limited_manager_session,
+            &owner_session.user_id,
+            &UpdateUserInput {
+                name: "Proprietário Adulterado".to_string(),
+                email: "novo.email@luzesom.com.br".to_string(),
+                role_id: commercial_role.id.clone(),
+            },
+        )
+        .await;
+    assert!(
+        matches!(update_owner_attempt, Err(CoreError::Forbidden(_))),
+        "Gerente não pode editar usuário Proprietário com permissões superiores"
+    );
+
+    let deactivate_owner_attempt = services
+        .set_user_active(&limited_manager_session, &owner_session.user_id, false)
+        .await;
+    assert!(
+        matches!(deactivate_owner_attempt, Err(CoreError::Forbidden(_))),
+        "Gerente não pode desativar usuário Proprietário com permissões superiores"
+    );
+
+    let reset_owner_password_attempt = services
+        .reset_user_password(
+            &limited_manager_session,
+            &owner_session.user_id,
+            &ResetPasswordInput {
+                new_password: "SenhaInvasora#2026".to_string(),
+            },
+        )
+        .await;
+    assert!(
+        matches!(reset_owner_password_attempt, Err(CoreError::Forbidden(_))),
+        "Gerente não pode redefinir senha do Proprietário com permissões superiores"
+    );
 
     (commercial_user, commercial_session)
 }
@@ -537,6 +578,41 @@ pub async fn contract_unique_partial_indexes(stores: &StoreBundle, tenant_id: &s
     );
 }
 
+/// 11. Contrato: Branding suporta logo claro, logo escuro e ícone (migração 0003).
+pub async fn contract_branding_dark_logo_and_icon(stores: &StoreBundle, tenant_id: &str) {
+    let input = UpdateBrandingInput {
+        company_name: "Locadora White Label".to_string(),
+        primary_color: "#1e40af".to_string(),
+        secondary_color: "#3b82f6".to_string(),
+        accent_color: "#f59e0b".to_string(),
+        logo_url: Some("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY44YAAAAASUVORK5CYII=".to_string()),
+        logo_dark_url: Some("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY44YAAAAASUVORK5CYII=".to_string()),
+        icon_url: Some("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY44YAAAAASUVORK5CYII=".to_string()),
+    };
+
+    let saved = stores
+        .branding
+        .save(tenant_id, &input)
+        .await
+        .expect("Falha ao salvar tenant_branding com logo escuro e ícone");
+
+    assert_eq!(saved.company_name, "Locadora White Label");
+    assert_eq!(saved.logo_url, input.logo_url);
+    assert_eq!(saved.logo_dark_url, input.logo_dark_url);
+    assert_eq!(saved.icon_url, input.icon_url);
+
+    let retrieved = stores
+        .branding
+        .get_by_tenant_id(tenant_id)
+        .await
+        .expect("Falha ao buscar tenant_branding")
+        .expect("Branding deve existir");
+
+    assert_eq!(retrieved.logo_url, input.logo_url);
+    assert_eq!(retrieved.logo_dark_url, input.logo_dark_url);
+    assert_eq!(retrieved.icon_url, input.icon_url);
+}
+
 /// Suíte genérica agregadora de testes de contrato.
 /// Executa todos os testes comportamentais sequencialmente sobre um mesmo ambiente.
 pub async fn run_store_contract_suite<F, Fut>(factory: F)
@@ -572,6 +648,7 @@ where
 
     contract_audit_log(&stores, &tenant_id).await;
     contract_unique_partial_indexes(&stores, &tenant_id).await;
+    contract_branding_dark_logo_and_icon(&stores, &tenant_id).await;
 }
 
 #[cfg(test)]
@@ -728,6 +805,8 @@ mod unit_tests {
                 secondary_color: "#000".to_string(),
                 accent_color: "#000".to_string(),
                 logo_url: None,
+                logo_dark_url: None,
+                icon_url: None,
                 favicon_url: None,
                 created_at: "2026-01-01T00:00:00Z".to_string(),
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
@@ -787,6 +866,11 @@ mod unit_tests {
         // E-mails válidos
         assert!(validate_email("usuario@dominio.com").is_ok());
         assert!(validate_email("user.name+tag@sub.empresa.com.br").is_ok());
+        // IDN / Punycode TLD
+        assert!(validate_email("usuario@dominio.xn--p1ai").is_ok());
+        // Limite máximo exato de 64 caracteres na parte local
+        let local_64 = format!("{}@dominio.com", "a".repeat(64));
+        assert!(validate_email(&local_64).is_ok());
 
         // E-mails inválidos (RFC 5321 edge cases)
         assert!(validate_email("").is_err());
@@ -799,6 +883,16 @@ mod unit_tests {
         assert!(validate_email(".ponto-inicio@dominio.com").is_err());
         assert!(validate_email("ponto..duplo@dominio.com").is_err());
         assert!(validate_email("usuario@-hifen-inicio.com").is_err());
+        // Espaços em branco e caracteres de controle
+        assert!(validate_email("usuario @dominio.com").is_err());
+        assert!(validate_email("usuario@ dominio.com").is_err());
+        assert!(validate_email(" usuario@dominio.com ").is_err());
+        assert!(validate_email("usuario\n@dominio.com").is_err());
+        // Parte local excedendo 64 caracteres
+        let local_65 = format!("{}@dominio.com", "a".repeat(65));
+        assert!(validate_email(&local_65).is_err());
+        // TLD inválido terminando em hífen
+        assert!(validate_email("usuario@dominio.com-").is_err());
     }
 
     #[tokio::test]
@@ -953,5 +1047,332 @@ mod unit_tests {
         assert!(matches!(res3, Err(CoreError::Validation(_))));
         assert_eq!(begin_count3.load(Ordering::SeqCst), 1);
         assert_eq!(exec_count3.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_run_in_tx_retry_on_begin_and_commit() {
+        use crate::error::{CoreError, Result};
+        use crate::store::{
+            run_in_tx, AuditStore, BrandingStore, RoleStore, TenantStore, TransactionManager,
+            TransactionPolicy, TxStoreBundle, UserStore,
+        };
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        struct FailingCommitTxBundle {
+            commit_fails_remaining: Arc<AtomicUsize>,
+            commit_attempts: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl TxStoreBundle for FailingCommitTxBundle {
+            fn tenants(&self) -> &dyn TenantStore {
+                unreachable!()
+            }
+            fn branding(&self) -> &dyn BrandingStore {
+                unreachable!()
+            }
+            fn roles(&self) -> &dyn RoleStore {
+                unreachable!()
+            }
+            fn users(&self) -> &dyn UserStore {
+                unreachable!()
+            }
+            fn audit(&self) -> &dyn AuditStore {
+                unreachable!()
+            }
+            async fn commit(self: Box<Self>) -> Result<()> {
+                self.commit_attempts.fetch_add(1, Ordering::SeqCst);
+                let remaining = self.commit_fails_remaining.load(Ordering::SeqCst);
+                if remaining > 0 {
+                    self.commit_fails_remaining.fetch_sub(1, Ordering::SeqCst);
+                    Err(CoreError::TransientConflict("Commit busy/locked".into()))
+                } else {
+                    Ok(())
+                }
+            }
+            async fn rollback(self: Box<Self>) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        struct FlakyTxManager {
+            begin_fails_remaining: Arc<AtomicUsize>,
+            begin_attempts: Arc<AtomicUsize>,
+            commit_fails_remaining: Arc<AtomicUsize>,
+            commit_attempts: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl TransactionManager for FlakyTxManager {
+            async fn begin_transaction(&self) -> Result<Box<dyn TxStoreBundle>> {
+                self.begin_attempts.fetch_add(1, Ordering::SeqCst);
+                let remaining = self.begin_fails_remaining.load(Ordering::SeqCst);
+                if remaining > 0 {
+                    self.begin_fails_remaining.fetch_sub(1, Ordering::SeqCst);
+                    Err(CoreError::TransientConflict("BEGIN IMMEDIATE busy".into()))
+                } else {
+                    Ok(Box::new(FailingCommitTxBundle {
+                        commit_fails_remaining: self.commit_fails_remaining.clone(),
+                        commit_attempts: self.commit_attempts.clone(),
+                    }))
+                }
+            }
+        }
+
+        let policy = TransactionPolicy {
+            max_retries: 3,
+            initial_backoff_ms: 1,
+        };
+
+        // Cenário 1: Falha transitória no BEGIN (2 falhas de BEGIN, sucesso no 3º)
+        let begin_fails = Arc::new(AtomicUsize::new(2));
+        let begin_attempts = Arc::new(AtomicUsize::new(0));
+        let commit_fails = Arc::new(AtomicUsize::new(0));
+        let commit_attempts = Arc::new(AtomicUsize::new(0));
+        let mgr1 = FlakyTxManager {
+            begin_fails_remaining: begin_fails,
+            begin_attempts: begin_attempts.clone(),
+            commit_fails_remaining: commit_fails,
+            commit_attempts: commit_attempts.clone(),
+        };
+
+        let exec_count = Arc::new(AtomicUsize::new(0));
+        let exec_count_clone = exec_count.clone();
+        let res1: Result<&str> = run_in_tx(&mgr1, &policy, move |_| {
+            let exec_count = exec_count_clone.clone();
+            Box::pin(async move {
+                exec_count.fetch_add(1, Ordering::SeqCst);
+                Ok("ok_apos_begin_retry")
+            })
+        })
+        .await;
+
+        assert_eq!(res1.unwrap(), "ok_apos_begin_retry");
+        assert_eq!(begin_attempts.load(Ordering::SeqCst), 3);
+        assert_eq!(exec_count.load(Ordering::SeqCst), 1);
+        assert_eq!(commit_attempts.load(Ordering::SeqCst), 1);
+
+        // Cenário 2: Falha transitória no COMMIT (2 falhas de COMMIT, sucesso no 3º)
+        let begin_fails2 = Arc::new(AtomicUsize::new(0));
+        let begin_attempts2 = Arc::new(AtomicUsize::new(0));
+        let commit_fails2 = Arc::new(AtomicUsize::new(2));
+        let commit_attempts2 = Arc::new(AtomicUsize::new(0));
+        let mgr2 = FlakyTxManager {
+            begin_fails_remaining: begin_fails2,
+            begin_attempts: begin_attempts2.clone(),
+            commit_fails_remaining: commit_fails2,
+            commit_attempts: commit_attempts2.clone(),
+        };
+
+        let exec_count2 = Arc::new(AtomicUsize::new(0));
+        let exec_count2_clone = exec_count2.clone();
+        let res2: Result<&str> = run_in_tx(&mgr2, &policy, move |_| {
+            let exec_count = exec_count2_clone.clone();
+            Box::pin(async move {
+                exec_count.fetch_add(1, Ordering::SeqCst);
+                Ok("ok_apos_commit_retry")
+            })
+        })
+        .await;
+
+        assert_eq!(res2.unwrap(), "ok_apos_commit_retry");
+        assert_eq!(begin_attempts2.load(Ordering::SeqCst), 3);
+        assert_eq!(exec_count2.load(Ordering::SeqCst), 3);
+        assert_eq!(commit_attempts2.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn test_branding_validator_company_name() {
+        use crate::domain::BrandingValidator;
+
+        assert_eq!(
+            BrandingValidator::validate_company_name("  Locadora Luz & Som  ").unwrap(),
+            "Locadora Luz & Som"
+        );
+        assert!(BrandingValidator::validate_company_name("").is_err());
+        assert!(BrandingValidator::validate_company_name("   ").is_err());
+
+        let exactly_80 = "A".repeat(80);
+        assert_eq!(
+            BrandingValidator::validate_company_name(&exactly_80).unwrap(),
+            exactly_80
+        );
+
+        let over_80 = "A".repeat(81);
+        assert!(BrandingValidator::validate_company_name(&over_80).is_err());
+
+        assert!(BrandingValidator::validate_company_name("Locadora\nLtda").is_err());
+        assert!(BrandingValidator::validate_company_name("Locadora\0Ltda").is_err());
+    }
+
+    #[test]
+    fn test_branding_validator_hex_color() {
+        use crate::domain::BrandingValidator;
+
+        assert_eq!(
+            BrandingValidator::validate_hex_color("primária", "#2563EB").unwrap(),
+            "#2563eb"
+        );
+        assert_eq!(
+            BrandingValidator::validate_hex_color("secundária", "#000000").unwrap(),
+            "#000000"
+        );
+
+        // Rejeições de formato
+        assert!(BrandingValidator::validate_hex_color("cor", "2563eb").is_err());
+        assert!(BrandingValidator::validate_hex_color("cor", "#fff").is_err());
+        assert!(BrandingValidator::validate_hex_color("cor", "#12345678").is_err());
+        assert!(BrandingValidator::validate_hex_color("cor", "#gggggg").is_err());
+
+        // Rejeições de CSS injection
+        assert!(BrandingValidator::validate_hex_color("cor", "red; background: blue").is_err());
+        assert!(BrandingValidator::validate_hex_color("cor", "#2563eb; color: red").is_err());
+        assert!(BrandingValidator::validate_hex_color("cor", "rgb(0,0,0)").is_err());
+    }
+
+    #[test]
+    fn test_branding_validator_images_magic_bytes_and_formats() {
+        use crate::domain::{BrandingValidator, UpdateBrandingInput};
+        use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+        use base64::Engine as _;
+
+        // 1. Rejeição estrita a SVG
+        let svg_input = UpdateBrandingInput {
+            company_name: "Locadora".to_string(),
+            primary_color: "#2563eb".to_string(),
+            secondary_color: "#475569".to_string(),
+            accent_color: "#7c3aed".to_string(),
+            logo_url: Some("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=".to_string()),
+            logo_dark_url: None,
+            icon_url: None,
+        };
+        let svg_err = BrandingValidator::validate_input(&svg_input);
+        assert!(svg_err.is_err());
+        assert!(svg_err.unwrap_err().to_string().contains("SVG"));
+
+        // 2. PNG válido
+        let valid_png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY44YAAAAASUVORK5CYII=";
+        let valid_png_uri = format!("data:image/png;base64,{valid_png_b64}");
+        let png_res = BrandingValidator::validate_image_data_uri("Logo", &valid_png_uri, false);
+        assert!(png_res.is_ok());
+
+        // 3. PNG com assinatura mágica inválida
+        let invalid_png_uri = "data:image/png;base64,QUJDREVGR0hJSktMTU5PUA=="; // "ABCDEFGHIJKLMNOP"
+        let invalid_png_res =
+            BrandingValidator::validate_image_data_uri("Logo", invalid_png_uri, false);
+        assert!(invalid_png_res.is_err());
+        assert!(invalid_png_res.unwrap_err().to_string().contains("PNG"));
+
+        // 4. JPEG válido (\xFF\xD8\xFF\xE0)
+        let valid_jpeg_uri = "data:image/jpeg;base64,/9j/4AAQSkZJRg==";
+        let jpeg_res = BrandingValidator::validate_image_data_uri("Logo", valid_jpeg_uri, false);
+        assert!(jpeg_res.is_ok());
+
+        // 5. WebP válido (RIFF....WEBP)
+        let valid_webp_uri = "data:image/webp;base64,UklGRiQAAABXRUJQVlA4";
+        let webp_res = BrandingValidator::validate_image_data_uri("Logo", valid_webp_uri, false);
+        assert!(webp_res.is_ok());
+
+        // 6. Formato não suportado (ex: GIF)
+        let gif_uri =
+            "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+        let gif_res = BrandingValidator::validate_image_data_uri("Logo", gif_uri, false);
+        assert!(gif_res.is_err());
+
+        // 7. Alfabeto inválido
+        let corrupt_b64_uri = "data:image/png;base64,***NaoEB64***";
+        assert!(
+            BrandingValidator::validate_image_data_uri("Logo", corrupt_b64_uri, false).is_err()
+        );
+
+        // 8. Padding errado
+        let invalid_padding_uri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAE===";
+        assert!(
+            BrandingValidator::validate_image_data_uri("Logo", invalid_padding_uri, false).is_err()
+        );
+
+        // 9. Espaço ou quebra de linha
+        let whitespace_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEA\nAAABAQMAAAAl21bKAAAA";
+        let whitespace_uri = format!("data:image/png;base64,{whitespace_b64}");
+        assert!(
+            BrandingValidator::validate_image_data_uri("Logo", &whitespace_uri, false).is_err()
+        );
+
+        let leading_space_uri = format!("data:image/png;base64, {valid_png_b64}");
+        assert!(
+            BrandingValidator::validate_image_data_uri("Logo", &leading_space_uri, false).is_err()
+        );
+
+        // 10. MIME declarado diferente dos magic bytes (magic bytes de JPEG com prefixo de PNG)
+        let mismatch_uri = "data:image/png;base64,/9j/4AAQSkZJRg==";
+        let mismatch_res = BrandingValidator::validate_image_data_uri("Logo", mismatch_uri, false);
+        assert!(mismatch_res.is_err());
+        assert!(mismatch_res
+            .unwrap_err()
+            .to_string()
+            .contains("PNG inválida"));
+
+        // 11. Dados truncados (menos que o tamanho mínimo de magic bytes)
+        let truncated_uri = "data:image/png;base64,iVBO";
+        let truncated_res =
+            BrandingValidator::validate_image_data_uri("Logo", truncated_uri, false);
+        assert!(truncated_res.is_err());
+
+        // 12. SVG disfarçado de PNG (inicia com <svg ou contém <svg)
+        let svg_disguised_uri =
+            "data:image/png;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjwvc3ZnPg==";
+        let svg_disguised_res =
+            BrandingValidator::validate_image_data_uri("Logo", svg_disguised_uri, false);
+        assert!(svg_disguised_res.is_err());
+
+        // 13. Prefixo com parâmetros adicionais
+        let param_prefix_uri = format!("data:image/png;charset=utf-8;base64,{valid_png_b64}");
+        let param_res =
+            BrandingValidator::validate_image_data_uri("Logo", &param_prefix_uri, false);
+        assert!(param_res.is_err());
+        assert!(param_res.unwrap_err().to_string().contains("prefixo exato"));
+
+        // 14. Limites de tamanho: exatamente no limite e 1 byte acima
+        const PNG_HEADER: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+        // 14.1. Ícone: exatamente 64 KB (65.536 bytes) -> PASSA
+        let mut exact_icon_bytes = Vec::with_capacity(64 * 1024);
+        exact_icon_bytes.extend_from_slice(&PNG_HEADER);
+        exact_icon_bytes.resize(64 * 1024, 0x00);
+        let exact_icon_b64 = BASE64_STANDARD.encode(&exact_icon_bytes);
+        let exact_icon_uri = format!("data:image/png;base64,{exact_icon_b64}");
+        assert!(BrandingValidator::validate_image_data_uri("Ícone", &exact_icon_uri, true).is_ok());
+
+        // 14.2. Ícone: 1 byte acima de 64 KB (65.537 bytes) -> FALHA
+        let mut over_icon_bytes = Vec::with_capacity(64 * 1024 + 1);
+        over_icon_bytes.extend_from_slice(&PNG_HEADER);
+        over_icon_bytes.resize(64 * 1024 + 1, 0x00);
+        let over_icon_b64 = BASE64_STANDARD.encode(&over_icon_bytes);
+        let over_icon_uri = format!("data:image/png;base64,{over_icon_b64}");
+        let over_icon_res =
+            BrandingValidator::validate_image_data_uri("Ícone", &over_icon_uri, true);
+        assert!(over_icon_res.is_err());
+        assert!(over_icon_res.unwrap_err().to_string().contains("64 KB"));
+
+        // 14.3. Logo: exatamente 256 KB (262.144 bytes) -> PASSA
+        let mut exact_logo_bytes = Vec::with_capacity(256 * 1024);
+        exact_logo_bytes.extend_from_slice(&PNG_HEADER);
+        exact_logo_bytes.resize(256 * 1024, 0x00);
+        let exact_logo_b64 = BASE64_STANDARD.encode(&exact_logo_bytes);
+        let exact_logo_uri = format!("data:image/png;base64,{exact_logo_b64}");
+        assert!(BrandingValidator::validate_image_data_uri("Logo", &exact_logo_uri, false).is_ok());
+
+        // 14.4. Logo: 1 byte acima de 256 KB (262.145 bytes) -> FALHA
+        let mut over_logo_bytes = Vec::with_capacity(256 * 1024 + 1);
+        over_logo_bytes.extend_from_slice(&PNG_HEADER);
+        over_logo_bytes.resize(256 * 1024 + 1, 0x00);
+        let over_logo_b64 = BASE64_STANDARD.encode(&over_logo_bytes);
+        let over_logo_uri = format!("data:image/png;base64,{over_logo_b64}");
+        let over_logo_res =
+            BrandingValidator::validate_image_data_uri("Logo", &over_logo_uri, false);
+        assert!(over_logo_res.is_err());
+        assert!(over_logo_res.unwrap_err().to_string().contains("256 KB"));
     }
 }

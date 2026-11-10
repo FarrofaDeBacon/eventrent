@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+# EventRent Git Pre-Push Hook
+# Garante que todos os checks de qualidade (frontend, Rust, linter, testes) passem antes do push.
+set -e
+
+echo "🔍 Executando portão de qualidade antes do push..."
+node scripts/verify.js
+

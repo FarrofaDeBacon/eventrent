@@ -154,6 +154,8 @@ function createInitialMockState(): MockSharedState {
       secondary_color: "#475569",
       accent_color: "#7c3aed",
       logo_url: null,
+      logo_dark_url: null,
+      icon_url: null,
       favicon_url: null,
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",

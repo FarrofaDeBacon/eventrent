@@ -121,6 +121,8 @@
       bind:collapsed={sidebarCollapsed}
       companyName={appSession.companyName}
       logoUrl={appSession.logoUrl}
+      logoDarkUrl={appSession.logoDarkUrl}
+      iconUrl={appSession.iconUrl}
       onToggleCollapse={() => (sidebarCollapsed = !sidebarCollapsed)}
     />
 

@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+set -e
+node "$(dirname "$0")/verify.js"
+

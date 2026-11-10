@@ -1,47 +1,47 @@
+import { generateThemeVariables } from "./color";
 import type { BrandingConfig } from "./tokens";
 
 /**
- * Converte cor HEX (#RRGGBB) para luminância estimada e define token de cor de texto em OKLCH.
- */
-function getContrastForeground(hex: string): string {
-  const cleanHex = hex.replace("#", "");
-  if (cleanHex.length !== 6) return "oklch(0.99 0 0)";
-
-  const r = parseInt(cleanHex.substring(0, 2), 16);
-  const g = parseInt(cleanHex.substring(2, 4), 16);
-  const b = parseInt(cleanHex.substring(4, 6), 16);
-
-  // Fórmula de luminância relativa WCAG
-  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
-  return yiq >= 128 ? "oklch(0.145 0.015 260)" : "oklch(0.99 0 0)";
-}
-
-/**
  * Aplica as cores da marca (branding) e configurações do tenant às variáveis CSS na raiz do DOM.
- * Nenhuma cor fixa nos componentes; tudo reage dinamicamente.
+ * Gera dinamicamente a escala semântica em 11 passos (50 a 950) e cores acessíveis WCAG
+ * para ambos os modos (claro e escuro). Nenhuma cor fixa nos componentes.
  */
 export function applyBranding(branding: BrandingConfig): void {
   if (typeof document === "undefined") return;
 
-  const root = document.documentElement;
+  const primary = branding.primary_color || "#2563eb";
+  const secondary = branding.secondary_color || "#475569";
+  const accent = branding.accent_color || "#7c3aed";
 
-  if (branding.primary_color) {
-    root.style.setProperty("--primary", branding.primary_color);
-    root.style.setProperty("--ring", branding.primary_color);
-    const primaryFg = getContrastForeground(branding.primary_color);
-    root.style.setProperty("--primary-foreground", primaryFg);
+  const { light, dark } = generateThemeVariables({
+    primary_color: primary,
+    secondary_color: secondary,
+    accent_color: accent,
+  });
+
+  // Injeta tag <style> com regras para :root e .dark permitindo transição nativa de temas
+  let styleEl = document.getElementById(
+    "eventrent-theme-variables",
+  ) as HTMLStyleElement | null;
+  if (!styleEl) {
+    styleEl = document.createElement("style");
+    styleEl.id = "eventrent-theme-variables";
+    document.head.appendChild(styleEl);
   }
 
-  if (branding.secondary_color) {
-    root.style.setProperty("--secondary", branding.secondary_color);
-    const secondaryFg = getContrastForeground(branding.secondary_color);
-    root.style.setProperty("--secondary-foreground", secondaryFg);
-  }
+  const lightCss = Object.entries(light)
+    .map(([key, val]) => `  ${key}: ${val};`)
+    .join("\n");
 
-  if (branding.accent_color) {
-    root.style.setProperty("--accent", branding.accent_color);
-    const accentFg = getContrastForeground(branding.accent_color);
-    root.style.setProperty("--accent-foreground", accentFg);
+  const darkCss = Object.entries(dark)
+    .map(([key, val]) => `  ${key}: ${val};`)
+    .join("\n");
+
+  styleEl.textContent = `:root {\n${lightCss}\n}\n.dark {\n${darkCss}\n}`;
+
+  // Fallback direto no documentElement
+  for (const [key, val] of Object.entries(light)) {
+    document.documentElement.style.setProperty(key, val);
   }
 
   if (typeof window !== "undefined") {

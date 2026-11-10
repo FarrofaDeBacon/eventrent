@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { toast } from "svelte-sonner";
   import {
@@ -14,6 +15,7 @@
   import {
     appSession,
     getAuthRepository,
+    getBrandingRepository,
     type InitialSetupResult,
     type OperationMode,
   } from "$lib/data";
@@ -81,6 +83,25 @@
     appSession.setSession(setupResult.session);
     await goto("/");
   }
+
+  onMount(async () => {
+    try {
+      const repo = getBrandingRepository();
+      const pub = await repo.getPublicBranding();
+      if (pub) {
+        appSession.setBranding({
+          ...pub,
+          logo_dark_url: pub.logo_dark_url ?? null,
+          icon_url: pub.icon_url ?? null,
+        });
+        if (pub.company_name) {
+          companyName = pub.company_name;
+        }
+      }
+    } catch {
+      // Ignora erro no carregamento da marca pública
+    }
+  });
 </script>
 
 <div

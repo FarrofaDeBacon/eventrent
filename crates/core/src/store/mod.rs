@@ -192,12 +192,34 @@ where
 {
     let mut attempt = 0;
     loop {
-        let tx = manager.begin_transaction().await?;
-        match f(tx.as_ref()).await {
-            Ok(res) => {
-                tx.commit().await?;
-                return Ok(res);
+        let tx = match manager.begin_transaction().await {
+            Ok(tx) => tx,
+            Err(err) => {
+                let is_transient = matches!(err, CoreError::TransientConflict(_));
+                if is_transient && attempt < policy.max_retries {
+                    attempt += 1;
+                    let backoff = policy.initial_backoff_ms * (1 << (attempt - 1));
+                    tokio::time::sleep(tokio::time::Duration::from_millis(backoff)).await;
+                    continue;
+                }
+                return Err(err);
             }
+        };
+
+        match f(tx.as_ref()).await {
+            Ok(res) => match tx.commit().await {
+                Ok(()) => return Ok(res),
+                Err(commit_err) => {
+                    let is_transient = matches!(commit_err, CoreError::TransientConflict(_));
+                    if is_transient && attempt < policy.max_retries {
+                        attempt += 1;
+                        let backoff = policy.initial_backoff_ms * (1 << (attempt - 1));
+                        tokio::time::sleep(tokio::time::Duration::from_millis(backoff)).await;
+                        continue;
+                    }
+                    return Err(commit_err);
+                }
+            },
             Err(err) => {
                 let is_transient = matches!(err, CoreError::TransientConflict(_));
                 let _ = tx.rollback().await;

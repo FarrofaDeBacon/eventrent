@@ -1,9 +1,10 @@
 use crate::domain::{
-    AuditLogEntry, CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy,
-    OperationMode, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput, Role,
-    RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput, UpdateUserInput,
-    UserRecord, UserWithRole, PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_ROLE_READ,
-    PERM_USER_MANAGE, PERM_USER_READ, ROLE_SLUG_OWNER, SYSTEM_ROLES,
+    AuditLogEntry, BrandingValidator, CreateUserInput, InitialSetupInput, InitialSetupResult,
+    LoginInput, LoginPolicy, OperationMode, PublicBranding, RecoverPasswordInput,
+    RecoverPasswordResult, ResetPasswordInput, Role, RoleWithPermissions, SessionInfo, Tenant,
+    TenantBranding, UpdateBrandingInput, UpdateUserInput, UserRecord, UserWithRole,
+    PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_ROLE_READ, PERM_USER_MANAGE, PERM_USER_READ,
+    ROLE_SLUG_OWNER, SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
@@ -41,33 +42,48 @@ pub fn validate_password(password: &str) -> Result<()> {
     Ok(())
 }
 
-/// Valida formato de e-mail sem dependências externas.
+/// Valida formato de e-mail sem dependências externas nem unwrap().
 ///
-/// Regras aplicadas:
-/// 1. Comprimento total entre 5 e 254 caracteres (RFC 5321).
-/// 2. Presença de exatamente um caractere '@', separando parte local e domínio.
-/// 3. Parte local: não vazia, sem pontos no início/fim, sem pontos consecutivos.
-/// 4. Domínio: não vazio, sem pontos ou hífens no início/fim, com pelo menos uma extensão (TLD).
-/// 5. TLD (Top-Level Domain): no mínimo 2 caracteres exclusivamente alfabéticos.
+/// Regras aplicadas (RFC 5321 e RFC 5890 para IDN/Punycode):
+/// 1. Sem espaços em branco ou caracteres de controle.
+/// 2. Comprimento total entre 5 e 254 caracteres.
+/// 3. Presença de exatamente um caractere '@', separando parte local e domínio.
+/// 4. Parte local: 1 a 64 caracteres, sem pontos no início/fim e sem pontos consecutivos.
+/// 5. Domínio: não vazio, sem pontos ou hífens no início/fim, com pelo menos uma extensão (TLD).
+/// 6. TLD (Top-Level Domain): no mínimo 2 caracteres, alfanumérico ou hífen (ex: punycode xn--p1ai), sem iniciar/terminar com hífen.
 pub fn validate_email(email: &str) -> Result<String> {
-    let trimmed = email.trim().to_lowercase();
-    if trimmed.len() < 5 || trimmed.len() > 254 {
+    if email.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(CoreError::Validation(
+            "O e-mail não pode conter espaços ou caracteres de controle.".to_string(),
+        ));
+    }
+
+    let lowered = email.to_lowercase();
+    if lowered.len() < 5 || lowered.len() > 254 {
         return Err(CoreError::Validation(
             "O e-mail deve ter entre 5 e 254 caracteres.".to_string(),
         ));
     }
-    let parts: Vec<&str> = trimmed.split('@').collect();
+
+    let parts: Vec<&str> = lowered.split('@').collect();
     if parts.len() != 2 {
         return Err(CoreError::Validation(
             "Informe um e-mail válido contendo um único '@'.".to_string(),
         ));
     }
+
     let (local, domain) = (parts[0], parts[1]);
-    if local.is_empty() || local.starts_with('.') || local.ends_with('.') || local.contains("..") {
+    if local.is_empty()
+        || local.len() > 64
+        || local.starts_with('.')
+        || local.ends_with('.')
+        || local.contains("..")
+    {
         return Err(CoreError::Validation(
-            "Parte local do e-mail inválida.".to_string(),
+            "Parte local do e-mail inválida (máximo 64 caracteres, sem pontos nas extremidades ou consecutivos).".to_string(),
         ));
     }
+
     if domain.is_empty()
         || domain.starts_with('.')
         || domain.ends_with('.')
@@ -79,19 +95,31 @@ pub fn validate_email(email: &str) -> Result<String> {
             "Domínio do e-mail inválido.".to_string(),
         ));
     }
+
     let domain_labels: Vec<&str> = domain.split('.').collect();
     if domain_labels.len() < 2 {
         return Err(CoreError::Validation(
             "Domínio do e-mail deve conter pelo menos uma extensão (ex: .com).".to_string(),
         ));
     }
-    let tld = domain_labels.last().unwrap();
-    if tld.len() < 2 || !tld.chars().all(|c| c.is_ascii_alphabetic()) {
+
+    let Some(tld) = domain_labels.last() else {
+        return Err(CoreError::Validation(
+            "Extensão do e-mail inválida.".to_string(),
+        ));
+    };
+
+    if tld.len() < 2
+        || tld.starts_with('-')
+        || tld.ends_with('-')
+        || !tld.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
         return Err(CoreError::Validation(
             "Extensão do e-mail inválida.".to_string(),
         ));
     }
-    Ok(trimmed)
+
+    Ok(lowered)
 }
 
 /// Configuração recomendada pelo OWASP Password Storage Cheat Sheet para Argon2id:
@@ -221,6 +249,8 @@ pub async fn ensure_default_tenant(
             secondary_color: "#475569".to_string(),
             accent_color: "#7c3aed".to_string(),
             logo_url: None,
+            logo_dark_url: None,
+            icon_url: None,
         };
         branding.save(&tenant_id, &default_branding).await?;
     }
@@ -411,16 +441,11 @@ impl CoreServices {
             ));
         }
 
-        let company_name = input.company_name.trim();
+        let company_name = BrandingValidator::validate_company_name(&input.company_name)?;
         let owner_name = input.owner_name.trim();
         let owner_email = validate_email(&input.owner_email)?;
         validate_password(&input.owner_password)?;
 
-        if company_name.is_empty() {
-            return Err(CoreError::Validation(
-                "Informe o nome da empresa.".to_string(),
-            ));
-        }
         if owner_name.is_empty() {
             return Err(CoreError::Validation(
                 "Informe o nome do proprietário.".to_string(),
@@ -474,7 +499,11 @@ impl CoreServices {
                         .as_ref()
                         .map(|b| b.accent_color.clone())
                         .unwrap_or_else(|| "#7c3aed".to_string()),
-                    logo_url: current_branding.and_then(|b| b.logo_url),
+                    logo_url: current_branding.as_ref().and_then(|b| b.logo_url.clone()),
+                    logo_dark_url: current_branding
+                        .as_ref()
+                        .and_then(|b| b.logo_dark_url.clone()),
+                    icon_url: current_branding.as_ref().and_then(|b| b.icon_url.clone()),
                 };
                 let branding = stores.branding().save(&tenant_id, &branding_input).await?;
 
@@ -1084,6 +1113,15 @@ impl CoreServices {
                     .await?
                     .ok_or_else(|| CoreError::NotFound("Usuário não encontrado.".to_string()))?;
 
+                // Hierarquia de gestão (0.4): o usuário só pode editar alvos cujas permissões sejam subconjunto das suas
+                for perm in &target.permissions {
+                    if !session.has_permission(perm) {
+                        return Err(CoreError::Forbidden(format!(
+                            "Não é permitido editar um usuário com permissões superiores às suas: '{perm}'"
+                        )));
+                    }
+                }
+
                 if let Some(existing_email_user) = stores
                     .users()
                     .find_by_email(&session.tenant_id, &email)
@@ -1191,6 +1229,15 @@ impl CoreServices {
                     .await?
                     .ok_or_else(|| CoreError::NotFound("Usuário não encontrado.".to_string()))?;
 
+                // Hierarquia de gestão (0.4): o usuário só pode desativar/reativar alvos cujas permissões sejam subconjunto das suas
+                for perm in &target.permissions {
+                    if !session.has_permission(perm) {
+                        return Err(CoreError::Forbidden(format!(
+                            "Não é permitido alterar o status de um usuário com permissões superiores às suas: '{perm}'"
+                        )));
+                    }
+                }
+
                 if !active && target.active && target.role_slug == ROLE_SLUG_OWNER {
                     let active_owners = stores
                         .users()
@@ -1254,9 +1301,18 @@ impl CoreServices {
             Box::pin(async move {
                 let target = stores
                     .users()
-                    .find_by_id(&session.tenant_id, &user_id)
+                    .find_with_role(&session.tenant_id, &user_id)
                     .await?
                     .ok_or_else(|| CoreError::NotFound("Usuário não encontrado.".to_string()))?;
+
+                // Hierarquia de gestão (0.4): o usuário só pode redefinir a senha de alvos cujas permissões sejam subconjunto das suas
+                for perm in &target.permissions {
+                    if !session.has_permission(perm) {
+                        return Err(CoreError::Forbidden(format!(
+                            "Não é permitido redefinir a senha de um usuário com permissões superiores às suas: '{perm}'"
+                        )));
+                    }
+                }
 
                 let now = Utc::now().to_rfc3339();
                 stores
@@ -1306,15 +1362,26 @@ impl CoreServices {
         input: &UpdateBrandingInput,
     ) -> Result<TenantBranding> {
         self.check_session_and_permission(session, PERM_BRANDING_MANAGE)?;
+        let validated = BrandingValidator::validate_input(input)?;
         let session = session.clone();
-        let input = input.clone();
 
         self.run_transaction(|stores| {
             let session = session.clone();
-            let input = input.clone();
+            let validated = validated.clone();
 
             Box::pin(async move {
-                let updated = stores.branding().save(&session.tenant_id, &input).await?;
+                let updated = stores.branding().save(&session.tenant_id, &validated).await?;
+
+                let audit_detail = format!(
+                    "Identidade visual atualizada para '{}' (primária: {}, secundária: {}, destaque: {}; logo_claro: {}, logo_escuro: {}, icone: {})",
+                    updated.company_name,
+                    updated.primary_color,
+                    updated.secondary_color,
+                    updated.accent_color,
+                    updated.logo_url.is_some(),
+                    updated.logo_dark_url.is_some(),
+                    updated.icon_url.is_some()
+                );
 
                 stores
                     .audit()
@@ -1324,10 +1391,7 @@ impl CoreServices {
                         "branding.updated",
                         "tenant_branding",
                         &updated.id,
-                        &format!(
-                            "Identidade visual atualizada para '{}'",
-                            updated.company_name
-                        ),
+                        &audit_detail,
                     ))
                     .await?;
 
@@ -1335,5 +1399,23 @@ impl CoreServices {
             })
         })
         .await
+    }
+
+    /// Obtém a identidade visual pública de um tenant para telas pré-login (/login, /setup).
+    /// Devolve um DTO com lista fechada de campos (nome, cores, logos), sem ids internos.
+    pub async fn get_public_branding(&self, tenant_id: &str) -> Result<Option<PublicBranding>> {
+        let branding = self.stores.branding.get_by_tenant_id(tenant_id).await?;
+        Ok(branding.map(PublicBranding::from))
+    }
+
+    /// Verifica se o tenant já possui ao menos um usuário registrado (ex.: proprietário).
+    pub async fn has_owner(&self, tenant_id: &str) -> Result<bool> {
+        let count = self.stores.users.count_by_tenant(tenant_id).await?;
+        Ok(count > 0)
+    }
+
+    /// Obtém as configurações de identidade visual do tenant para verificação de status do app.
+    pub async fn get_tenant_branding(&self, tenant_id: &str) -> Result<Option<TenantBranding>> {
+        self.stores.branding.get_by_tenant_id(tenant_id).await
     }
 }

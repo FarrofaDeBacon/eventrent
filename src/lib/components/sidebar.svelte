@@ -12,6 +12,7 @@
     ChevronRight,
   } from "lucide-svelte";
   import { page } from "$app/state";
+  import { mode } from "mode-watcher";
   import {
     appSession,
     DEFAULT_COMPANY_NAME,
@@ -25,6 +26,8 @@
     collapsed?: boolean;
     companyName?: string;
     logoUrl?: string | null;
+    logoDarkUrl?: string | null;
+    iconUrl?: string | null;
     onToggleCollapse?: () => void;
   }
 
@@ -32,6 +35,8 @@
     collapsed = $bindable(false),
     companyName = DEFAULT_COMPANY_NAME,
     logoUrl = null,
+    logoDarkUrl = null,
+    iconUrl = null,
     onToggleCollapse,
   }: Props = $props();
 
@@ -103,11 +108,29 @@
   <div
     class="flex h-16 items-center gap-3 border-b border-border px-4 overflow-hidden"
   >
-    {#if logoUrl}
+    {#if collapsed && iconUrl}
+      <img
+        src={iconUrl}
+        alt={companyName}
+        class="h-8 w-8 object-cover rounded-sm shrink-0"
+      />
+    {:else if $mode === "dark" && logoDarkUrl}
+      <img
+        src={logoDarkUrl}
+        alt={companyName}
+        class="h-8 max-w-32 object-contain rounded-sm shrink-0"
+      />
+    {:else if logoUrl}
       <img
         src={logoUrl}
         alt={companyName}
-        class="h-8 w-8 object-contain rounded-sm shrink-0"
+        class="h-8 max-w-32 object-contain rounded-sm shrink-0"
+      />
+    {:else if iconUrl}
+      <img
+        src={iconUrl}
+        alt={companyName}
+        class="h-8 w-8 object-cover rounded-sm shrink-0"
       />
     {:else}
       <div

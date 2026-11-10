@@ -14,11 +14,18 @@ use uuid::Uuid;
 
 pub type DbPool = Pool<Sqlite>;
 
-fn map_sqlx_err(err: sqlx::Error) -> CoreError {
+pub(crate) fn map_sqlx_err(err: sqlx::Error) -> CoreError {
     match &err {
         sqlx::Error::Database(db_err) => {
             if let Some(code) = db_err.code() {
-                if code == "5" || code == "6" || code == "261" || code == "517" {
+                if code == "5"
+                    || code == "6"
+                    || code == "261"
+                    || code == "517"
+                    || code == "773"
+                    || code == "262"
+                    || code == "518"
+                {
                     return CoreError::TransientConflict(format!(
                         "SQLite ocupado ou bloqueado (código {code}): {}",
                         db_err.message()
@@ -442,8 +449,8 @@ impl BrandingStore for SqliteStore {
                 sqlx::query(
                     r#"
                     SELECT id, tenant_id, company_name, primary_color, secondary_color,
-                           accent_color, logo_url, favicon_url, created_at, updated_at,
-                           deleted_at, created_by
+                           accent_color, logo_url, logo_dark_url, icon_url, favicon_url,
+                           created_at, updated_at, deleted_at, created_by
                     FROM tenant_branding
                     WHERE tenant_id = ? AND deleted_at IS NULL
                     LIMIT 1
@@ -461,6 +468,8 @@ impl BrandingStore for SqliteStore {
             secondary_color: r.get("secondary_color"),
             accent_color: r.get("accent_color"),
             logo_url: r.get("logo_url"),
+            logo_dark_url: r.get("logo_dark_url"),
+            icon_url: r.get("icon_url"),
             favicon_url: r.get("favicon_url"),
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),
@@ -479,7 +488,7 @@ impl BrandingStore for SqliteStore {
                     r#"
                     UPDATE tenant_branding
                     SET company_name = ?, primary_color = ?, secondary_color = ?,
-                        accent_color = ?, logo_url = ?, updated_at = ?
+                        accent_color = ?, logo_url = ?, logo_dark_url = ?, icon_url = ?, updated_at = ?
                     WHERE id = ? AND deleted_at IS NULL
                     "#,
                 )
@@ -488,6 +497,8 @@ impl BrandingStore for SqliteStore {
                 .bind(&input.secondary_color)
                 .bind(&input.accent_color)
                 .bind(&input.logo_url)
+                .bind(&input.logo_dark_url)
+                .bind(&input.icon_url)
                 .bind(&now)
                 .bind(&branding.id),
             )
@@ -498,6 +509,8 @@ impl BrandingStore for SqliteStore {
             branding.secondary_color = input.secondary_color.clone();
             branding.accent_color = input.accent_color.clone();
             branding.logo_url = input.logo_url.clone();
+            branding.logo_dark_url = input.logo_dark_url.clone();
+            branding.icon_url = input.icon_url.clone();
             branding.updated_at = now;
 
             Ok(branding)
@@ -509,9 +522,9 @@ impl BrandingStore for SqliteStore {
                     r#"
                     INSERT INTO tenant_branding (
                         id, tenant_id, company_name, primary_color, secondary_color,
-                        accent_color, logo_url, favicon_url, created_at, updated_at,
-                        deleted_at, created_by
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
+                        accent_color, logo_url, logo_dark_url, icon_url, favicon_url,
+                        created_at, updated_at, deleted_at, created_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
                     "#,
                 )
                 .bind(&new_id)
@@ -521,6 +534,8 @@ impl BrandingStore for SqliteStore {
                 .bind(&input.secondary_color)
                 .bind(&input.accent_color)
                 .bind(&input.logo_url)
+                .bind(&input.logo_dark_url)
+                .bind(&input.icon_url)
                 .bind(&now)
                 .bind(&now),
             )
@@ -1947,6 +1962,111 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_recovery_failure_persists_counter_and_lockout_despite_returning_err() {
+        let pool = init_memory_db()
+            .await
+            .expect("Falha ao inicializar banco em memória");
+        let store = SqliteStore::new(pool).into_bundle();
+        let services = CoreServices::new(store.clone());
+        let tenant_id = ensure_default_tenant(store.tenants.as_ref(), store.branding.as_ref())
+            .await
+            .unwrap();
+
+        let setup = services
+            .complete_initial_setup(
+                &tenant_id,
+                &InitialSetupInput {
+                    mode: OperationMode::Local,
+                    company_name: "Empresa Recovery Test".to_string(),
+                    owner_name: "Dono".to_string(),
+                    owner_email: "dono.recovery@empresa.com".to_string(),
+                    owner_password: "SenhaCerta#2026".to_string(),
+                },
+                30,
+            )
+            .await
+            .unwrap();
+
+        // Tentativa 1 com chave de recuperação inválida
+        let err1 = services
+            .recover_password(
+                &tenant_id,
+                &RecoverPasswordInput {
+                    email: setup.session.email.clone(),
+                    recovery_key: "ER-CHAVE-INVALIDA-0001".to_string(),
+                    new_password: "NovaSenha#2026".to_string(),
+                },
+            )
+            .await;
+        assert!(matches!(err1, Err(CoreError::InvalidCredentials)));
+
+        // Prova que recovery_failed_attempts foi gravado (1) e auditoria de falha gerada
+        let user = store
+            .users
+            .find_by_email(&tenant_id, &setup.session.email)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user.recovery_failed_attempts, 1);
+        assert!(user.recovery_locked_until.is_none());
+        let audits = store.audit.list_by_tenant(&tenant_id, 10).await.unwrap();
+        assert!(audits.iter().any(|a| a.action == "auth.recovery_failed"));
+
+        // Tentativas 2, 3 e 4
+        for i in 2..=4 {
+            let res = services
+                .recover_password(
+                    &tenant_id,
+                    &RecoverPasswordInput {
+                        email: setup.session.email.clone(),
+                        recovery_key: format!("ER-CHAVE-INVALIDA-000{i}"),
+                        new_password: "NovaSenha#2026".to_string(),
+                    },
+                )
+                .await;
+            assert!(matches!(res, Err(CoreError::InvalidCredentials)));
+            let user = store
+                .users
+                .find_by_email(&tenant_id, &setup.session.email)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(user.recovery_failed_attempts, i);
+            assert!(user.recovery_locked_until.is_none());
+        }
+
+        // Tentativa 5: atinge o limite e bloqueia a recuperação
+        let err5 = services
+            .recover_password(
+                &tenant_id,
+                &RecoverPasswordInput {
+                    email: setup.session.email.clone(),
+                    recovery_key: "ER-CHAVE-INVALIDA-0005".to_string(),
+                    new_password: "NovaSenha#2026".to_string(),
+                },
+            )
+            .await;
+        assert!(matches!(err5, Err(CoreError::AccountLocked { .. })));
+
+        let user_locked = store
+            .users
+            .find_by_email(&tenant_id, &setup.session.email)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user_locked.recovery_failed_attempts, 5);
+        assert!(
+            user_locked.recovery_locked_until.is_some(),
+            "recovery_locked_until deve estar preenchido no banco"
+        );
+
+        let audits_locked = store.audit.list_by_tenant(&tenant_id, 20).await.unwrap();
+        assert!(audits_locked
+            .iter()
+            .any(|a| a.action == "auth.recovery_locked"));
+    }
+
+    #[tokio::test]
     async fn test_c3_concurrency_with_multiple_connections_on_temp_file() {
         let temp_dir =
             std::env::temp_dir().join(format!("eventrent_concurrency_{}", Uuid::now_v7()));
@@ -2105,5 +2225,188 @@ mod tests {
             .commit()
             .await
             .expect("Falha ao comitar transação da suíte de contrato");
+    }
+
+    #[test]
+    fn test_map_sqlx_err_transient_and_permanent_classification() {
+        use std::borrow::Cow;
+
+        #[derive(Debug)]
+        struct MockDbError {
+            code: Option<String>,
+            message: String,
+        }
+
+        impl std::fmt::Display for MockDbError {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.message)
+            }
+        }
+
+        impl std::error::Error for MockDbError {}
+
+        impl sqlx::error::DatabaseError for MockDbError {
+            fn message(&self) -> &str {
+                &self.message
+            }
+            fn code(&self) -> Option<Cow<'_, str>> {
+                self.code.as_deref().map(Cow::Borrowed)
+            }
+            fn kind(&self) -> sqlx::error::ErrorKind {
+                sqlx::error::ErrorKind::Other
+            }
+            fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+                self
+            }
+            fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+                self
+            }
+            fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+                self
+            }
+        }
+
+        fn make_db_err(code: Option<&str>, msg: &str) -> sqlx::Error {
+            sqlx::Error::Database(Box::new(MockDbError {
+                code: code.map(String::from),
+                message: msg.to_string(),
+            }))
+        }
+
+        // 1. Códigos SQLite de conflito transitório
+        let transient_codes = [
+            ("5", "database is locked / busy"),
+            ("6", "database table is locked"),
+            ("261", "database busy: recovery in progress"),
+            ("517", "database busy: snapshot conflict"),
+            ("773", "database busy: timeout expired"),
+            ("262", "table locked: shared cache"),
+            ("518", "virtual table locked"),
+        ];
+
+        for (code, msg) in transient_codes {
+            let err = make_db_err(Some(code), msg);
+            let mapped = map_sqlx_err(err);
+            assert!(
+                matches!(mapped, CoreError::TransientConflict(_)),
+                "Código {code} ({msg}) deveria virar CoreError::TransientConflict, mas virou: {mapped:?}"
+            );
+        }
+
+        // 2. Erros com mensagens de busy/locked sem código explícito
+        let msg_busy = make_db_err(None, "operational error: database is busy");
+        assert!(matches!(
+            map_sqlx_err(msg_busy),
+            CoreError::TransientConflict(_)
+        ));
+
+        let msg_locked = make_db_err(None, "locking protocol error: table locked");
+        assert!(matches!(
+            map_sqlx_err(msg_locked),
+            CoreError::TransientConflict(_)
+        ));
+
+        // 3. PoolTimedOut
+        let pool_timeout = sqlx::Error::PoolTimedOut;
+        assert!(matches!(
+            map_sqlx_err(pool_timeout),
+            CoreError::TransientConflict(_)
+        ));
+
+        // 4. Códigos e erros permanentes NÃO viram TransientConflict
+        let permanent_codes = [
+            ("1", "syntax error in SQL statement"),
+            ("19", "UNIQUE constraint failed: user.email"),
+            ("2067", "UNIQUE constraint failed"),
+            ("14", "unable to open database file"),
+            ("8", "attempt to write a readonly database"),
+        ];
+
+        for (code, msg) in permanent_codes {
+            let err = make_db_err(Some(code), msg);
+            let mapped = map_sqlx_err(err);
+            assert!(
+                matches!(mapped, CoreError::Database(_)),
+                "Código permanente {code} ({msg}) deveria virar CoreError::Database, mas virou: {mapped:?}"
+            );
+        }
+
+        // 5. Outros tipos de sqlx::Error que não são transitórios
+        let row_not_found = sqlx::Error::RowNotFound;
+        assert!(matches!(
+            map_sqlx_err(row_not_found),
+            CoreError::Database(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_save_branding_audit_log_transactional_and_never_logs_image_data() {
+        let pool = init_memory_db()
+            .await
+            .expect("Falha ao criar banco SQLite em memória");
+        let store = SqliteStore::new(pool).into_bundle();
+        let services = CoreServices::new(store.clone());
+        let tenant_id = ensure_default_tenant(store.tenants.as_ref(), store.branding.as_ref())
+            .await
+            .unwrap();
+
+        let setup = services
+            .complete_initial_setup(
+                &tenant_id,
+                &InitialSetupInput {
+                    mode: OperationMode::Local,
+                    company_name: "Locadora Audit Test".to_string(),
+                    owner_name: "Ana Dono".to_string(),
+                    owner_email: "ana.audit@empresa.com".to_string(),
+                    owner_password: "SenhaSegura#2026".to_string(),
+                },
+                30,
+            )
+            .await
+            .unwrap();
+
+        let png_data = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY44YAAAAASUVORK5CYII=";
+        let update_input = UpdateBrandingInput {
+            company_name: "Locadora Visual Novo".to_string(),
+            primary_color: "#1e40af".to_string(),
+            secondary_color: "#3b82f6".to_string(),
+            accent_color: "#f59e0b".to_string(),
+            logo_url: Some(png_data.to_string()),
+            logo_dark_url: Some(png_data.to_string()),
+            icon_url: Some(png_data.to_string()),
+        };
+
+        let updated = services
+            .save_branding(&setup.session, &update_input)
+            .await
+            .expect("save_branding deve ser bem-sucedido");
+
+        assert_eq!(updated.company_name, "Locadora Visual Novo");
+
+        // Consulta a auditoria e comprova que NUNCA há dados binários ou Data URI gravados
+        let audits = store.audit.list_by_tenant(&tenant_id, 20).await.unwrap();
+        let branding_audit = audits
+            .iter()
+            .find(|a| a.action == "branding.updated")
+            .expect("Registro de auditoria branding.updated deve existir");
+
+        assert_eq!(branding_audit.entity_type, "tenant_branding");
+        assert_eq!(branding_audit.entity_id, updated.id);
+        assert_eq!(
+            branding_audit.actor_user_id.as_deref(),
+            Some(setup.session.user_id.as_str())
+        );
+
+        // Prova estrita: o sumário é conciso, informativo e sem payload binário
+        assert!(branding_audit
+            .summary
+            .contains("Identidade visual atualizada para 'Locadora Visual Novo'"));
+        assert!(branding_audit.summary.contains("logo_claro: true"));
+        assert!(branding_audit.summary.contains("logo_escuro: true"));
+        assert!(branding_audit.summary.contains("icone: true"));
+        assert!(!branding_audit.summary.contains("data:image"));
+        assert!(!branding_audit.summary.contains("base64"));
+        assert!(!branding_audit.summary.contains("iVBORw0KGgo"));
+        assert!(branding_audit.summary.len() < 300);
     }
 }
