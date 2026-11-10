@@ -167,7 +167,7 @@ function oklchToLinearRgbInternal(
 }
 
 function inGamut(rgb: [number, number, number]): boolean {
-  const eps = 0.0001;
+  const eps = 0.001; // Tolerância para imprecisões de ponto flutuante na fronteira do sRGB
   return (
     rgb[0] >= -eps &&
     rgb[0] <= 1 + eps &&
@@ -312,25 +312,64 @@ export function getAccessibleForeground(
 ): ForegroundOption {
   const whiteHex = "#ffffff";
   const darkHex = "#090d16"; // Escuro neutro de alta fidelidade
+  const pureBlackHex = "#000000";
   const whiteCss = "oklch(0.99 0 0)";
   const darkCss = "oklch(0.12 0.015 260)";
+  const blackCss = "oklch(0 0 0)";
 
   const contrastWhite = calculateContrast(backgroundHex, whiteHex);
   const contrastDark = calculateContrast(backgroundHex, darkHex);
+  const contrastBlack = calculateContrast(backgroundHex, pureBlackHex);
 
-  if (contrastWhite >= contrastDark) {
+  if (contrastWhite >= 4.5) {
     return {
       hex: whiteHex,
       css: whiteCss,
       contrast: contrastWhite,
-      isAccessible: contrastWhite >= 4.5,
+      isAccessible: true,
+    };
+  }
+
+  if (contrastDark >= 4.5) {
+    return {
+      hex: darkHex,
+      css: darkCss,
+      contrast: contrastDark,
+      isAccessible: true,
+    };
+  }
+
+  if (contrastBlack >= 4.5) {
+    return {
+      hex: pureBlackHex,
+      css: blackCss,
+      contrast: contrastBlack,
+      isAccessible: true,
+    };
+  }
+
+  // Se nenhum atingir 4.5:1, escolhe a opção com maior contraste absoluto
+  const maxContrast = Math.max(contrastWhite, contrastDark, contrastBlack);
+  if (maxContrast === contrastWhite) {
+    return {
+      hex: whiteHex,
+      css: whiteCss,
+      contrast: contrastWhite,
+      isAccessible: false,
+    };
+  } else if (maxContrast === contrastBlack) {
+    return {
+      hex: pureBlackHex,
+      css: blackCss,
+      contrast: contrastBlack,
+      isAccessible: false,
     };
   } else {
     return {
       hex: darkHex,
       css: darkCss,
       contrast: contrastDark,
-      isAccessible: contrastDark >= 4.5,
+      isAccessible: false,
     };
   }
 }
