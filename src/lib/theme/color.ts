@@ -375,6 +375,45 @@ export function getAccessibleForeground(
 }
 
 /**
+ * Ajusta a luminosidade no espaço OKLCH para atingir taxa de contraste >= 4.5:1 (WCAG AA).
+ * Preserva o matiz (h) e croma (c) da cor original da marca.
+ */
+export function autoAdjustContrast(hex: string): string {
+  const oklch = hexToOklch(hex);
+  const fg = getAccessibleForeground(hex);
+  if (fg.isAccessible) {
+    return hex;
+  }
+
+  const whiteContrast = calculateContrast(hex, "#ffffff");
+  const darkContrast = calculateContrast(hex, "#090d16");
+
+  if (whiteContrast >= darkContrast) {
+    // Escurece para contrastar com branco
+    let l = oklch.l;
+    for (let i = 0; i < 25; i++) {
+      l = Math.max(0.05, l - 0.025);
+      const candidateHex = oklchToHex(l, oklch.c, oklch.h);
+      if (calculateContrast(candidateHex, "#ffffff") >= 4.5) {
+        return candidateHex;
+      }
+    }
+  } else {
+    // Clareia para contrastar com escuro
+    let l = oklch.l;
+    for (let i = 0; i < 25; i++) {
+      l = Math.min(0.95, l + 0.025);
+      const candidateHex = oklchToHex(l, oklch.c, oklch.h);
+      if (calculateContrast(candidateHex, "#090d16") >= 4.5) {
+        return candidateHex;
+      }
+    }
+  }
+
+  return hex;
+}
+
+/**
  * Gera dicionário de variáveis CSS prontas para injeção nos modos claro e escuro.
  */
 export function generateThemeVariables(branding: {

@@ -27,7 +27,10 @@
     THEME_PRESETS,
     type ThemePreset,
   } from "$lib/theme/tokens";
-  import { getAccessibleForeground } from "$lib/theme/color";
+  import {
+    autoAdjustContrast,
+    getAccessibleForeground,
+  } from "$lib/theme/color";
   import {
     Card,
     CardHeader,
@@ -215,6 +218,15 @@
       img.src = rawDataUrl;
     };
     reader.readAsDataURL(file);
+  }
+
+  function handleAutoFixContrast() {
+    if (!canEdit || !isPrimaryValid) return;
+    const adjusted = autoAdjustContrast(primaryColor);
+    primaryColor = adjusted;
+    toast.success(
+      "Cor ajustada automaticamente para atingir conformidade WCAG AA (>= 4.5:1)!",
+    );
   }
 
   function handleLogoUpload(event: Event) {
@@ -446,19 +458,34 @@
             >
           </CardHeader>
           <CardContent class="space-y-5">
-            <!-- Aviso de Contraste WCAG se < 4.5:1 -->
+            <!-- Aviso e Correção de Contraste WCAG se < 4.5:1 -->
             {#if !contrastAnalysis.isAccessible}
               <div
-                class="flex items-start gap-3 rounded-md bg-warning/15 p-3 text-xs text-warning-foreground border border-warning/30"
+                class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-md bg-warning/15 p-3 text-xs text-warning-foreground border border-warning/30"
               >
-                <AlertTriangle class="h-4 w-4 shrink-0 mt-0.5" />
-                <div>
-                  <span class="font-semibold"
-                    >{$_("appearance.contrastWarning", {
-                      values: { ratio: contrastAnalysis.contrast },
-                    })}</span
-                  >
+                <div class="flex items-start gap-2.5">
+                  <AlertTriangle class="h-4 w-4 shrink-0 mt-0.5" />
+                  <div>
+                    <span class="font-semibold"
+                      >{$_("appearance.contrastWarning", {
+                        values: { ratio: contrastAnalysis.contrast },
+                      })}</span
+                    >
+                    <p class="text-2xs text-muted-foreground mt-0.5">
+                      A taxa de contraste está abaixo do recomendado para
+                      acessibilidade (mínimo 4.5:1).
+                    </p>
+                  </div>
                 </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="h-7 text-xs shrink-0 self-end sm:self-center border-warning/40 hover:bg-warning/20"
+                  onclick={handleAutoFixContrast}
+                  disabled={!canEdit}
+                >
+                  Corrigir Contraste Automaticamente
+                </Button>
               </div>
             {/if}
 

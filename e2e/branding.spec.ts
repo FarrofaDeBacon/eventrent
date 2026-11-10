@@ -83,7 +83,17 @@ test.describe("E2E — Identidade Visual e White Label (Fase 1B.1)", () => {
       page.getByRole("button", { name: "Salvar Alterações" }),
     ).toBeEnabled();
 
-    // 8. Salva as alterações
+    // 8. Correção automática de contraste quando < 4.5:1
+    await primaryInput.fill("#888888");
+    const autoFixBtn = page.getByRole("button", {
+      name: "Corrigir Contraste Automaticamente",
+    });
+    await expect(autoFixBtn).toBeVisible();
+    await autoFixBtn.click();
+    await expect(autoFixBtn).not.toBeVisible();
+    await expect(page.getByText(/ajustada automaticamente/i)).toBeVisible();
+
+    // 9. Salva as alterações
     await page.getByRole("button", { name: "Salvar Alterações" }).click();
     await expect(
       page.getByText("Identidade visual salva e aplicada com sucesso!"),

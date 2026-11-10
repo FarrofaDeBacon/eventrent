@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  autoAdjustContrast,
   calculateContrast,
   generateColorScale,
   generateThemeVariables,
@@ -259,6 +260,18 @@ describe("Color Engine - OKLCH & WCAG Contrast (src/lib/theme/color.ts)", () => 
           fg.contrast,
           `Cor ${brandColor} com foreground ${fg.hex} deveria ter contraste >= 4.5, obteve ${fg.contrast}`,
         ).toBeGreaterThanOrEqual(4.5);
+        expect(fg.isAccessible).toBe(true);
+      }
+    });
+
+    it("ajusta automaticamente cores de baixo contraste para conformidade WCAG AA (>= 4.5:1)", () => {
+      const lowContrastColors = ["#888888", "#9ca3af", "#a8a29e", "#64748b"];
+
+      for (const color of lowContrastColors) {
+        const adjusted = autoAdjustContrast(color);
+        expect(adjusted).toMatch(/^#[0-9a-f]{6}$/);
+        const fg = getAccessibleForeground(adjusted);
+        expect(fg.contrast).toBeGreaterThanOrEqual(4.5);
         expect(fg.isAccessible).toBe(true);
       }
     });
