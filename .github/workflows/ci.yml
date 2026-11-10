@@ -25,21 +25,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validar congelamento das migrações 0001 e 0002
+      - name: Validar congelamento das migrações existentes na main
         if: github.event_name == 'pull_request'
         shell: bash
         run: |
           git fetch origin ${{ github.base_ref }}
-          MODIFIED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '^crates/store-sqlite/migrations/000[12]_' || true)
-          if [ -n "$MODIFIED" ]; then
-            echo "::error::As migrações 0001 e 0002 foram congeladas e não podem ser modificadas:"
-            echo "$MODIFIED"
-            echo "Crie uma nova migração (ex: 0003_...) para qualquer evolução de esquema."
-            exit 1
-          fi
-          echo "Migrações 0001 e 0002 intactas."
+          node scripts/check-migrations.js origin/${{ github.base_ref }}
 
-      - name: Prova estrutural do script de congelamento das migrações
+      - name: Prova estrutural do congelamento dinâmico de migrações
         run: node scripts/test-check-migrations.js
 
       - name: Instalar Rust Toolchain

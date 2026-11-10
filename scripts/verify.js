@@ -10,7 +10,7 @@ const steps = [
     args: ["test:run"],
   },
   {
-    name: "Prova de Congelamento das Migrações (0001/0002)",
+    name: "Prova Estrutural de Congelamento Dinâmico de Migrações",
     command: "node",
     args: ["scripts/test-check-migrations.js"],
   },
