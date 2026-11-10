@@ -1238,7 +1238,7 @@ mod unit_tests {
         use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
         use base64::Engine as _;
 
-        // 1. Rejeição estrita a SVG
+        // 1. Rejeição estrita a formato não suportado (ex: SVG)
         let svg_input = UpdateBrandingInput {
             company_name: "Locadora".to_string(),
             primary_color: "#2563eb".to_string(),
@@ -1250,7 +1250,7 @@ mod unit_tests {
         };
         let svg_err = BrandingValidator::validate_input(&svg_input);
         assert!(svg_err.is_err());
-        assert!(svg_err.unwrap_err().to_string().contains("SVG"));
+        assert!(svg_err.unwrap_err().to_string().contains("prefixo exato"));
 
         // 2. PNG válido
         let valid_png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY44YAAAAASUVORK5CYII=";
@@ -1265,15 +1265,65 @@ mod unit_tests {
         assert!(invalid_png_res.is_err());
         assert!(invalid_png_res.unwrap_err().to_string().contains("PNG"));
 
-        // 4. JPEG válido (\xFF\xD8\xFF\xE0)
-        let valid_jpeg_uri = "data:image/jpeg;base64,/9j/4AAQSkZJRg==";
-        let jpeg_res = BrandingValidator::validate_image_data_uri("Logo", valid_jpeg_uri, false);
+        // 4. JPEG válido com cabeçalho completo lido por imagesize
+        let valid_jpeg_b64 = "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=";
+        let valid_jpeg_uri = format!("data:image/jpeg;base64,{valid_jpeg_b64}");
+        let jpeg_res = BrandingValidator::validate_image_data_uri("Logo", &valid_jpeg_uri, false);
         assert!(jpeg_res.is_ok());
 
-        // 5. WebP válido (RIFF....WEBP)
-        let valid_webp_uri = "data:image/webp;base64,UklGRiQAAABXRUJQVlA4";
-        let webp_res = BrandingValidator::validate_image_data_uri("Logo", valid_webp_uri, false);
+        // 5. WebP válido com cabeçalho completo lido por imagesize
+        let valid_webp_b64 = "UklGRjoAAABXRUJQVlA4IC4AAACyAgCdASoCAAIALmk0mk0iIiIiIgBoSygABc6WWgAA/veff/0PP8bA//LwYAAA";
+        let valid_webp_uri = format!("data:image/webp;base64,{valid_webp_b64}");
+        let webp_res = BrandingValidator::validate_image_data_uri("Logo", &valid_webp_uri, false);
         assert!(webp_res.is_ok());
+
+        // 5.1. Dimensão excessiva: PNG forjado com cabeçalho 30000x30000 pixels (deve falhar)
+        let mut forged_png = Vec::new();
+        forged_png.extend_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]); // Magic
+        forged_png.extend_from_slice(&[0x00, 0x00, 0x00, 0x0D]); // IHDR length = 13
+        forged_png.extend_from_slice(b"IHDR");
+        forged_png.extend_from_slice(&[0x00, 0x00, 0x75, 0x30]); // width = 30000
+        forged_png.extend_from_slice(&[0x00, 0x00, 0x75, 0x30]); // height = 30000
+        forged_png.extend_from_slice(&[0x08, 0x06, 0x00, 0x00, 0x00]); // 8-bit RGBA
+        forged_png.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // CRC
+        let forged_png_b64 = BASE64_STANDARD.encode(&forged_png);
+        let forged_png_uri = format!("data:image/png;base64,{forged_png_b64}");
+        let forged_res = BrandingValidator::validate_image_data_uri("Logo", &forged_png_uri, false);
+        assert!(forged_res.is_err());
+        assert!(forged_res
+            .unwrap_err()
+            .to_string()
+            .contains("30000x30000 pixels"));
+
+        // 5.2. Dimensão nula (0x0) (deve falhar)
+        let mut zero_png = Vec::new();
+        zero_png.extend_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        zero_png.extend_from_slice(&[0x00, 0x00, 0x00, 0x0D]);
+        zero_png.extend_from_slice(b"IHDR");
+        zero_png.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // width = 0
+        zero_png.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // height = 0
+        zero_png.extend_from_slice(&[0x08, 0x06, 0x00, 0x00, 0x00]);
+        zero_png.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        let zero_png_b64 = BASE64_STANDARD.encode(&zero_png);
+        let zero_png_uri = format!("data:image/png;base64,{zero_png_b64}");
+        let zero_res = BrandingValidator::validate_image_data_uri("Logo", &zero_png_uri, false);
+        assert!(zero_res.is_err());
+        assert!(zero_res.unwrap_err().to_string().contains("nula"));
+
+        // 5.3. Ícone excedendo 512x512 pixels (ex: 600x600 pixels) (deve falhar para ícone)
+        let mut icon_large = Vec::new();
+        icon_large.extend_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        icon_large.extend_from_slice(&[0x00, 0x00, 0x00, 0x0D]);
+        icon_large.extend_from_slice(b"IHDR");
+        icon_large.extend_from_slice(&[0x00, 0x00, 0x02, 0x58]); // width = 600
+        icon_large.extend_from_slice(&[0x00, 0x00, 0x02, 0x58]); // height = 600
+        icon_large.extend_from_slice(&[0x08, 0x06, 0x00, 0x00, 0x00]);
+        icon_large.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        let icon_large_b64 = BASE64_STANDARD.encode(&icon_large);
+        let icon_large_uri = format!("data:image/png;base64,{icon_large_b64}");
+        let icon_res = BrandingValidator::validate_image_data_uri("Ícone", &icon_large_uri, true);
+        assert!(icon_res.is_err());
+        assert!(icon_res.unwrap_err().to_string().contains("512x512 pixels"));
 
         // 6. Formato não suportado (ex: GIF)
         let gif_uri =
@@ -1335,11 +1385,17 @@ mod unit_tests {
         assert!(param_res.unwrap_err().to_string().contains("prefixo exato"));
 
         // 14. Limites de tamanho: exatamente no limite e 1 byte acima
-        const PNG_HEADER: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        const VALID_1X1_PNG_HEADER: [u8; 33] = [
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // Magic
+            0x00, 0x00, 0x00, 0x0D, b'I', b'H', b'D', b'R', // IHDR len 13
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1 px
+            0x08, 0x06, 0x00, 0x00, 0x00, // 8-bit RGBA
+            0x1F, 0x15, 0xC4, 0x89, // CRC
+        ];
 
         // 14.1. Ícone: exatamente 64 KB (65.536 bytes) -> PASSA
         let mut exact_icon_bytes = Vec::with_capacity(64 * 1024);
-        exact_icon_bytes.extend_from_slice(&PNG_HEADER);
+        exact_icon_bytes.extend_from_slice(&VALID_1X1_PNG_HEADER);
         exact_icon_bytes.resize(64 * 1024, 0x00);
         let exact_icon_b64 = BASE64_STANDARD.encode(&exact_icon_bytes);
         let exact_icon_uri = format!("data:image/png;base64,{exact_icon_b64}");
@@ -1347,7 +1403,7 @@ mod unit_tests {
 
         // 14.2. Ícone: 1 byte acima de 64 KB (65.537 bytes) -> FALHA
         let mut over_icon_bytes = Vec::with_capacity(64 * 1024 + 1);
-        over_icon_bytes.extend_from_slice(&PNG_HEADER);
+        over_icon_bytes.extend_from_slice(&VALID_1X1_PNG_HEADER);
         over_icon_bytes.resize(64 * 1024 + 1, 0x00);
         let over_icon_b64 = BASE64_STANDARD.encode(&over_icon_bytes);
         let over_icon_uri = format!("data:image/png;base64,{over_icon_b64}");
@@ -1358,7 +1414,7 @@ mod unit_tests {
 
         // 14.3. Logo: exatamente 256 KB (262.144 bytes) -> PASSA
         let mut exact_logo_bytes = Vec::with_capacity(256 * 1024);
-        exact_logo_bytes.extend_from_slice(&PNG_HEADER);
+        exact_logo_bytes.extend_from_slice(&VALID_1X1_PNG_HEADER);
         exact_logo_bytes.resize(256 * 1024, 0x00);
         let exact_logo_b64 = BASE64_STANDARD.encode(&exact_logo_bytes);
         let exact_logo_uri = format!("data:image/png;base64,{exact_logo_b64}");
@@ -1366,7 +1422,7 @@ mod unit_tests {
 
         // 14.4. Logo: 1 byte acima de 256 KB (262.145 bytes) -> FALHA
         let mut over_logo_bytes = Vec::with_capacity(256 * 1024 + 1);
-        over_logo_bytes.extend_from_slice(&PNG_HEADER);
+        over_logo_bytes.extend_from_slice(&VALID_1X1_PNG_HEADER);
         over_logo_bytes.resize(256 * 1024 + 1, 0x00);
         let over_logo_b64 = BASE64_STANDARD.encode(&over_logo_bytes);
         let over_logo_uri = format!("data:image/png;base64,{over_logo_b64}");

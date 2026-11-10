@@ -60,12 +60,31 @@ impl From<TenantBranding> for PublicBranding {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AllowedImageMime {
+    Png,
+    Jpeg,
+    Webp,
+}
+
+impl AllowedImageMime {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Png => "image/png",
+            Self::Jpeg => "image/jpeg",
+            Self::Webp => "image/webp",
+        }
+    }
+}
+
 pub struct BrandingValidator;
 
 impl BrandingValidator {
     pub const MAX_LOGO_BYTES: usize = 256 * 1024; // 256 KB decodificados
     pub const MAX_ICON_BYTES: usize = 64 * 1024; // 64 KB decodificados
     pub const MAX_COMPANY_NAME_LEN: usize = 80;
+    pub const MAX_LOGO_DIMENSION_PX: usize = 2048;
+    pub const MAX_ICON_DIMENSION_PX: usize = 512;
 
     const PREFIX_PNG: &'static str = "data:image/png;base64,";
     const PREFIX_JPEG: &'static str = "data:image/jpeg;base64,";
@@ -111,43 +130,48 @@ impl BrandingValidator {
     }
 
     /// Valida um Data URI de imagem (PNG, JPEG ou WebP) verificando limite de tamanho e magic bytes.
-    /// Rejeita estritamente imagens SVG por motivos de segurança (sanitização complexa e PDF).
+    /// Rejeita estritamente imagens SVG pelo prefixo e magic bytes.
     pub fn validate_image_data_uri(
         field_name: &str,
         data_uri: &str,
         is_icon: bool,
     ) -> Result<String> {
-        // Rejeição estrita a qualquer presença de SVG no Data URI
-        let lower = data_uri.to_ascii_lowercase();
-        if lower.contains("<svg") || lower.contains("image/svg") {
-            return Err(CoreError::Validation(
-                "Imagens no formato SVG não são permitidas por motivos de segurança. Utilize PNG, JPEG ou WebP."
-                    .to_string(),
-            ));
-        }
-
-        // Validação estrita do prefixo (sem parâmetros adicionais, sem espaços antes/depois)
-        let (mime, payload) = if let Some(rest) = data_uri.strip_prefix(Self::PREFIX_PNG) {
-            ("image/png", rest)
-        } else if let Some(rest) = data_uri.strip_prefix(Self::PREFIX_JPEG) {
-            ("image/jpeg", rest)
-        } else if let Some(rest) = data_uri.strip_prefix(Self::PREFIX_WEBP) {
-            ("image/webp", rest)
-        } else {
-            return Err(CoreError::Validation(format!(
-                "{field_name} deve conter prefixo exato 'data:image/png;base64,', 'data:image/jpeg;base64,' ou 'data:image/webp;base64,' sem parâmetros ou espaços."
-            )));
-        };
-
         let max_decoded_bytes = if is_icon {
             Self::MAX_ICON_BYTES
         } else {
             Self::MAX_LOGO_BYTES
         };
 
-        // Rejeição pré-decodificação pelo tamanho codificado
-        // Em Base64 com padding, cada bloco de 3 bytes resulta em 4 caracteres
+        // (a) Checagem do tamanho total da string ANTES de qualquer cópia, trim ou varredura
         let max_encoded_len = max_decoded_bytes.div_ceil(3) * 4;
+        let max_total_str_len = max_encoded_len + 32;
+
+        if data_uri.len() > max_total_str_len {
+            return Err(CoreError::Validation(format!(
+                "{field_name} excede o limite máximo permitido de caracteres antes do processamento.",
+            )));
+        }
+
+        if data_uri.len() < 30 {
+            return Err(CoreError::Validation(format!(
+                "{field_name} possui tamanho insuficiente para um Data URI válido de imagem.",
+            )));
+        }
+
+        // (c) Identificação estrita do tipo via enum de MIME (sem unreachable)
+        let (mime, payload) = if let Some(rest) = data_uri.strip_prefix(Self::PREFIX_PNG) {
+            (AllowedImageMime::Png, rest)
+        } else if let Some(rest) = data_uri.strip_prefix(Self::PREFIX_JPEG) {
+            (AllowedImageMime::Jpeg, rest)
+        } else if let Some(rest) = data_uri.strip_prefix(Self::PREFIX_WEBP) {
+            (AllowedImageMime::Webp, rest)
+        } else {
+            return Err(CoreError::Validation(format!(
+                "{field_name} deve conter prefixo exato 'data:image/png;base64,', 'data:image/jpeg;base64,' ou 'data:image/webp;base64,' sem parâmetros ou espaços."
+            )));
+        };
+
+        // Rejeição pré-decodificação pelo tamanho codificado do payload
         if payload.len() > max_encoded_len {
             return Err(CoreError::Validation(format!(
                 "{field_name} excede o limite máximo permitido de {} KB antes da decodificação.",
@@ -171,9 +195,9 @@ impl BrandingValidator {
             )));
         }
 
-        // Validação estrita de magic bytes de acordo com o MIME declarado
+        // Validação estrita de magic bytes de acordo com o MIME declarado (enum exaustivo)
         match mime {
-            "image/png" => {
+            AllowedImageMime::Png => {
                 const PNG_MAGIC: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
                 if decoded.len() < 8 || decoded[0..8] != PNG_MAGIC {
                     return Err(CoreError::Validation(format!(
@@ -181,7 +205,7 @@ impl BrandingValidator {
                     )));
                 }
             }
-            "image/jpeg" => {
+            AllowedImageMime::Jpeg => {
                 const JPEG_MAGIC: [u8; 3] = [0xFF, 0xD8, 0xFF];
                 if decoded.len() < 3 || decoded[0..3] != JPEG_MAGIC {
                     return Err(CoreError::Validation(format!(
@@ -189,22 +213,40 @@ impl BrandingValidator {
                     )));
                 }
             }
-            "image/webp" => {
+            AllowedImageMime::Webp => {
                 if decoded.len() < 12 || &decoded[0..4] != b"RIFF" || &decoded[8..12] != b"WEBP" {
                     return Err(CoreError::Validation(format!(
                         "Assinatura mágica do arquivo WebP inválida ou corrompida para {field_name}."
                     )));
                 }
             }
-            _ => unreachable!(),
         }
 
-        // Rejeição estrita caso o payload decodificado contenha marcação SVG
-        if decoded.windows(4).any(|w| w.eq_ignore_ascii_case(b"<svg")) {
-            return Err(CoreError::Validation(
-                "Imagens no formato SVG não são permitidas por motivos de segurança. Utilize PNG, JPEG ou WebP."
-                    .to_string(),
-            ));
+        // (d) Validação de dimensões lendo apenas o cabeçalho com imagesize (ADR-0010)
+        let size = imagesize::blob_size(&decoded).map_err(|e| {
+            CoreError::Validation(format!(
+                "Não foi possível ler as dimensões da imagem para {field_name}: {e}"
+            ))
+        })?;
+
+        if size.width == 0 || size.height == 0 {
+            return Err(CoreError::Validation(format!(
+                "Dimensões inválidas (largura ou altura nula: {}x{}) para {field_name}.",
+                size.width, size.height
+            )));
+        }
+
+        let max_dim = if is_icon {
+            Self::MAX_ICON_DIMENSION_PX
+        } else {
+            Self::MAX_LOGO_DIMENSION_PX
+        };
+
+        if size.width > max_dim || size.height > max_dim {
+            return Err(CoreError::Validation(format!(
+                "{field_name} excede o limite máximo permitido de {max_dim}x{max_dim} pixels (dimensões detectadas: {}x{} pixels).",
+                size.width, size.height
+            )));
         }
 
         Ok(data_uri.to_string())
