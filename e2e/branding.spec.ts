@@ -64,7 +64,26 @@ test.describe("E2E — Identidade Visual e White Label (Fase 1B.1)", () => {
     await lightPreviewBtn.click();
     await expect(page.locator(".sticky .dark")).not.toBeVisible();
 
-    // 7. Salva as alterações
+    // 7. Validação ao vivo de campo HEX inválido
+    const primaryInput = page.getByLabel("Cor Primária").nth(1); // text input
+    await primaryInput.fill("#xyz");
+    await expect(
+      page.getByText("Formato inválido. Use #RRGGBB."),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Salvar Alterações" }),
+    ).toBeDisabled();
+
+    // Restaura cor válida
+    await primaryInput.fill("#059669");
+    await expect(
+      page.getByText("Formato inválido. Use #RRGGBB."),
+    ).not.toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Salvar Alterações" }),
+    ).toBeEnabled();
+
+    // 8. Salva as alterações
     await page.getByRole("button", { name: "Salvar Alterações" }).click();
     await expect(
       page.getByText("Identidade visual salva e aplicada com sucesso!"),

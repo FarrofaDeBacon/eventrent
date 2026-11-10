@@ -62,8 +62,23 @@
 
   let previewDarkMode = $state(false);
 
+  function isValidHex(hex: string): boolean {
+    return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(hex.trim());
+  }
+
+  let isPrimaryValid = $derived(isValidHex(primaryColor));
+  let isSecondaryValid = $derived(isValidHex(secondaryColor));
+  let isAccentValid = $derived(isValidHex(accentColor));
+  let hasColorErrors = $derived(
+    !isPrimaryValid || !isSecondaryValid || !isAccentValid,
+  );
+
   // Análise de contraste acessível em tempo real (WCAG 2.1 AA >= 4.5:1)
-  let contrastAnalysis = $derived(getAccessibleForeground(primaryColor));
+  let contrastAnalysis = $derived(
+    isPrimaryValid
+      ? getAccessibleForeground(primaryColor)
+      : { hex: "#ffffff", css: "", contrast: 0, isAccessible: false },
+  );
 
   onMount(async () => {
     try {
@@ -98,16 +113,18 @@
   });
 
   $effect(() => {
-    // Atualiza em tempo real as variáveis CSS para que a interface reaja aos ajustes
-    applyBranding({
-      company_name: companyName,
-      primary_color: primaryColor,
-      secondary_color: secondaryColor,
-      accent_color: accentColor,
-      logo_url: logoUrl,
-      logo_dark_url: logoDarkUrl,
-      icon_url: iconUrl,
-    });
+    // Atualiza em tempo real as variáveis CSS quando as cores forem válidas
+    if (!hasColorErrors) {
+      applyBranding({
+        company_name: companyName,
+        primary_color: primaryColor,
+        secondary_color: secondaryColor,
+        accent_color: accentColor,
+        logo_url: logoUrl,
+        logo_dark_url: logoDarkUrl,
+        icon_url: iconUrl,
+      });
+    }
   });
 
   function processImageFile(
@@ -279,6 +296,11 @@
 
   async function handleSave() {
     if (!canEdit) return;
+    if (hasColorErrors) {
+      toast.error("Corrija as cores hexadecimais inválidas antes de salvar.");
+      return;
+    }
+
     if (!companyName.trim()) {
       toast.error($_("appearance.companyNamePlaceholder"));
       return;
@@ -453,19 +475,30 @@
                 <p class="text-xs text-muted-foreground">
                   {$_("appearance.primaryColorDesc")}
                 </p>
+                {#if !isPrimaryValid}
+                  <span
+                    class="text-2xs text-destructive font-medium mt-1 block"
+                  >
+                    Formato inválido. Use #RRGGBB.
+                  </span>
+                {/if}
               </div>
               <div class="flex items-center gap-3">
                 <input
                   id="primaryColor"
                   type="color"
-                  bind:value={primaryColor}
+                  value={isPrimaryValid ? primaryColor : "#2563eb"}
+                  oninput={(e) =>
+                    (primaryColor = (e.target as HTMLInputElement).value)}
                   disabled={!canEdit}
                   class="h-9 w-12 cursor-pointer rounded border border-input bg-transparent p-1 disabled:opacity-50"
                 />
                 <Input
                   bind:value={primaryColor}
                   aria-label={$_("appearance.primaryColorLabel")}
-                  class="w-28 font-mono text-xs uppercase"
+                  class="w-28 font-mono text-xs uppercase {!isPrimaryValid
+                    ? 'border-destructive'
+                    : ''}"
                   maxlength={7}
                   disabled={!canEdit}
                 />
@@ -485,19 +518,30 @@
                 <p class="text-xs text-muted-foreground">
                   {$_("appearance.secondaryColorDesc")}
                 </p>
+                {#if !isSecondaryValid}
+                  <span
+                    class="text-2xs text-destructive font-medium mt-1 block"
+                  >
+                    Formato inválido. Use #RRGGBB.
+                  </span>
+                {/if}
               </div>
               <div class="flex items-center gap-3">
                 <input
                   id="secondaryColor"
                   type="color"
-                  bind:value={secondaryColor}
+                  value={isSecondaryValid ? secondaryColor : "#475569"}
+                  oninput={(e) =>
+                    (secondaryColor = (e.target as HTMLInputElement).value)}
                   disabled={!canEdit}
                   class="h-9 w-12 cursor-pointer rounded border border-input bg-transparent p-1 disabled:opacity-50"
                 />
                 <Input
                   bind:value={secondaryColor}
                   aria-label={$_("appearance.secondaryColorLabel")}
-                  class="w-28 font-mono text-xs uppercase"
+                  class="w-28 font-mono text-xs uppercase {!isSecondaryValid
+                    ? 'border-destructive'
+                    : ''}"
                   maxlength={7}
                   disabled={!canEdit}
                 />
@@ -517,19 +561,30 @@
                 <p class="text-xs text-muted-foreground">
                   {$_("appearance.accentColorDesc")}
                 </p>
+                {#if !isAccentValid}
+                  <span
+                    class="text-2xs text-destructive font-medium mt-1 block"
+                  >
+                    Formato inválido. Use #RRGGBB.
+                  </span>
+                {/if}
               </div>
               <div class="flex items-center gap-3">
                 <input
                   id="accentColor"
                   type="color"
-                  bind:value={accentColor}
+                  value={isAccentValid ? accentColor : "#7c3aed"}
+                  oninput={(e) =>
+                    (accentColor = (e.target as HTMLInputElement).value)}
                   disabled={!canEdit}
                   class="h-9 w-12 cursor-pointer rounded border border-input bg-transparent p-1 disabled:opacity-50"
                 />
                 <Input
                   bind:value={accentColor}
                   aria-label={$_("appearance.accentColorLabel")}
-                  class="w-28 font-mono text-xs uppercase"
+                  class="w-28 font-mono text-xs uppercase {!isAccentValid
+                    ? 'border-destructive'
+                    : ''}"
                   maxlength={7}
                   disabled={!canEdit}
                 />
@@ -766,7 +821,10 @@
             {$_("appearance.resetBtn")}
           </Button>
 
-          <Button onclick={handleSave} disabled={isSaving || !canEdit}>
+          <Button
+            onclick={handleSave}
+            disabled={isSaving || !canEdit || hasColorErrors}
+          >
             <CheckCircle2 class="h-4 w-4 mr-1.5" />
             {isSaving ? $_("appearance.saving") : $_("appearance.saveBtn")}
           </Button>
