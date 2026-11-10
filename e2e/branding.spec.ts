@@ -73,7 +73,7 @@ test.describe("E2E — Identidade Visual e White Label (Fase 1B.1)", () => {
     await lightPreviewBtn.click();
     await expect(page.locator(".sticky .dark")).not.toBeVisible();
 
-    // 7. Áreas de upload por arrastar e soltar (drag & drop)
+    // 7. Áreas de upload por arrastar e soltar (drag & drop) e conferência de fundos
     await expect(
       page.locator('[aria-label="Área de upload do logo claro"]'),
     ).toBeVisible();
@@ -82,6 +82,28 @@ test.describe("E2E — Identidade Visual e White Label (Fase 1B.1)", () => {
     ).toBeVisible();
     await expect(
       page.locator('[aria-label="Área de upload do ícone"]'),
+    ).toBeVisible();
+
+    // Upload de logo claro (PNG) para validação da conferência de fundos claro e escuro
+    await page
+      .locator('input[type="file"]')
+      .first()
+      .setInputFiles({
+        name: "logo.png",
+        mimeType: "image/png",
+        buffer: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+          "base64",
+        ),
+      });
+    await expect(
+      page.getByText("Conferência Visual: Fundo Claro vs. Fundo Escuro"),
+    ).toBeVisible();
+    await expect(
+      page.locator('img[alt="Logo sobre fundo claro"]'),
+    ).toBeVisible();
+    await expect(
+      page.locator('img[alt="Logo claro sobre fundo escuro"]'),
     ).toBeVisible();
 
     // 8. Validação ao vivo de campo HEX inválido

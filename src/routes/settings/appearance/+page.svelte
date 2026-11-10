@@ -930,6 +930,92 @@
                 </div>
               </div>
             </div>
+
+            <!-- 4. Visualização dos Logotipos sobre Fundos Claro e Escuro -->
+            {#if logoUrl || logoDarkUrl || iconUrl}
+              <div class="pt-4 border-t border-border space-y-3">
+                <div class="flex items-center justify-between">
+                  <span
+                    class="text-xs font-semibold text-foreground uppercase tracking-wider"
+                  >
+                    Conferência Visual: Fundo Claro vs. Fundo Escuro
+                  </span>
+                  <span class="text-2xs text-muted-foreground">
+                    Validação de transparência e legibilidade
+                  </span>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <!-- Painel Fundo Claro -->
+                  <div
+                    class="rounded-lg border border-border p-3 bg-card flex flex-col items-center justify-center gap-2 min-h-24 shadow-2xs"
+                  >
+                    <span
+                      class="text-3xs font-medium text-muted-foreground uppercase self-start"
+                      >Fundo Claro</span
+                    >
+                    <div class="flex items-center justify-center gap-4 py-2">
+                      {#if logoUrl}
+                        <img
+                          src={logoUrl}
+                          alt="Logo sobre fundo claro"
+                          class="h-10 max-w-32 object-contain"
+                        />
+                      {/if}
+                      {#if iconUrl}
+                        <img
+                          src={iconUrl}
+                          alt="Ícone sobre fundo claro"
+                          class="h-9 w-9 object-cover rounded-xs"
+                        />
+                      {/if}
+                      {#if !logoUrl && !iconUrl}
+                        <span class="text-xs text-muted-foreground/60 italic"
+                          >Nenhum logo claro enviado</span
+                        >
+                      {/if}
+                    </div>
+                  </div>
+
+                  <!-- Painel Fundo Escuro -->
+                  <div
+                    class="rounded-lg border border-border p-3 bg-slate-900 flex flex-col items-center justify-center gap-2 min-h-24 shadow-2xs text-slate-100"
+                  >
+                    <span
+                      class="text-3xs font-medium text-slate-400 uppercase self-start"
+                      >Fundo Escuro</span
+                    >
+                    <div class="flex items-center justify-center gap-4 py-2">
+                      {#if logoDarkUrl}
+                        <img
+                          src={logoDarkUrl}
+                          alt="Logo escuro sobre fundo escuro"
+                          class="h-10 max-w-32 object-contain"
+                        />
+                      {:else if logoUrl}
+                        <img
+                          src={logoUrl}
+                          alt="Logo claro sobre fundo escuro"
+                          class="h-10 max-w-32 object-contain"
+                        />
+                      {/if}
+                      {#if iconUrl}
+                        <img
+                          src={iconUrl}
+                          alt="Ícone sobre fundo escuro"
+                          class="h-9 w-9 object-cover rounded-xs"
+                        />
+                      {/if}
+                      {#if !logoDarkUrl && !logoUrl && !iconUrl}
+                        <span class="text-xs text-slate-500 italic"
+                          >Nenhum logo escuro enviado</span
+                        >
+                      {/if}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            {/if}
           </CardContent>
         </Card>
 
