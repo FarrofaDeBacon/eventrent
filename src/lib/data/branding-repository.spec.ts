@@ -66,4 +66,41 @@ describe("BrandingRepository (Data Layer Port & Adapter)", () => {
     const notFound = await repository.getBranding("tenant-inexistente-123");
     expect(notFound).toBeNull();
   });
+
+  it("deve gravar cache leve no localStorage escopado por tenant sem dados de imagens", async () => {
+    const { appSession } = await import("./session.svelte");
+    const testTenant = "tenant-audit-99";
+    const pngSample =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY44YAAAAASUVORK5CYII=";
+
+    appSession.setBranding(
+      {
+        company_name: "Empresa Auditada",
+        primary_color: "#123456",
+        secondary_color: "#654321",
+        accent_color: "#abcdef",
+        logo_url: pngSample,
+        logo_dark_url: pngSample,
+        icon_url: pngSample,
+      },
+      testTenant,
+    );
+
+    const cachedRaw = localStorage.getItem(`eventrent:brand:${testTenant}`);
+    expect(cachedRaw).not.toBeNull();
+    const cached = JSON.parse(cachedRaw!);
+
+    expect(cached).toEqual({
+      company_name: "Empresa Auditada",
+      primary_color: "#123456",
+      secondary_color: "#654321",
+      accent_color: "#abcdef",
+    });
+
+    // Garante que imagens pesadas JAMAIS são gravadas no localStorage
+    expect(cached).not.toHaveProperty("logo_url");
+    expect(cached).not.toHaveProperty("logo_dark_url");
+    expect(cached).not.toHaveProperty("icon_url");
+    expect(cachedRaw).not.toContain("data:image");
+  });
 });
