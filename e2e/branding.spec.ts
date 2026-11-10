@@ -73,7 +73,18 @@ test.describe("E2E — Identidade Visual e White Label (Fase 1B.1)", () => {
     await lightPreviewBtn.click();
     await expect(page.locator(".sticky .dark")).not.toBeVisible();
 
-    // 7. Validação ao vivo de campo HEX inválido
+    // 7. Áreas de upload por arrastar e soltar (drag & drop)
+    await expect(
+      page.locator('[aria-label="Área de upload do logo claro"]'),
+    ).toBeVisible();
+    await expect(
+      page.locator('[aria-label="Área de upload do logo escuro"]'),
+    ).toBeVisible();
+    await expect(
+      page.locator('[aria-label="Área de upload do ícone"]'),
+    ).toBeVisible();
+
+    // 8. Validação ao vivo de campo HEX inválido
     const primaryInput = page.getByLabel("Cor Primária").nth(1); // text input
     await primaryInput.fill("#xyz");
     await expect(

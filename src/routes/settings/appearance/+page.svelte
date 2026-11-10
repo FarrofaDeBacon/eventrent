@@ -63,6 +63,10 @@
   let logoDarkSizeKb = $state<number | null>(null);
   let iconSizeKb = $state<number | null>(null);
 
+  let isDraggingLogo = $state(false);
+  let isDraggingLogoDark = $state(false);
+  let isDraggingIcon = $state(false);
+
   let previewDarkMode = $state(false);
 
   function isValidHex(hex: string): boolean {
@@ -651,9 +655,40 @@
               </div>
               <div class="flex items-center gap-3">
                 <div
-                  class="flex h-16 w-28 shrink-0 items-center justify-center rounded-md border border-dashed border-border bg-card p-1 shadow-2xs"
+                  role="region"
+                  aria-label="Área de upload do logo claro"
+                  class="flex h-16 w-28 shrink-0 items-center justify-center rounded-md border-2 border-dashed transition-all p-1 shadow-2xs relative {isDraggingLogo
+                    ? 'border-primary bg-primary/10'
+                    : 'border-border bg-card'}"
+                  ondragover={(e) => {
+                    e.preventDefault();
+                    if (canEdit) isDraggingLogo = true;
+                  }}
+                  ondragleave={(e) => {
+                    e.preventDefault();
+                    isDraggingLogo = false;
+                  }}
+                  ondrop={(e) => {
+                    e.preventDefault();
+                    isDraggingLogo = false;
+                    if (canEdit && e.dataTransfer?.files?.[0]) {
+                      processImageFile(
+                        e.dataTransfer.files[0],
+                        false,
+                        (dataUrl, sizeKb) => {
+                          logoUrl = dataUrl;
+                          logoSizeKb = sizeKb;
+                        },
+                      );
+                    }
+                  }}
                 >
-                  {#if logoUrl}
+                  {#if isDraggingLogo}
+                    <span
+                      class="text-3xs font-semibold text-primary animate-pulse"
+                      >Solte aqui</span
+                    >
+                  {:else if logoUrl}
                     <img
                       src={logoUrl}
                       alt={$_("appearance.logoAlt")}
@@ -717,9 +752,40 @@
               </div>
               <div class="flex items-center gap-3">
                 <div
-                  class="flex h-16 w-28 shrink-0 items-center justify-center rounded-md border border-dashed border-border bg-foreground/90 p-1 shadow-2xs"
+                  role="region"
+                  aria-label="Área de upload do logo escuro"
+                  class="flex h-16 w-28 shrink-0 items-center justify-center rounded-md border-2 border-dashed transition-all p-1 shadow-2xs relative {isDraggingLogoDark
+                    ? 'border-primary bg-primary/20'
+                    : 'border-border bg-foreground/90'}"
+                  ondragover={(e) => {
+                    e.preventDefault();
+                    if (canEdit) isDraggingLogoDark = true;
+                  }}
+                  ondragleave={(e) => {
+                    e.preventDefault();
+                    isDraggingLogoDark = false;
+                  }}
+                  ondrop={(e) => {
+                    e.preventDefault();
+                    isDraggingLogoDark = false;
+                    if (canEdit && e.dataTransfer?.files?.[0]) {
+                      processImageFile(
+                        e.dataTransfer.files[0],
+                        false,
+                        (dataUrl, sizeKb) => {
+                          logoDarkUrl = dataUrl;
+                          logoDarkSizeKb = sizeKb;
+                        },
+                      );
+                    }
+                  }}
                 >
-                  {#if logoDarkUrl}
+                  {#if isDraggingLogoDark}
+                    <span
+                      class="text-3xs font-semibold text-primary animate-pulse"
+                      >Solte aqui</span
+                    >
+                  {:else if logoDarkUrl}
                     <img
                       src={logoDarkUrl}
                       alt={$_("appearance.logoDarkAlt")}
@@ -783,9 +849,40 @@
               </div>
               <div class="flex items-center gap-3">
                 <div
-                  class="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border border-dashed border-border bg-card p-1 shadow-2xs"
+                  role="region"
+                  aria-label="Área de upload do ícone"
+                  class="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border-2 border-dashed transition-all p-1 shadow-2xs relative {isDraggingIcon
+                    ? 'border-primary bg-primary/10'
+                    : 'border-border bg-card'}"
+                  ondragover={(e) => {
+                    e.preventDefault();
+                    if (canEdit) isDraggingIcon = true;
+                  }}
+                  ondragleave={(e) => {
+                    e.preventDefault();
+                    isDraggingIcon = false;
+                  }}
+                  ondrop={(e) => {
+                    e.preventDefault();
+                    isDraggingIcon = false;
+                    if (canEdit && e.dataTransfer?.files?.[0]) {
+                      processImageFile(
+                        e.dataTransfer.files[0],
+                        true,
+                        (dataUrl, sizeKb) => {
+                          iconUrl = dataUrl;
+                          iconSizeKb = sizeKb;
+                        },
+                      );
+                    }
+                  }}
                 >
-                  {#if iconUrl}
+                  {#if isDraggingIcon}
+                    <span
+                      class="text-3xs font-semibold text-primary animate-pulse"
+                      >Solte</span
+                    >
+                  {:else if iconUrl}
                     <img
                       src={iconUrl}
                       alt={$_("appearance.iconAlt")}
