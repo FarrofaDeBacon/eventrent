@@ -1431,4 +1431,166 @@ mod unit_tests {
         assert!(over_logo_res.is_err());
         assert!(over_logo_res.unwrap_err().to_string().contains("256 KB"));
     }
+
+    #[test]
+    fn test_document_validation_cpf_and_cnpj_alphanumeric() {
+        use crate::domain::document::{
+            format_cnpj, format_cpf, normalize_document, parse_document,
+            testing_utils::{generate_valid_cnpj_from_base, generate_valid_cpf_from_base},
+            validate_cnpj, validate_cpf, DocumentType,
+        };
+
+        // 1. Normalização de documentos
+        assert_eq!(normalize_document(" 12.ABC.345/0001-88 "), "12ABC345000188");
+        assert_eq!(normalize_document("529.982.247-25"), "52998224725");
+        assert_eq!(
+            normalize_document("12abc345000188"),
+            "12ABC345000188" // converte para uppercase
+        );
+
+        // 2. Validação de CPF
+        // 2.1 CPFs válidos conhecidos
+        assert!(validate_cpf("529.982.247-25").is_ok());
+        assert!(validate_cpf("52998224725").is_ok());
+        assert_eq!(format_cpf("52998224725"), "529.982.247-25");
+
+        // 2.2 Rejeição de CPFs repetidos
+        for digit in 0..=9 {
+            let repeated = digit.to_string().repeat(11);
+            let res = validate_cpf(&repeated);
+            assert!(
+                res.is_err(),
+                "CPF repetido {repeated} deveria ter sido rejeitado"
+            );
+            assert!(res.unwrap_err().to_string().contains("repetidos"));
+        }
+
+        // 2.3 Rejeição de DVs incorretos
+        let invalid_dv1 = "52998224735"; // DV1 esperado é 2, fornecido 3
+        assert!(validate_cpf(invalid_dv1)
+            .unwrap_err()
+            .to_string()
+            .contains("primeiro dígito verificador"));
+
+        let invalid_dv2 = "52998224726"; // DV2 esperado é 5, fornecido 6
+        assert!(validate_cpf(invalid_dv2)
+            .unwrap_err()
+            .to_string()
+            .contains("segundo dígito verificador"));
+
+        // 2.4 Tamanho e caracteres inválidos
+        assert!(validate_cpf("1234567890").is_err()); // 10 dígitos
+        assert!(validate_cpf("123456789012").is_err()); // 12 dígitos
+        assert!(validate_cpf("5299822472A").is_err()); // contém letra
+
+        // 3. Validação de CNPJ Tradicional (14 numéricos)
+        // 3.1 Fixtures reais
+        assert!(validate_cnpj("00.000.000/0001-91").is_ok()); // Banco do Brasil
+        assert!(validate_cnpj("33.000.167/0001-01").is_ok()); // Petrobras
+        assert_eq!(format_cnpj("00000000000191"), "00.000.000/0001-91");
+
+        // 3.2 Rejeição de CNPJs repetidos
+        for digit in 0..=9 {
+            let repeated = digit.to_string().repeat(14);
+            let res = validate_cnpj(&repeated);
+            assert!(
+                res.is_err(),
+                "CNPJ repetido {repeated} deveria ter sido rejeitado"
+            );
+            assert!(res.unwrap_err().to_string().contains("idênticos"));
+        }
+
+        // 3.3 Rejeição de DVs numéricos incorretos
+        assert!(validate_cnpj("00000000000181")
+            .unwrap_err()
+            .to_string()
+            .contains("primeiro dígito verificador"));
+        assert!(validate_cnpj("00000000000192")
+            .unwrap_err()
+            .to_string()
+            .contains("segundo dígito verificador"));
+
+        // 4. Validação de CNPJ Alfanumérico (IN RFB nº 2.229/2025)
+        // 4.1 Exemplo calculado matematicamente: 12.ABC.345/0001-88
+        let alpha_cnpj_1 = "12.ABC.345/0001-88";
+        let valid_alpha_1 = validate_cnpj(alpha_cnpj_1).expect("CNPJ alfanumérico válido");
+        assert_eq!(valid_alpha_1, "12ABC345000188");
+        assert_eq!(format_cnpj(&valid_alpha_1), "12.ABC.345/0001-88");
+
+        // 4.2 Minusculas devem ser normalizadas para maiúsculas
+        let valid_alpha_lower =
+            validate_cnpj("12.abc.345/0001-88").expect("normaliza minusculas para maiusculas");
+        assert_eq!(valid_alpha_lower, "12ABC345000188");
+
+        // 4.3 DVs devem ser estritamente numéricos
+        let invalid_dv_letter = "12ABC34500018A";
+        assert!(validate_cnpj(invalid_dv_letter)
+            .unwrap_err()
+            .to_string()
+            .contains("dígitos verificadores) devem ser numéricos"));
+
+        // 4.4 DVs matematicamente incorretos em CNPJ alfanumérico
+        let wrong_alpha_dv1 = "12ABC345000178"; // DV1 esperado 8, fornecido 7
+        assert!(validate_cnpj(wrong_alpha_dv1)
+            .unwrap_err()
+            .to_string()
+            .contains("primeiro dígito verificador"));
+
+        let wrong_alpha_dv2 = "12ABC345000189"; // DV2 esperado 8, fornecido 9
+        assert!(validate_cnpj(wrong_alpha_dv2)
+            .unwrap_err()
+            .to_string()
+            .contains("segundo dígito verificador"));
+
+        // 4.5 Caracteres especiais ilegais
+        assert!(validate_cnpj("12ABC3450001$8").is_err());
+
+        // 5. parse_document (Detecção automática de CPF vs CNPJ)
+        let parsed_cpf = parse_document("529.982.247-25").expect("detecta CPF");
+        assert_eq!(parsed_cpf.doc_type, DocumentType::Cpf);
+        assert_eq!(parsed_cpf.raw, "52998224725");
+        assert_eq!(parsed_cpf.formatted, "529.982.247-25");
+
+        let parsed_cnpj_num = parse_document("00.000.000/0001-91").expect("detecta CNPJ numérico");
+        assert_eq!(parsed_cnpj_num.doc_type, DocumentType::Cnpj);
+        assert_eq!(parsed_cnpj_num.raw, "00000000000191");
+        assert_eq!(parsed_cnpj_num.formatted, "00.000.000/0001-91");
+
+        let parsed_cnpj_alpha =
+            parse_document("12.ABC.345/0001-88").expect("detecta CNPJ alfanumérico");
+        assert_eq!(parsed_cnpj_alpha.doc_type, DocumentType::Cnpj);
+        assert_eq!(parsed_cnpj_alpha.raw, "12ABC345000188");
+        assert_eq!(parsed_cnpj_alpha.formatted, "12.ABC.345/0001-88");
+
+        // Documento com tamanho inválido
+        assert!(parse_document("123456789").is_err());
+
+        // 6. Testes com gerador determinístico
+        let sample_bases: [&[u32; 9]; 3] = [
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9],
+            &[9, 8, 7, 6, 5, 4, 3, 2, 1],
+            &[2, 4, 6, 8, 0, 1, 3, 5, 7],
+        ];
+        for base in sample_bases {
+            let generated_cpf = generate_valid_cpf_from_base(base);
+            assert!(
+                validate_cpf(&generated_cpf).is_ok(),
+                "CPF gerado {generated_cpf} deve ser válido"
+            );
+        }
+
+        let sample_cnpj_bases = [
+            "123456780001",
+            "ABC123XYZ001",
+            "99ZZ88YY0002",
+            "BR01SAOPAULO",
+        ];
+        for base in sample_cnpj_bases {
+            let generated_cnpj = generate_valid_cnpj_from_base(base);
+            assert!(
+                validate_cnpj(&generated_cnpj).is_ok(),
+                "CNPJ gerado {generated_cnpj} deve ser válido"
+            );
+        }
+    }
 }
