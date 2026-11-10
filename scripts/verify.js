@@ -10,6 +10,11 @@ const steps = [
     args: ["test:run"],
   },
   {
+    name: "Prova de Congelamento das Migrações (0001/0002)",
+    command: "node",
+    args: ["scripts/test-check-migrations.js"],
+  },
+  {
     name: "Rustfmt Check",
     command: "cargo",
     args: ["fmt", "--all", "--", "--check"],

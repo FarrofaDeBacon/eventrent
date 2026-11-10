@@ -39,6 +39,9 @@ jobs:
           fi
           echo "Migrações 0001 e 0002 intactas."
 
+      - name: Prova estrutural do script de congelamento das migrações
+        run: node scripts/test-check-migrations.js
+
       - name: Instalar Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:

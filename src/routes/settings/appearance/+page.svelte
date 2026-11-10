@@ -263,15 +263,18 @@
       appSession.defaultTenantId,
     );
 
-    appSession.setBranding({
-      company_name: companyName,
-      primary_color: primaryColor,
-      secondary_color: secondaryColor,
-      accent_color: accentColor,
-      logo_url: null,
-      logo_dark_url: null,
-      icon_url: null,
-    }, appSession.defaultTenantId);
+    appSession.setBranding(
+      {
+        company_name: companyName,
+        primary_color: primaryColor,
+        secondary_color: secondaryColor,
+        accent_color: accentColor,
+        logo_url: null,
+        logo_dark_url: null,
+        icon_url: null,
+      },
+      appSession.defaultTenantId,
+    );
   }
 
   async function handleSave() {
