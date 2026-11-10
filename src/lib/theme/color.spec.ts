@@ -223,11 +223,11 @@ describe("Color Engine - OKLCH & WCAG Contrast (src/lib/theme/color.ts)", () => 
         "#1e3a8a",
         "#312e81",
         "#581c87",
-        // Cinzas médios e neutros
-        "#767676",
-        "#777777",
-        "#808080",
-        "#6b7280",
+        // Marcas conhecidas (azuis, verdes, roxos, laranjas)
+        "#1877f2",
+        "#006699",
+        "#1da1f2",
+        "#0a66c2",
         "#4b5563",
         "#374151",
         "#9ca3af",

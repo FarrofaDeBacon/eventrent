@@ -304,7 +304,7 @@ export interface ForegroundOption {
 }
 
 /**
- * Escolhe automaticamente a cor de texto (foreground) acessível (branco ou escuro)
+ * Escolhe automaticamente a cor de texto (foreground) acessível (branco ou escuro neutro)
  * garantindo taxa de contraste >= 4.5:1 (WCAG AA) em relação ao fundo.
  */
 export function getAccessibleForeground(
@@ -312,14 +312,11 @@ export function getAccessibleForeground(
 ): ForegroundOption {
   const whiteHex = "#ffffff";
   const darkHex = "#090d16"; // Escuro neutro de alta fidelidade
-  const pureBlackHex = "#000000";
   const whiteCss = "oklch(0.99 0 0)";
   const darkCss = "oklch(0.12 0.015 260)";
-  const blackCss = "oklch(0 0 0)";
 
   const contrastWhite = calculateContrast(backgroundHex, whiteHex);
   const contrastDark = calculateContrast(backgroundHex, darkHex);
-  const contrastBlack = calculateContrast(backgroundHex, pureBlackHex);
 
   if (contrastWhite >= 4.5) {
     return {
@@ -339,29 +336,12 @@ export function getAccessibleForeground(
     };
   }
 
-  if (contrastBlack >= 4.5) {
-    return {
-      hex: pureBlackHex,
-      css: blackCss,
-      contrast: contrastBlack,
-      isAccessible: true,
-    };
-  }
-
-  // Se nenhum atingir 4.5:1, escolhe a opção com maior contraste absoluto
-  const maxContrast = Math.max(contrastWhite, contrastDark, contrastBlack);
-  if (maxContrast === contrastWhite) {
+  // Se nenhum atingir 4.5:1, escolhe a opção com maior contraste relativo
+  if (contrastWhite >= contrastDark) {
     return {
       hex: whiteHex,
       css: whiteCss,
       contrast: contrastWhite,
-      isAccessible: false,
-    };
-  } else if (maxContrast === contrastBlack) {
-    return {
-      hex: pureBlackHex,
-      css: blackCss,
-      contrast: contrastBlack,
       isAccessible: false,
     };
   } else {

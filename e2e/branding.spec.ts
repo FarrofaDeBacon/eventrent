@@ -126,7 +126,7 @@ test.describe("E2E — Identidade Visual e White Label (Fase 1B.1)", () => {
     ).toBeEnabled();
 
     // 8. Correção automática de contraste quando < 4.5:1
-    await primaryInput.fill("#888888");
+    await primaryInput.fill("#777777");
     const autoFixBtn = page.getByRole("button", {
       name: "Corrigir Contraste Automaticamente",
     });
