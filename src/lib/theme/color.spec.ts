@@ -11,6 +11,7 @@ import {
   hexToOklch,
   hexToRgb,
   isAccessibleContrast,
+  isValidHexColor,
   oklchToCss,
   oklchToHex,
   rgbToHex,
@@ -30,9 +31,23 @@ describe("Color Engine - OKLCH & WCAG Contrast (src/lib/theme/color.ts)", () => 
     });
 
     it("rejeita formatos HEX inválidos com mensagens claras", () => {
-      expect(() => hexToRgb("#fff")).toThrow("formato #RRGGBB");
+      expect(() => hexToRgb("#fff")).toThrow("caracteres não-hexadecimais");
       expect(() => hexToRgb("invalid")).toThrow();
-      expect(() => hexToRgb("#gggggg")).toThrow("não-hexadecimais");
+      expect(() => hexToRgb("#gggggg")).toThrow("caracteres não-hexadecimais");
+      // Bug fix item 0.6: parseInt("1g", 16) retornava 1 aceitando #1g0000 silenciosamente
+      expect(() => hexToRgb("#1g0000")).toThrow("caracteres não-hexadecimais");
+      expect(() => hexToRgb("#12345z")).toThrow("caracteres não-hexadecimais");
+      expect(() => hexToRgb("#12 456")).toThrow("caracteres não-hexadecimais");
+    });
+
+    it("valida corretamente com isValidHexColor", () => {
+      expect(isValidHexColor("#2563eb")).toBe(true);
+      expect(isValidHexColor("#ffffff")).toBe(true);
+      expect(isValidHexColor("#000000")).toBe(true);
+      expect(isValidHexColor("#1g0000")).toBe(false);
+      expect(isValidHexColor("123456")).toBe(false); // sem #
+      expect(isValidHexColor("#fff")).toBe(false);
+      expect(isValidHexColor("#1234567")).toBe(false);
     });
 
     it("converte HEX para OKLCH com alta precisão nos valores de referência oficiais", () => {

@@ -56,20 +56,30 @@ export function linearToSrgb(c: number): number {
   return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
 }
 
+export const HEX_COLOR_STRICT_REGEX = /^#[0-9a-fA-F]{6}$/;
+
+/**
+ * Valida se uma string é um código de cor hexadecimal estrito no formato #RRGGBB.
+ */
+export function isValidHexColor(hex: string): boolean {
+  return HEX_COLOR_STRICT_REGEX.test(hex.trim());
+}
+
 /**
  * Converte cor HEX (#RRGGBB) para valores normalizados sRGB [0, 1].
+ * Valida estritamente contra caracteres não-hexadecimais, rejeitando strings como '#1g0000'.
  */
 export function hexToRgb(hex: string): [number, number, number] {
-  const clean = hex.replace("#", "").trim();
-  if (clean.length !== 6) {
-    throw new Error(`Cor HEX inválida: '${hex}'. Esperado formato #RRGGBB.`);
+  const trimmed = hex.trim();
+  const clean = trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
+  if (!/^[0-9a-fA-F]{6}$/.test(clean)) {
+    throw new Error(
+      `Cor HEX inválida ou com caracteres não-hexadecimais: '${hex}'. Esperado formato #RRGGBB com 6 dígitos hexadecimais válidos.`,
+    );
   }
   const r = parseInt(clean.substring(0, 2), 16) / 255;
   const g = parseInt(clean.substring(2, 4), 16) / 255;
   const b = parseInt(clean.substring(4, 6), 16) / 255;
-  if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) {
-    throw new Error(`Cor HEX contém caracteres não-hexadecimais: '${hex}'`);
-  }
   return [r, g, b];
 }
 
