@@ -18,33 +18,44 @@ pub(crate) fn map_sqlx_err(err: sqlx::Error) -> CoreError {
     match &err {
         sqlx::Error::Database(db_err) => {
             if let Some(code) = db_err.code() {
-                if code == "5"
-                    || code == "6"
-                    || code == "261"
-                    || code == "517"
-                    || code == "773"
-                    || code == "262"
-                    || code == "518"
-                {
-                    return CoreError::TransientConflict(format!(
-                        "SQLite ocupado ou bloqueado (código {code}): {}",
-                        db_err.message()
-                    ));
+                match code.as_ref() {
+                    // SQLite BUSY (5) e códigos estendidos: 261, 517, 773
+                    // SQLite LOCKED (6) e códigos estendidos: 262, 518
+                    "5" | "6" | "261" | "517" | "773" | "262" | "518" => {
+                        return CoreError::TransientConflict(format!(
+                            "SQLite ocupado ou bloqueado (código {code}): {}",
+                            db_err.message()
+                        ));
+                    }
+                    // SQLite UNIQUE (2067) e PRIMARY KEY (1555)
+                    "2067" | "1555" => {
+                        return CoreError::Conflict("Registro conflitante já existe.".to_string());
+                    }
+                    // SQLite FOREIGN KEY (787)
+                    "787" => {
+                        return CoreError::Validation(
+                            "Registro relacionado não encontrado ou inválido.".to_string(),
+                        );
+                    }
+                    _ => {}
                 }
             }
-            let msg = db_err.message();
-            let lower = msg.to_lowercase();
-            if lower.contains("busy") || lower.contains("locked") {
-                return CoreError::TransientConflict(format!(
-                    "SQLite conflito de concorrência: {msg}"
-                ));
-            }
-            CoreError::Database(err.to_string())
+            // NUNCA expor texto cru do SQL para o usuário/frontend.
+            // Registrar em log estruturado com tracing::error! e retornar mensagem genérica segura.
+            tracing::error!(
+                code = db_err.code().as_deref().unwrap_or("none"),
+                message = %db_err.message(),
+                "Erro interno de banco de dados SQLite não mapeado"
+            );
+            CoreError::Database("Erro interno de banco de dados. Operação cancelada.".to_string())
         }
         sqlx::Error::PoolTimedOut => {
             CoreError::TransientConflict("Timeout ao adquirir conexão do pool".to_string())
         }
-        _ => CoreError::Database(err.to_string()),
+        _ => {
+            tracing::error!(error = %err, "Erro interno sqlx não mapeado");
+            CoreError::Database("Erro interno de banco de dados. Operação cancelada.".to_string())
+        }
     }
 }
 
@@ -2293,18 +2304,27 @@ mod tests {
             );
         }
 
-        // 2. Erros com mensagens de busy/locked sem código explícito
-        let msg_busy = make_db_err(None, "operational error: database is busy");
-        assert!(matches!(
-            map_sqlx_err(msg_busy),
-            CoreError::TransientConflict(_)
-        ));
+        // 2. Erros de unicidade e integridade referencial com códigos mapeados
+        let unique_err = make_db_err(
+            Some("2067"),
+            "UNIQUE constraint failed: customer.document_number",
+        );
+        assert_eq!(
+            map_sqlx_err(unique_err),
+            CoreError::Conflict("Registro conflitante já existe.".to_string())
+        );
 
-        let msg_locked = make_db_err(None, "locking protocol error: table locked");
-        assert!(matches!(
-            map_sqlx_err(msg_locked),
-            CoreError::TransientConflict(_)
-        ));
+        let pk_err = make_db_err(Some("1555"), "PRIMARY KEY constraint failed: customer.id");
+        assert_eq!(
+            map_sqlx_err(pk_err),
+            CoreError::Conflict("Registro conflitante já existe.".to_string())
+        );
+
+        let fk_err = make_db_err(Some("787"), "FOREIGN KEY constraint failed");
+        assert_eq!(
+            map_sqlx_err(fk_err),
+            CoreError::Validation("Registro relacionado não encontrado ou inválido.".to_string())
+        );
 
         // 3. PoolTimedOut
         let pool_timeout = sqlx::Error::PoolTimedOut;
@@ -2313,11 +2333,24 @@ mod tests {
             CoreError::TransientConflict(_)
         ));
 
-        // 4. Códigos e erros permanentes NÃO viram TransientConflict
+        // 4. Sem código ou fallback contains("busy") removido:
+        // Mensagem de texto "busy" sem código numérico NÃO vira TransientConflict,
+        // e nunca vaza texto cru SQL para o usuário.
+        let msg_busy = make_db_err(None, "operational error: database is busy");
+        assert_eq!(
+            map_sqlx_err(msg_busy),
+            CoreError::Database("Erro interno de banco de dados. Operação cancelada.".to_string())
+        );
+
+        let msg_locked = make_db_err(None, "locking protocol error: table locked");
+        assert_eq!(
+            map_sqlx_err(msg_locked),
+            CoreError::Database("Erro interno de banco de dados. Operação cancelada.".to_string())
+        );
+
+        // 5. Códigos permanentes retornam mensagem genérica segura, nunca SQL cru
         let permanent_codes = [
             ("1", "syntax error in SQL statement"),
-            ("19", "UNIQUE constraint failed: user.email"),
-            ("2067", "UNIQUE constraint failed"),
             ("14", "unable to open database file"),
             ("8", "attempt to write a readonly database"),
         ];
@@ -2325,18 +2358,19 @@ mod tests {
         for (code, msg) in permanent_codes {
             let err = make_db_err(Some(code), msg);
             let mapped = map_sqlx_err(err);
-            assert!(
-                matches!(mapped, CoreError::Database(_)),
-                "Código permanente {code} ({msg}) deveria virar CoreError::Database, mas virou: {mapped:?}"
+            assert_eq!(
+                mapped,
+                CoreError::Database("Erro interno de banco de dados. Operação cancelada.".to_string()),
+                "Código permanente {code} ({msg}) deveria virar CoreError::Database genérico, mas virou: {mapped:?}"
             );
         }
 
-        // 5. Outros tipos de sqlx::Error que não são transitórios
+        // 6. Outros tipos de sqlx::Error que não são de banco
         let row_not_found = sqlx::Error::RowNotFound;
-        assert!(matches!(
+        assert_eq!(
             map_sqlx_err(row_not_found),
-            CoreError::Database(_)
-        ));
+            CoreError::Database("Erro interno de banco de dados. Operação cancelada.".to_string())
+        );
     }
 
     #[tokio::test]
