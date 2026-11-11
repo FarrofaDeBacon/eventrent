@@ -21,8 +21,16 @@ class AppSessionState {
     this.defaultTenantId = status.default_tenant_id;
     this.hasOwner = status.has_owner;
     this.session = status.session;
+    const activeTenant = status.session?.tenant_id || status.default_tenant_id;
+    if (activeTenant && typeof localStorage !== "undefined") {
+      try {
+        localStorage.setItem("eventrent:brand:last", activeTenant);
+      } catch {
+        // Ignora erros de quota ou modo privado
+      }
+    }
     if (status.branding) {
-      this.setBranding(status.branding);
+      this.setBranding(status.branding, activeTenant);
     }
     this.initialized = true;
   }
@@ -61,6 +69,7 @@ class AppSessionState {
           `eventrent:brand:${targetTenant}`,
           JSON.stringify(cachePayload),
         );
+        localStorage.setItem("eventrent:brand:last", targetTenant);
       } catch {
         // Ignora erros de quota ou modo privado
       }
@@ -75,6 +84,13 @@ class AppSessionState {
     this.session = session;
     if (session) {
       this.hasOwner = true;
+      if (session.tenant_id && typeof localStorage !== "undefined") {
+        try {
+          localStorage.setItem("eventrent:brand:last", session.tenant_id);
+        } catch {
+          // Ignora erros de quota ou modo privado
+        }
+      }
     }
   }
 

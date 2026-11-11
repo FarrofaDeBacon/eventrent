@@ -102,5 +102,59 @@ describe("BrandingRepository (Data Layer Port & Adapter)", () => {
     expect(cached).not.toHaveProperty("logo_dark_url");
     expect(cached).not.toHaveProperty("icon_url");
     expect(cachedRaw).not.toContain("data:image");
+
+    // Verifica que o apontador do último tenant ativo foi gravado
+    expect(localStorage.getItem("eventrent:brand:last")).toBe(testTenant);
+  });
+
+  it("deve isolar branding por tenant e atualizar o ponteiro eventrent:brand:last", async () => {
+    const { appSession } = await import("./session.svelte");
+    const tenantA = "tenant-empresa-alpha";
+    const tenantB = "tenant-empresa-beta";
+
+    appSession.setBranding(
+      {
+        company_name: "Empresa Alpha",
+        primary_color: "#111111",
+        secondary_color: "#222222",
+        accent_color: "#333333",
+        logo_url: null,
+        logo_dark_url: null,
+        icon_url: null,
+      },
+      tenantA,
+    );
+    expect(localStorage.getItem("eventrent:brand:last")).toBe(tenantA);
+
+    appSession.setBranding(
+      {
+        company_name: "Empresa Beta",
+        primary_color: "#444444",
+        secondary_color: "#555555",
+        accent_color: "#666666",
+        logo_url: null,
+        logo_dark_url: null,
+        icon_url: null,
+      },
+      tenantB,
+    );
+    expect(localStorage.getItem("eventrent:brand:last")).toBe(tenantB);
+
+    // O cache de Alpha não foi sobrescrito pelo de Beta
+    const cachedAlpha = JSON.parse(
+      localStorage.getItem(`eventrent:brand:${tenantA}`)!,
+    );
+    const cachedBeta = JSON.parse(
+      localStorage.getItem(`eventrent:brand:${tenantB}`)!,
+    );
+    expect(cachedAlpha.company_name).toBe("Empresa Alpha");
+    expect(cachedBeta.company_name).toBe("Empresa Beta");
+
+    // Simula a resolução do script anti-FOUC síncrono do app.html
+    const lastTenant = localStorage.getItem("eventrent:brand:last") || "local";
+    const resolvedRaw = localStorage.getItem(`eventrent:brand:${lastTenant}`);
+    expect(resolvedRaw).not.toBeNull();
+    const resolved = JSON.parse(resolvedRaw!);
+    expect(resolved.company_name).toBe("Empresa Beta");
   });
 });

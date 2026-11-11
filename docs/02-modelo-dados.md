@@ -149,18 +149,152 @@ Trilha imutável de auditoria para operações sensíveis de segurança, usuári
 | `deleted_at`  | TEXT |                         | Reservado para conformidade estrutural                             |
 | `created_by`  | TEXT |                         | ID do autor do evento                                              |
 
-## 5. Diretrizes de Tipos de Dados
+## 5. Tabelas do Módulo de Clientes (`0004_customers.sql`)
+
+Adicionada na Fase 1B.2 para suportar clientes Pessoa Física e Jurídica com múltiplos contatos e endereços por tenant.
+
+### 5.1. `customer`
+
+| Coluna                   | Tipo | Restrições                            | Descrição                                                                  |
+| ------------------------ | ---- | ------------------------------------- | -------------------------------------------------------------------------- |
+| `id`                     | TEXT | PRIMARY KEY                           | UUID v7                                                                    |
+| `tenant_id`              | TEXT | NOT NULL, FK(tenant.id)               | Tenant proprietário                                                        |
+| `person_type`            | TEXT | NOT NULL, CHECK(`individual`/`legal`) | `individual` (PF) ou `legal` (PJ)                                          |
+| `name`                   | TEXT | NOT NULL                              | Nome completo (PF) ou Razão Social (PJ)                                    |
+| `trade_name`             | TEXT |                                       | Nome Fantasia (opcional)                                                   |
+| `document_number`        | TEXT | NOT NULL                              | CPF (11 dígitos) ou CNPJ numérico/alfanumérico normalizado (14 caracteres) |
+| `state_registration`     | TEXT |                                       | Inscrição Estadual (IE)                                                    |
+| `municipal_registration` | TEXT |                                       | Inscrição Municipal (IM)                                                   |
+| `notes`                  | TEXT |                                       | Observações operacionais ou comerciais                                     |
+| `search_text`            | TEXT | NOT NULL                              | Índice textual normalizado em minúsculas sem acentos                       |
+| `name_sort`              | TEXT | NOT NULL                              | Chave de ordenação normalizada sem diacríticos para paginação por cursor   |
+| `created_at`             | TEXT | NOT NULL                              | Data de criação UTC                                                        |
+| `updated_at`             | TEXT | NOT NULL                              | Data de atualização UTC                                                    |
+| `deleted_at`             | TEXT |                                       | Soft delete                                                                |
+| `created_by`             | TEXT | FK(app_user.id)                       | Usuário criador                                                            |
+
+- **Índice único parcial**: `idx_customer_tenant_document_active ON customer (tenant_id, document_number) WHERE deleted_at IS NULL`
+- **Índice de paginação por cursor**: `idx_customer_tenant_sort ON customer (tenant_id, name_sort, id) WHERE deleted_at IS NULL`
+- **Índice de busca**: `idx_customer_tenant_search ON customer (tenant_id, search_text) WHERE deleted_at IS NULL`
+
+### 5.2. `customer_contact`
+
+| Coluna        | Tipo    | Restrições                | Descrição                           |
+| ------------- | ------- | ------------------------- | ----------------------------------- |
+| `id`          | TEXT    | PRIMARY KEY               | UUID v7                             |
+| `customer_id` | TEXT    | NOT NULL, FK(customer.id) | Cliente associado                   |
+| `name`        | TEXT    | NOT NULL                  | Nome do contato                     |
+| `email`       | TEXT    |                           | E-mail de contato                   |
+| `phone`       | TEXT    |                           | Telefone / WhatsApp                 |
+| `role`        | TEXT    |                           | Cargo ou função (Produtor, Compras) |
+| `is_primary`  | INTEGER | NOT NULL DEFAULT 0        | `1` para contato principal          |
+| `created_at`  | TEXT    | NOT NULL                  | Data de criação UTC                 |
+| `updated_at`  | TEXT    | NOT NULL                  | Data de atualização UTC             |
+| `deleted_at`  | TEXT    |                           | Soft delete                         |
+
+- **Índice**: `idx_customer_contact_customer ON customer_contact (customer_id) WHERE deleted_at IS NULL`
+
+### 5.3. `customer_address`
+
+| Coluna         | Tipo    | Restrições                | Descrição                            |
+| -------------- | ------- | ------------------------- | ------------------------------------ |
+| `id`           | TEXT    | PRIMARY KEY               | UUID v7                              |
+| `customer_id`  | TEXT    | NOT NULL, FK(customer.id) | Cliente associado                    |
+| `label`        | TEXT    | NOT NULL                  | Rótulo (`Sede`, `Galpão`, `Entrega`) |
+| `street`       | TEXT    | NOT NULL                  | Logradouro                           |
+| `number`       | TEXT    | NOT NULL                  | Número                               |
+| `complement`   | TEXT    |                           | Complemento                          |
+| `neighborhood` | TEXT    | NOT NULL                  | Bairro                               |
+| `city`         | TEXT    | NOT NULL                  | Cidade                               |
+| `state`        | TEXT    | NOT NULL                  | UF (2 letras)                        |
+| `postal_code`  | TEXT    | NOT NULL                  | CEP                                  |
+| `is_primary`   | INTEGER | NOT NULL DEFAULT 0        | `1` para endereço principal          |
+| `created_at`   | TEXT    | NOT NULL                  | Data de criação UTC                  |
+| `updated_at`   | TEXT    | NOT NULL                  | Data de atualização UTC              |
+| `deleted_at`   | TEXT    |                           | Soft delete                          |
+
+- **Índice**: `idx_customer_address_customer ON customer_address (customer_id) WHERE deleted_at IS NULL`
+
+## 6. Diretrizes de Tipos de Dados
+
+Adicionada na Fase 1B.2 para suportar clientes Pessoa Física e Jurídica com múltiplos contatos e endereços por tenant.
+
+### 5.1. `customer`
+
+| Coluna                   | Tipo | Restrições                            | Descrição                                                                  |
+| ------------------------ | ---- | ------------------------------------- | -------------------------------------------------------------------------- |
+| `id`                     | TEXT | PRIMARY KEY                           | UUID v7                                                                    |
+| `tenant_id`              | TEXT | NOT NULL, FK(tenant.id)               | Tenant proprietário                                                        |
+| `person_type`            | TEXT | NOT NULL, CHECK(`individual`/`legal`) | `individual` (PF) ou `legal` (PJ)                                          |
+| `name`                   | TEXT | NOT NULL                              | Nome completo (PF) ou Razão Social (PJ)                                    |
+| `trade_name`             | TEXT |                                       | Nome Fantasia (opcional)                                                   |
+| `document_number`        | TEXT | NOT NULL                              | CPF (11 dígitos) ou CNPJ numérico/alfanumérico normalizado (14 caracteres) |
+| `state_registration`     | TEXT |                                       | Inscrição Estadual (IE)                                                    |
+| `municipal_registration` | TEXT |                                       | Inscrição Municipal (IM)                                                   |
+| `notes`                  | TEXT |                                       | Observações operacionais ou comerciais                                     |
+| `search_text`            | TEXT | NOT NULL                              | Índice textual normalizado em minúsculas sem acentos                       |
+| `name_sort`              | TEXT | NOT NULL                              | Chave de ordenação normalizada sem diacríticos para paginação por cursor   |
+| `created_at`             | TEXT | NOT NULL                              | Data de criação UTC                                                        |
+| `updated_at`             | TEXT | NOT NULL                              | Data de atualização UTC                                                    |
+| `deleted_at`             | TEXT |                                       | Soft delete                                                                |
+| `created_by`             | TEXT | FK(app_user.id)                       | Usuário criador                                                            |
+
+- **Índice único parcial**: `idx_customer_tenant_document_active ON customer (tenant_id, document_number) WHERE deleted_at IS NULL`
+- **Índice de paginação por cursor**: `idx_customer_tenant_sort ON customer (tenant_id, name_sort, id) WHERE deleted_at IS NULL`
+- **Índice de busca**: `idx_customer_tenant_search ON customer (tenant_id, search_text) WHERE deleted_at IS NULL`
+
+### 5.2. `customer_contact`
+
+| Coluna        | Tipo    | Restrições                | Descrição                           |
+| ------------- | ------- | ------------------------- | ----------------------------------- |
+| `id`          | TEXT    | PRIMARY KEY               | UUID v7                             |
+| `customer_id` | TEXT    | NOT NULL, FK(customer.id) | Cliente associado                   |
+| `name`        | TEXT    | NOT NULL                  | Nome do contato                     |
+| `email`       | TEXT    |                           | E-mail de contato                   |
+| `phone`       | TEXT    |                           | Telefone / WhatsApp                 |
+| `role`        | TEXT    |                           | Cargo ou função (Produtor, Compras) |
+| `is_primary`  | INTEGER | NOT NULL DEFAULT 0        | `1` para contato principal          |
+| `created_at`  | TEXT    | NOT NULL                  | Data de criação UTC                 |
+| `updated_at`  | TEXT    | NOT NULL                  | Data de atualização UTC             |
+| `deleted_at`  | TEXT    |                           | Soft delete                         |
+
+- **Índice**: `idx_customer_contact_customer ON customer_contact (customer_id) WHERE deleted_at IS NULL`
+
+### 5.3. `customer_address`
+
+| Coluna         | Tipo    | Restrições                | Descrição                            |
+| -------------- | ------- | ------------------------- | ------------------------------------ |
+| `id`           | TEXT    | PRIMARY KEY               | UUID v7                              |
+| `customer_id`  | TEXT    | NOT NULL, FK(customer.id) | Cliente associado                    |
+| `label`        | TEXT    | NOT NULL                  | Rótulo (`Sede`, `Galpão`, `Entrega`) |
+| `street`       | TEXT    | NOT NULL                  | Logradouro                           |
+| `number`       | TEXT    | NOT NULL                  | Número                               |
+| `complement`   | TEXT    |                           | Complemento                          |
+| `neighborhood` | TEXT    | NOT NULL                  | Bairro                               |
+| `city`         | TEXT    | NOT NULL                  | Cidade                               |
+| `state`        | TEXT    | NOT NULL                  | UF (2 letras)                        |
+| `postal_code`  | TEXT    | NOT NULL                  | CEP                                  |
+| `is_primary`   | INTEGER | NOT NULL DEFAULT 0        | `1` para endereço principal          |
+| `created_at`   | TEXT    | NOT NULL                  | Data de criação UTC                  |
+| `updated_at`   | TEXT    | NOT NULL                  | Data de atualização UTC              |
+| `deleted_at`   | TEXT    |                           | Soft delete                          |
+
+- **Índice**: `idx_customer_address_customer ON customer_address (customer_id) WHERE deleted_at IS NULL`
+
+## 6. Diretrizes de Tipos de Dados
 
 - **Monetário**: Valores financeiros sempre em **inteiro** (centavos de Real, ex.: R$ 1.500,00 -> `150000`). Jamais armazenar ponto flutuante (`float`/`double`).
 - **Datas e Horas**: Strings no formato ISO-8601 UTC.
 - **Campos JSON**: Quando permitidos, serializados como texto estruturado e validados por esquemas de domínio, nunca contendo segredos em texto puro ou hashes de autenticação.
 
-## 6. Versionamento e Congelamento de Migrações (Fase 1B.0+)
+## 7. Versionamento e Congelamento de Migrações (Fase 1B.0+)
 
-A partir da conclusão da Fase 1B.0, as migrações existentes:
+Toda migração já incorporada à branch principal (`main`) torna-se **estritamente congelada e imutável**, incluindo:
 
 - `crates/store-sqlite/migrations/0001_init_tenant_and_branding.sql`
 - `crates/store-sqlite/migrations/0002_users_roles_and_audit.sql`
+- `crates/store-sqlite/migrations/0003_branding_dark_logo_and_icon.sql`
 
-encontram-se **estritamente congeladas e imutáveis**. Qualquer alteração de esquema estrutural no banco de dados (novas tabelas, novas colunas, índices ou triggers) deve obrigatoriamente ser adicionada como uma nova migração incremental (`0003_...`, etc.).
-O pipeline de CI (`.github/workflows/ci.yml`) verifica via `git diff` se essas migrações foram alteradas em relação à `main` e bloqueia a execução caso ocorra qualquer modificação.
+A Fase 1B.2 adicionou a migração incremental `crates/store-sqlite/migrations/0004_customers.sql`, que passará automaticamente a integrar o conjunto congelado após o merge na `main`.
+Qualquer alteração de esquema estrutural no banco de dados (novas tabelas, novas colunas, índices ou triggers) deve obrigatoriamente ser adicionada como uma nova migração incremental sequencial (`0005_...`, etc.).
+O pipeline de CI (`.github/workflows/ci.yml`) executa `node scripts/check-migrations.js` comparando contra `origin/main` e bloqueia a execução caso qualquer arquivo de migração preexistente na `main` seja modificado, removido ou renomeado.

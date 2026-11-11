@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   autoAdjustContrast,
   calculateContrast,
+  formatContrastRatio,
   generateColorScale,
   generateThemeVariables,
   getAccessibleForeground,
+  getRawContrastRatio,
   getRelativeLuminance,
   hexToOklch,
   hexToRgb,
+  isAccessibleContrast,
+  isValidHexColor,
   oklchToCss,
   oklchToHex,
   rgbToHex,
@@ -27,9 +31,23 @@ describe("Color Engine - OKLCH & WCAG Contrast (src/lib/theme/color.ts)", () => 
     });
 
     it("rejeita formatos HEX inválidos com mensagens claras", () => {
-      expect(() => hexToRgb("#fff")).toThrow("formato #RRGGBB");
+      expect(() => hexToRgb("#fff")).toThrow("caracteres não-hexadecimais");
       expect(() => hexToRgb("invalid")).toThrow();
-      expect(() => hexToRgb("#gggggg")).toThrow("não-hexadecimais");
+      expect(() => hexToRgb("#gggggg")).toThrow("caracteres não-hexadecimais");
+      // Bug fix item 0.6: parseInt("1g", 16) retornava 1 aceitando #1g0000 silenciosamente
+      expect(() => hexToRgb("#1g0000")).toThrow("caracteres não-hexadecimais");
+      expect(() => hexToRgb("#12345z")).toThrow("caracteres não-hexadecimais");
+      expect(() => hexToRgb("#12 456")).toThrow("caracteres não-hexadecimais");
+    });
+
+    it("valida corretamente com isValidHexColor", () => {
+      expect(isValidHexColor("#2563eb")).toBe(true);
+      expect(isValidHexColor("#ffffff")).toBe(true);
+      expect(isValidHexColor("#000000")).toBe(true);
+      expect(isValidHexColor("#1g0000")).toBe(false);
+      expect(isValidHexColor("123456")).toBe(false); // sem #
+      expect(isValidHexColor("#fff")).toBe(false);
+      expect(isValidHexColor("#1234567")).toBe(false);
     });
 
     it("converte HEX para OKLCH com alta precisão nos valores de referência oficiais", () => {
@@ -175,6 +193,29 @@ describe("Color Engine - OKLCH & WCAG Contrast (src/lib/theme/color.ts)", () => 
       // Azul Tailwind #2563eb contra branco (#ffffff) >= 4.5:1
       const contrast = calculateContrast("#2563eb", "#ffffff");
       expect(contrast).toBeGreaterThanOrEqual(4.5);
+    });
+
+    it("decisões de aprovação AA usam a razão BRUTA sem arredondamento prematuro (4.4999 reprova, 4.5 aprova)", () => {
+      // Razão bruta exatamente no limiar
+      expect(isAccessibleContrast(4.4999)).toBe(false);
+      expect(isAccessibleContrast(4.4999999)).toBe(false);
+      expect(isAccessibleContrast(4.496)).toBe(false);
+      expect(isAccessibleContrast(4.5)).toBe(true);
+      expect(isAccessibleContrast(4.500001)).toBe(true);
+
+      // Função de cálculo de razão bruta
+      expect(getRawContrastRatio("#ffffff", "#000000")).toBeCloseTo(21, 2);
+      expect(getRawContrastRatio("#ffffff", "#ffffff")).toBeCloseTo(1, 2);
+
+      // Arredondamento apenas para exibição
+      expect(formatContrastRatio(4.496)).toBe(4.5);
+      expect(formatContrastRatio(4.494)).toBe(4.49);
+      expect(formatContrastRatio(4.504)).toBe(4.5);
+
+      // Caso crítico: 4.496 formata como 4.5 na tela mas reprova na aprovação de acessibilidade
+      const borderlineRaw = 4.496;
+      expect(formatContrastRatio(borderlineRaw)).toBe(4.5);
+      expect(isAccessibleContrast(borderlineRaw)).toBe(false);
     });
 
     it("garante contraste mínimo de 4.5:1 em primary-foreground para um conjunto diverso de mais de 50 cores de marca", () => {

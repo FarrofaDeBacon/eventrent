@@ -101,3 +101,24 @@ Em operações de autenticação (`login` e `recover_password`):
 
 - O incremento do contador de tentativas falhas e a aplicação de bloqueio temporário por brute-force **devem ser comitados no banco antes de devolver o erro ao chamador**.
 - Se a transação fosse abortada (rollback) pelo retorno do erro `CoreError::InvalidCredentials`, o contador de falhas seria desfeito, neutralizando a proteção contra força bruta. Portanto, a gravação da falha e da auditoria é finalizada com commit antes do retorno do erro na camada de serviço.
+
+---
+
+### 5. Semântica de Retry e Falhas de COMMIT (SQLite vs. PostgreSQL)
+
+Na Fase 1B.1, o laço de retry de `run_in_tx` foi estendido para proteger também as chamadas `begin_transaction().await` e `tx.commit().await`. A segurança dessa operação varia criticamente entre motores de banco:
+
+1. **No SQLite (embarcado, processo local)**:
+   - Uma falha de `tx.commit().await` decorrente de `SQLITE_BUSY` (código 5) ou travamento de escrita (`SQLITE_LOCKED` / 6, códigos estendidos 261, 517, 773) garante categoricamente que os dados da transação **não foram persistidos no arquivo de banco (nem no WAL nem no journal principal)** e que o lock foi devidamente abortado/liberado pela biblioteca C subjacente.
+   - Por essa razão de arquitetura embarcada em arquivo local, é 100% seguro executar nova tentativa de toda a transação a partir do `BEGIN IMMEDIATE`, reexecutando o closure de negócio com backoff.
+
+2. **No PostgreSQL (arquitetura cliente-servidor / Fase 2.5 e Nuvem)**:
+   - O retry de uma transação após falha no comando `COMMIT` **só é permitido quando o código de erro retornado pelo servidor garantir que a transação não foi comitada**.
+   - Códigos com garantia explícita de não-efetivação no PostgreSQL:
+     - `40001` (`serialization_failure`)
+     - `40P01` (`deadlock_detected`)
+   - Se a conexão de rede for interrompida ou atingir timeout durante o envio/processamento do `COMMIT` (erro de I/O de rede, socket reset ou timeout), o estado do banco torna-se **indeterminado (_in-doubt transaction_)**: o servidor pode ter efetivado o `COMMIT` fisicamente em disco antes de a resposta alcançar o cliente, ou pode ter abortado a transação ao detectar a desconexão.
+   - Nesses cenários sem confirmação explícita do PostgreSQL, um retry cego causaria duplicação de registros e efeitos colaterais (ex: reservas duplicadas de estoque ou cobranças repetidas).
+   - Para o adaptador do PostgreSQL (Fase 2.5), a esteira de `map_sqlx_err` deverá:
+     - Classificar como `CoreError::TransientConflict` estritamente erros com garantia de não-comit (`40001`, `40P01`).
+     - Tratar falhas de conectividade e I/O de rede durante o `COMMIT` como erros permanentes ou acionar verificação de idempotência (chaves de idempotência na camada de aplicação).

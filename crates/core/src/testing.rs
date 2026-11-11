@@ -1,7 +1,9 @@
 use crate::domain::{
-    CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
-    RecoverPasswordInput, ResetPasswordInput, SessionInfo, UpdateBrandingInput, UpdateUserInput,
-    UserRecord, UserWithRole, ROLE_SLUG_COMMERCIAL, ROLE_SLUG_OWNER,
+    CreateAddressInput, CreateContactInput, CreateCustomerInput, CreateUserInput, CustomerFilter,
+    InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode, PersonType,
+    RecoverPasswordInput, ResetPasswordInput, SessionInfo, UpdateBrandingInput,
+    UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole, ROLE_SLUG_COMMERCIAL,
+    ROLE_SLUG_OWNER,
 };
 use crate::error::CoreError;
 use crate::services::{
@@ -613,6 +615,236 @@ pub async fn contract_branding_dark_logo_and_icon(stores: &StoreBundle, tenant_i
     assert_eq!(retrieved.icon_url, input.icon_url);
 }
 
+/// 12. Contrato: CRUD completo de clientes, contatos, endereços, unicidade ativa e auditoria LGPD mascarada.
+pub async fn contract_customer_crud_and_lgpd_audit(
+    services: &CoreServices,
+    session: &SessionInfo,
+    _tenant_id: &str,
+) {
+    // 1. Cria cliente PF com CPF válido
+    let pf_input = CreateCustomerInput {
+        person_type: PersonType::Individual,
+        name: "Carlos Eduardo da Silva".to_string(),
+        trade_name: None,
+        document_number: "529.982.247-25".to_string(),
+        state_registration: None,
+        municipal_registration: None,
+        notes: Some("Cliente VIP de eventos corporativos".to_string()),
+        contacts: vec![CreateContactInput {
+            name: "Carlos Silva".to_string(),
+            email: Some("carlos@silvaeventos.com.br".to_string()),
+            phone: Some("(11) 99887-7665".to_string()),
+            role: Some("Titular".to_string()),
+            is_primary: true,
+        }],
+        addresses: vec![CreateAddressInput {
+            label: "Sede".to_string(),
+            street: "Av. Paulista".to_string(),
+            number: "1000".to_string(),
+            complement: Some("Conjunto 42".to_string()),
+            neighborhood: "Bela Vista".to_string(),
+            city: "São Paulo".to_string(),
+            state: "SP".to_string(),
+            postal_code: "01310-100".to_string(),
+            is_primary: true,
+        }],
+    };
+
+    let created_pf = services
+        .create_customer(session, &pf_input)
+        .await
+        .expect("Falha ao criar cliente PF com CPF válido");
+    assert_eq!(created_pf.customer.name, "Carlos Eduardo da Silva");
+    assert_eq!(created_pf.customer.document_number, "52998224725");
+    assert_eq!(created_pf.contacts.len(), 1);
+    assert_eq!(created_pf.addresses.len(), 1);
+
+    // 2. Cria cliente PJ com CNPJ alfanumérico válido (IN RFB nº 2.229/2025)
+    let pj_input = CreateCustomerInput {
+        person_type: PersonType::Legal,
+        name: "Prime Audiovisual & Iluminação Ltda.".to_string(),
+        trade_name: Some("Prime Eventos".to_string()),
+        document_number: "12.ABC.345/0001-88".to_string(),
+        state_registration: Some("123.456.789.000".to_string()),
+        municipal_registration: Some("987654".to_string()),
+        notes: None,
+        contacts: vec![CreateContactInput {
+            name: "Diretoria Financeira".to_string(),
+            email: Some("financeiro@primeeventos.com".to_string()),
+            phone: Some("(11) 3322-1100".to_string()),
+            role: Some("Financeiro".to_string()),
+            is_primary: true,
+        }],
+        addresses: vec![CreateAddressInput {
+            label: "Galpão Principal".to_string(),
+            street: "Rua dos Produtores".to_string(),
+            number: "500".to_string(),
+            complement: None,
+            neighborhood: "Vila Leopoldina".to_string(),
+            city: "São Paulo".to_string(),
+            state: "SP".to_string(),
+            postal_code: "05311-000".to_string(),
+            is_primary: true,
+        }],
+    };
+
+    let created_pj = services
+        .create_customer(session, &pj_input)
+        .await
+        .expect("Falha ao criar cliente PJ com CNPJ alfanumérico");
+    assert_eq!(created_pj.customer.document_number, "12ABC345000188");
+
+    // 3. Unicidade ativa: tentativa de criar cliente duplicado com mesmo CPF deve falhar com CoreError::Conflict
+    let dup_pf = services.create_customer(session, &pf_input).await;
+    assert!(dup_pf.is_err());
+    assert!(matches!(dup_pf.unwrap_err(), CoreError::Conflict(_)));
+
+    // 4. Incompatibilidade: PF com CNPJ e PJ com CPF
+    let mut invalid_pair1 = pf_input.clone();
+    invalid_pair1.document_number = "12.ABC.345/0001-88".to_string();
+    assert!(services
+        .create_customer(session, &invalid_pair1)
+        .await
+        .is_err());
+
+    let mut invalid_pair2 = pj_input.clone();
+    invalid_pair2.document_number = "529.982.247-25".to_string();
+    assert!(services
+        .create_customer(session, &invalid_pair2)
+        .await
+        .is_err());
+
+    // 5. Busca e paginação (list_customers)
+    // 5.1 Busca sem acento e case-insensitive
+    let list_search = services
+        .list_customers(
+            session,
+            &CustomerFilter {
+                query: Some("eduardo silva".to_string()),
+                person_type: None,
+                cursor: None,
+                limit: Some(10),
+            },
+        )
+        .await
+        .expect("Busca por 'eduardo silva' deve suceder");
+    assert_eq!(list_search.items.len(), 1);
+    assert_eq!(list_search.items[0].id, created_pf.customer.id);
+
+    // 5.2 Busca por CNPJ alfanumérico com máscara
+    let list_cnpj = services
+        .list_customers(
+            session,
+            &CustomerFilter {
+                query: Some("12.ABC.345".to_string()),
+                person_type: None,
+                cursor: None,
+                limit: Some(10),
+            },
+        )
+        .await
+        .expect("Busca por CNPJ parcial");
+    assert_eq!(list_cnpj.items.len(), 1);
+    assert_eq!(list_cnpj.items[0].id, created_pj.customer.id);
+
+    // 6. Atualização de cliente
+    let update_input = UpdateCustomerInput {
+        person_type: PersonType::Individual,
+        name: "Carlos Eduardo da Silva Atualizado".to_string(),
+        trade_name: Some("Carlos VIP".to_string()),
+        document_number: "529.982.247-25".to_string(),
+        state_registration: None,
+        municipal_registration: None,
+        notes: Some("Notas atualizadas".to_string()),
+        contacts: created_pf
+            .contacts
+            .into_iter()
+            .map(|c| CreateContactInput {
+                name: c.name,
+                email: c.email,
+                phone: c.phone,
+                role: c.role,
+                is_primary: c.is_primary,
+            })
+            .collect(),
+        addresses: created_pf
+            .addresses
+            .into_iter()
+            .map(|a| CreateAddressInput {
+                label: a.label,
+                street: a.street,
+                number: a.number,
+                complement: a.complement,
+                neighborhood: a.neighborhood,
+                city: a.city,
+                state: a.state,
+                postal_code: a.postal_code,
+                is_primary: a.is_primary,
+            })
+            .collect(),
+    };
+
+    let updated = services
+        .update_customer(session, &created_pf.customer.id, &update_input)
+        .await
+        .expect("Falha ao atualizar cliente");
+    assert_eq!(updated.customer.name, "Carlos Eduardo da Silva Atualizado");
+
+    // 7. Soft delete e reativação de documento
+    services
+        .delete_customer(session, &created_pf.customer.id)
+        .await
+        .expect("Falha ao excluir cliente");
+
+    // Cliente excluído não deve aparecer na busca ativa
+    let after_delete = services
+        .get_customer(session, &created_pf.customer.id)
+        .await;
+    assert!(after_delete.is_err());
+    assert!(matches!(after_delete.unwrap_err(), CoreError::NotFound(_)));
+
+    // Índice único parcial permite re-cadastrar o mesmo CPF após exclusão lógica
+    let recreate_res = services.create_customer(session, &pf_input).await;
+    assert!(
+        recreate_res.is_ok(),
+        "Deve ser possível cadastrar cliente com mesmo documento após exclusão lógica do anterior"
+    );
+
+    // 8. Proteção LGPD na Auditoria: inspeciona logs e garante mascaramento
+    let audits = services
+        .stores
+        .audit
+        .list_by_tenant(&session.tenant_id, 20)
+        .await
+        .unwrap();
+    let customer_audits: Vec<_> = audits
+        .iter()
+        .filter(|a| a.action.starts_with("customer."))
+        .collect();
+    assert!(!customer_audits.is_empty());
+
+    for entry in &customer_audits {
+        // NUNCA deve conter o CPF completo 52998224725 nem 529.982.247-25
+        assert!(
+            !entry.summary.contains("52998224725"),
+            "Violação LGPD: CPF cru no log de auditoria!"
+        );
+        assert!(
+            !entry.summary.contains("529.982.247-25"),
+            "Violação LGPD: CPF cru formatado no log de auditoria!"
+        );
+        // NUNCA deve conter o CNPJ completo 12ABC345000188 nem 12.ABC.345/0001-88
+        assert!(
+            !entry.summary.contains("12ABC345000188"),
+            "Violação LGPD: CNPJ cru no log de auditoria!"
+        );
+        assert!(
+            !entry.summary.contains("12.ABC.345/0001-88"),
+            "Violação LGPD: CNPJ cru formatado no log de auditoria!"
+        );
+    }
+}
+
 /// Suíte genérica agregadora de testes de contrato.
 /// Executa todos os testes comportamentais sequencialmente sobre um mesmo ambiente.
 pub async fn run_store_contract_suite<F, Fut>(factory: F)
@@ -649,6 +881,7 @@ where
     contract_audit_log(&stores, &tenant_id).await;
     contract_unique_partial_indexes(&stores, &tenant_id).await;
     contract_branding_dark_logo_and_icon(&stores, &tenant_id).await;
+    contract_customer_crud_and_lgpd_audit(&services, &setup_result.session, &tenant_id).await;
 }
 
 #[cfg(test)]
@@ -931,8 +1164,8 @@ mod unit_tests {
     async fn test_run_in_tx_retry_and_max_retries() {
         use crate::error::{CoreError, Result};
         use crate::store::{
-            run_in_tx, AuditStore, BrandingStore, RoleStore, TenantStore, TransactionManager,
-            TransactionPolicy, TxStoreBundle, UserStore,
+            run_in_tx, AuditStore, BrandingStore, CustomerStore, RoleStore, TenantStore,
+            TransactionManager, TransactionPolicy, TxStoreBundle, UserStore,
         };
         use async_trait::async_trait;
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -954,6 +1187,9 @@ mod unit_tests {
                 unreachable!()
             }
             fn audit(&self) -> &dyn AuditStore {
+                unreachable!()
+            }
+            fn customers(&self) -> &dyn CustomerStore {
                 unreachable!()
             }
             async fn commit(self: Box<Self>) -> Result<()> {
@@ -1053,8 +1289,8 @@ mod unit_tests {
     async fn test_run_in_tx_retry_on_begin_and_commit() {
         use crate::error::{CoreError, Result};
         use crate::store::{
-            run_in_tx, AuditStore, BrandingStore, RoleStore, TenantStore, TransactionManager,
-            TransactionPolicy, TxStoreBundle, UserStore,
+            run_in_tx, AuditStore, BrandingStore, CustomerStore, RoleStore, TenantStore,
+            TransactionManager, TransactionPolicy, TxStoreBundle, UserStore,
         };
         use async_trait::async_trait;
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1080,6 +1316,9 @@ mod unit_tests {
                 unreachable!()
             }
             fn audit(&self) -> &dyn AuditStore {
+                unreachable!()
+            }
+            fn customers(&self) -> &dyn CustomerStore {
                 unreachable!()
             }
             async fn commit(self: Box<Self>) -> Result<()> {
@@ -1238,7 +1477,7 @@ mod unit_tests {
         use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
         use base64::Engine as _;
 
-        // 1. Rejeição estrita a SVG
+        // 1. Rejeição estrita a formato não suportado (ex: SVG)
         let svg_input = UpdateBrandingInput {
             company_name: "Locadora".to_string(),
             primary_color: "#2563eb".to_string(),
@@ -1250,7 +1489,7 @@ mod unit_tests {
         };
         let svg_err = BrandingValidator::validate_input(&svg_input);
         assert!(svg_err.is_err());
-        assert!(svg_err.unwrap_err().to_string().contains("SVG"));
+        assert!(svg_err.unwrap_err().to_string().contains("prefixo exato"));
 
         // 2. PNG válido
         let valid_png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY44YAAAAASUVORK5CYII=";
@@ -1265,15 +1504,65 @@ mod unit_tests {
         assert!(invalid_png_res.is_err());
         assert!(invalid_png_res.unwrap_err().to_string().contains("PNG"));
 
-        // 4. JPEG válido (\xFF\xD8\xFF\xE0)
-        let valid_jpeg_uri = "data:image/jpeg;base64,/9j/4AAQSkZJRg==";
-        let jpeg_res = BrandingValidator::validate_image_data_uri("Logo", valid_jpeg_uri, false);
+        // 4. JPEG válido com cabeçalho completo lido por imagesize
+        let valid_jpeg_b64 = "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=";
+        let valid_jpeg_uri = format!("data:image/jpeg;base64,{valid_jpeg_b64}");
+        let jpeg_res = BrandingValidator::validate_image_data_uri("Logo", &valid_jpeg_uri, false);
         assert!(jpeg_res.is_ok());
 
-        // 5. WebP válido (RIFF....WEBP)
-        let valid_webp_uri = "data:image/webp;base64,UklGRiQAAABXRUJQVlA4";
-        let webp_res = BrandingValidator::validate_image_data_uri("Logo", valid_webp_uri, false);
+        // 5. WebP válido com cabeçalho completo lido por imagesize
+        let valid_webp_b64 = "UklGRjoAAABXRUJQVlA4IC4AAACyAgCdASoCAAIALmk0mk0iIiIiIgBoSygABc6WWgAA/veff/0PP8bA//LwYAAA";
+        let valid_webp_uri = format!("data:image/webp;base64,{valid_webp_b64}");
+        let webp_res = BrandingValidator::validate_image_data_uri("Logo", &valid_webp_uri, false);
         assert!(webp_res.is_ok());
+
+        // 5.1. Dimensão excessiva: PNG forjado com cabeçalho 30000x30000 pixels (deve falhar)
+        let mut forged_png = Vec::new();
+        forged_png.extend_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]); // Magic
+        forged_png.extend_from_slice(&[0x00, 0x00, 0x00, 0x0D]); // IHDR length = 13
+        forged_png.extend_from_slice(b"IHDR");
+        forged_png.extend_from_slice(&[0x00, 0x00, 0x75, 0x30]); // width = 30000
+        forged_png.extend_from_slice(&[0x00, 0x00, 0x75, 0x30]); // height = 30000
+        forged_png.extend_from_slice(&[0x08, 0x06, 0x00, 0x00, 0x00]); // 8-bit RGBA
+        forged_png.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // CRC
+        let forged_png_b64 = BASE64_STANDARD.encode(&forged_png);
+        let forged_png_uri = format!("data:image/png;base64,{forged_png_b64}");
+        let forged_res = BrandingValidator::validate_image_data_uri("Logo", &forged_png_uri, false);
+        assert!(forged_res.is_err());
+        assert!(forged_res
+            .unwrap_err()
+            .to_string()
+            .contains("30000x30000 pixels"));
+
+        // 5.2. Dimensão nula (0x0) (deve falhar)
+        let mut zero_png = Vec::new();
+        zero_png.extend_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        zero_png.extend_from_slice(&[0x00, 0x00, 0x00, 0x0D]);
+        zero_png.extend_from_slice(b"IHDR");
+        zero_png.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // width = 0
+        zero_png.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // height = 0
+        zero_png.extend_from_slice(&[0x08, 0x06, 0x00, 0x00, 0x00]);
+        zero_png.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        let zero_png_b64 = BASE64_STANDARD.encode(&zero_png);
+        let zero_png_uri = format!("data:image/png;base64,{zero_png_b64}");
+        let zero_res = BrandingValidator::validate_image_data_uri("Logo", &zero_png_uri, false);
+        assert!(zero_res.is_err());
+        assert!(zero_res.unwrap_err().to_string().contains("nula"));
+
+        // 5.3. Ícone excedendo 512x512 pixels (ex: 600x600 pixels) (deve falhar para ícone)
+        let mut icon_large = Vec::new();
+        icon_large.extend_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        icon_large.extend_from_slice(&[0x00, 0x00, 0x00, 0x0D]);
+        icon_large.extend_from_slice(b"IHDR");
+        icon_large.extend_from_slice(&[0x00, 0x00, 0x02, 0x58]); // width = 600
+        icon_large.extend_from_slice(&[0x00, 0x00, 0x02, 0x58]); // height = 600
+        icon_large.extend_from_slice(&[0x08, 0x06, 0x00, 0x00, 0x00]);
+        icon_large.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        let icon_large_b64 = BASE64_STANDARD.encode(&icon_large);
+        let icon_large_uri = format!("data:image/png;base64,{icon_large_b64}");
+        let icon_res = BrandingValidator::validate_image_data_uri("Ícone", &icon_large_uri, true);
+        assert!(icon_res.is_err());
+        assert!(icon_res.unwrap_err().to_string().contains("512x512 pixels"));
 
         // 6. Formato não suportado (ex: GIF)
         let gif_uri =
@@ -1335,11 +1624,17 @@ mod unit_tests {
         assert!(param_res.unwrap_err().to_string().contains("prefixo exato"));
 
         // 14. Limites de tamanho: exatamente no limite e 1 byte acima
-        const PNG_HEADER: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        const VALID_1X1_PNG_HEADER: [u8; 33] = [
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // Magic
+            0x00, 0x00, 0x00, 0x0D, b'I', b'H', b'D', b'R', // IHDR len 13
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1 px
+            0x08, 0x06, 0x00, 0x00, 0x00, // 8-bit RGBA
+            0x1F, 0x15, 0xC4, 0x89, // CRC
+        ];
 
         // 14.1. Ícone: exatamente 64 KB (65.536 bytes) -> PASSA
         let mut exact_icon_bytes = Vec::with_capacity(64 * 1024);
-        exact_icon_bytes.extend_from_slice(&PNG_HEADER);
+        exact_icon_bytes.extend_from_slice(&VALID_1X1_PNG_HEADER);
         exact_icon_bytes.resize(64 * 1024, 0x00);
         let exact_icon_b64 = BASE64_STANDARD.encode(&exact_icon_bytes);
         let exact_icon_uri = format!("data:image/png;base64,{exact_icon_b64}");
@@ -1347,7 +1642,7 @@ mod unit_tests {
 
         // 14.2. Ícone: 1 byte acima de 64 KB (65.537 bytes) -> FALHA
         let mut over_icon_bytes = Vec::with_capacity(64 * 1024 + 1);
-        over_icon_bytes.extend_from_slice(&PNG_HEADER);
+        over_icon_bytes.extend_from_slice(&VALID_1X1_PNG_HEADER);
         over_icon_bytes.resize(64 * 1024 + 1, 0x00);
         let over_icon_b64 = BASE64_STANDARD.encode(&over_icon_bytes);
         let over_icon_uri = format!("data:image/png;base64,{over_icon_b64}");
@@ -1358,7 +1653,7 @@ mod unit_tests {
 
         // 14.3. Logo: exatamente 256 KB (262.144 bytes) -> PASSA
         let mut exact_logo_bytes = Vec::with_capacity(256 * 1024);
-        exact_logo_bytes.extend_from_slice(&PNG_HEADER);
+        exact_logo_bytes.extend_from_slice(&VALID_1X1_PNG_HEADER);
         exact_logo_bytes.resize(256 * 1024, 0x00);
         let exact_logo_b64 = BASE64_STANDARD.encode(&exact_logo_bytes);
         let exact_logo_uri = format!("data:image/png;base64,{exact_logo_b64}");
@@ -1366,7 +1661,7 @@ mod unit_tests {
 
         // 14.4. Logo: 1 byte acima de 256 KB (262.145 bytes) -> FALHA
         let mut over_logo_bytes = Vec::with_capacity(256 * 1024 + 1);
-        over_logo_bytes.extend_from_slice(&PNG_HEADER);
+        over_logo_bytes.extend_from_slice(&VALID_1X1_PNG_HEADER);
         over_logo_bytes.resize(256 * 1024 + 1, 0x00);
         let over_logo_b64 = BASE64_STANDARD.encode(&over_logo_bytes);
         let over_logo_uri = format!("data:image/png;base64,{over_logo_b64}");
@@ -1374,5 +1669,223 @@ mod unit_tests {
             BrandingValidator::validate_image_data_uri("Logo", &over_logo_uri, false);
         assert!(over_logo_res.is_err());
         assert!(over_logo_res.unwrap_err().to_string().contains("256 KB"));
+    }
+
+    #[test]
+    fn test_document_validation_cpf_and_cnpj_alphanumeric() {
+        use crate::domain::document::{
+            format_cnpj, format_cpf, normalize_document, parse_document,
+            testing_utils::{generate_valid_cnpj_from_base, generate_valid_cpf_from_base},
+            validate_cnpj, validate_cpf, DocumentType,
+        };
+
+        // 1. Normalização de documentos
+        assert_eq!(normalize_document(" 12.ABC.345/0001-88 "), "12ABC345000188");
+        assert_eq!(normalize_document("529.982.247-25"), "52998224725");
+        assert_eq!(
+            normalize_document("12abc345000188"),
+            "12ABC345000188" // converte para uppercase
+        );
+
+        // 2. Validação de CPF
+        // 2.1 CPFs válidos conhecidos
+        assert!(validate_cpf("529.982.247-25").is_ok());
+        assert!(validate_cpf("52998224725").is_ok());
+        assert_eq!(format_cpf("52998224725"), "529.982.247-25");
+
+        // 2.2 Rejeição de CPFs repetidos
+        for digit in 0..=9 {
+            let repeated = digit.to_string().repeat(11);
+            let res = validate_cpf(&repeated);
+            assert!(
+                res.is_err(),
+                "CPF repetido {repeated} deveria ter sido rejeitado"
+            );
+            assert!(res.unwrap_err().to_string().contains("repetidos"));
+        }
+
+        // 2.3 Rejeição de DVs incorretos
+        let invalid_dv1 = "52998224735"; // DV1 esperado é 2, fornecido 3
+        assert!(validate_cpf(invalid_dv1)
+            .unwrap_err()
+            .to_string()
+            .contains("primeiro dígito verificador"));
+
+        let invalid_dv2 = "52998224726"; // DV2 esperado é 5, fornecido 6
+        assert!(validate_cpf(invalid_dv2)
+            .unwrap_err()
+            .to_string()
+            .contains("segundo dígito verificador"));
+
+        // 2.4 Tamanho e caracteres inválidos
+        assert!(validate_cpf("1234567890").is_err()); // 10 dígitos
+        assert!(validate_cpf("123456789012").is_err()); // 12 dígitos
+        assert!(validate_cpf("5299822472A").is_err()); // contém letra
+
+        // 3. Validação de CNPJ Tradicional (14 numéricos)
+        // 3.1 Fixtures reais
+        assert!(validate_cnpj("00.000.000/0001-91").is_ok()); // Banco do Brasil
+        assert!(validate_cnpj("33.000.167/0001-01").is_ok()); // Petrobras
+        assert_eq!(format_cnpj("00000000000191"), "00.000.000/0001-91");
+
+        // 3.2 Rejeição de CNPJs repetidos
+        for digit in 0..=9 {
+            let repeated = digit.to_string().repeat(14);
+            let res = validate_cnpj(&repeated);
+            assert!(
+                res.is_err(),
+                "CNPJ repetido {repeated} deveria ter sido rejeitado"
+            );
+            assert!(res.unwrap_err().to_string().contains("idênticos"));
+        }
+
+        // 3.3 Rejeição de DVs numéricos incorretos
+        assert!(validate_cnpj("00000000000181")
+            .unwrap_err()
+            .to_string()
+            .contains("primeiro dígito verificador"));
+        assert!(validate_cnpj("00000000000192")
+            .unwrap_err()
+            .to_string()
+            .contains("segundo dígito verificador"));
+
+        // 4. Validação de CNPJ Alfanumérico (IN RFB nº 2.229/2025)
+        // 4.1 Exemplo calculado matematicamente: 12.ABC.345/0001-88
+        let alpha_cnpj_1 = "12.ABC.345/0001-88";
+        let valid_alpha_1 = validate_cnpj(alpha_cnpj_1).expect("CNPJ alfanumérico válido");
+        assert_eq!(valid_alpha_1, "12ABC345000188");
+        assert_eq!(format_cnpj(&valid_alpha_1), "12.ABC.345/0001-88");
+
+        // 4.2 Minusculas devem ser normalizadas para maiúsculas
+        let valid_alpha_lower =
+            validate_cnpj("12.abc.345/0001-88").expect("normaliza minusculas para maiusculas");
+        assert_eq!(valid_alpha_lower, "12ABC345000188");
+
+        // 4.3 DVs devem ser estritamente numéricos
+        let invalid_dv_letter = "12ABC34500018A";
+        assert!(validate_cnpj(invalid_dv_letter)
+            .unwrap_err()
+            .to_string()
+            .contains("dígitos verificadores) devem ser numéricos"));
+
+        // 4.4 DVs matematicamente incorretos em CNPJ alfanumérico
+        let wrong_alpha_dv1 = "12ABC345000178"; // DV1 esperado 8, fornecido 7
+        assert!(validate_cnpj(wrong_alpha_dv1)
+            .unwrap_err()
+            .to_string()
+            .contains("primeiro dígito verificador"));
+
+        let wrong_alpha_dv2 = "12ABC345000189"; // DV2 esperado 8, fornecido 9
+        assert!(validate_cnpj(wrong_alpha_dv2)
+            .unwrap_err()
+            .to_string()
+            .contains("segundo dígito verificador"));
+
+        // 4.5 Caracteres especiais ilegais
+        assert!(validate_cnpj("12ABC3450001$8").is_err());
+
+        // 5. parse_document (Detecção automática de CPF vs CNPJ)
+        let parsed_cpf = parse_document("529.982.247-25").expect("detecta CPF");
+        assert_eq!(parsed_cpf.doc_type, DocumentType::Cpf);
+        assert_eq!(parsed_cpf.raw, "52998224725");
+        assert_eq!(parsed_cpf.formatted, "529.982.247-25");
+
+        let parsed_cnpj_num = parse_document("00.000.000/0001-91").expect("detecta CNPJ numérico");
+        assert_eq!(parsed_cnpj_num.doc_type, DocumentType::Cnpj);
+        assert_eq!(parsed_cnpj_num.raw, "00000000000191");
+        assert_eq!(parsed_cnpj_num.formatted, "00.000.000/0001-91");
+
+        let parsed_cnpj_alpha =
+            parse_document("12.ABC.345/0001-88").expect("detecta CNPJ alfanumérico");
+        assert_eq!(parsed_cnpj_alpha.doc_type, DocumentType::Cnpj);
+        assert_eq!(parsed_cnpj_alpha.raw, "12ABC345000188");
+        assert_eq!(parsed_cnpj_alpha.formatted, "12.ABC.345/0001-88");
+
+        // Documento com tamanho inválido
+        assert!(parse_document("123456789").is_err());
+
+        // 6. Testes com gerador determinístico
+        let sample_bases: [&[u32; 9]; 3] = [
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9],
+            &[9, 8, 7, 6, 5, 4, 3, 2, 1],
+            &[2, 4, 6, 8, 0, 1, 3, 5, 7],
+        ];
+        for base in sample_bases {
+            let generated_cpf = generate_valid_cpf_from_base(base);
+            assert!(
+                validate_cpf(&generated_cpf).is_ok(),
+                "CPF gerado {generated_cpf} deve ser válido"
+            );
+        }
+
+        let sample_cnpj_bases = [
+            "123456780001",
+            "ABC123XYZ001",
+            "99ZZ88YY0002",
+            "BR01SAOPAULO",
+        ];
+        for base in sample_cnpj_bases {
+            let generated_cnpj = generate_valid_cnpj_from_base(base);
+            assert!(
+                validate_cnpj(&generated_cnpj).is_ok(),
+                "CNPJ gerado {generated_cnpj} deve ser válido"
+            );
+        }
+    }
+
+    #[test]
+    fn test_customer_search_normalization_and_cursor() {
+        use crate::domain::customer::{
+            build_customer_search_text, build_name_sort, normalize_for_search, remove_diacritics,
+            CustomerCursor,
+        };
+
+        // 1. Remoção de acentos em português e normalização
+        let accented = "José da Conceição & Filhos — Produções Audiovisuais Ltda.";
+        let unaccented = remove_diacritics(accented);
+        assert_eq!(
+            unaccented,
+            "jose da conceicao & filhos — producoes audiovisuais ltda."
+        );
+
+        // 2. Colapso de múltiplos espaços e trim
+        let raw_spacing = "   Som   &   Luz    Avançada   ";
+        assert_eq!(normalize_for_search(raw_spacing), "som & luz avancada");
+
+        // 3. build_name_sort
+        assert_eq!(build_name_sort("  Álvaro  Silveira "), "alvaro silveira");
+        assert_eq!(build_name_sort("Bruno Alves"), "bruno alves");
+        assert!(build_name_sort("Álvaro") < build_name_sort("Bruno"));
+
+        // 4. build_customer_search_text
+        let search_text = build_customer_search_text(
+            "Empresa de Eventos São Paulo",
+            Some("SP Som e Luz"),
+            "12345678000195",
+            "12.345.678/0001-95",
+            &[
+                "contato@spsom.com".to_string(),
+                "(11) 98765-4321".to_string(),
+            ],
+        );
+        assert!(search_text.contains("empresa de eventos sao paulo"));
+        assert!(search_text.contains("sp som e luz"));
+        assert!(search_text.contains("12345678000195"));
+        assert!(search_text.contains("12.345.678/0001-95"));
+        assert!(search_text.contains("contato@spsom.com"));
+        assert!(search_text.contains("(11) 98765-4321"));
+
+        // 5. CustomerCursor (encode / decode)
+        let cursor = CustomerCursor::new("carlos silva", "018f0000-0000-7000-8000-000000000042");
+        let encoded = cursor.encode();
+        assert!(!encoded.is_empty());
+
+        let decoded =
+            CustomerCursor::decode(&encoded).expect("cursor deve decodificar com sucesso");
+        assert_eq!(decoded, cursor);
+
+        // Cursor inválido deve retornar None de forma segura
+        assert!(CustomerCursor::decode("cursor-invalido-!@#").is_none());
+        assert!(CustomerCursor::decode("").is_none());
     }
 }

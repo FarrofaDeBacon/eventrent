@@ -95,3 +95,19 @@ Para a transição da nuvem na Fase 2.5, as seguintes salvaguardas serão obriga
 1. **Limitação de Taxa por IP e Dispositivo (Rate Limiting)**: O bloqueio e o throttling serão aplicados por endereço IP de origem e identificadores de dispositivo, evitando que requisições vindas de atacantes bloqueiem o acesso do usuário legítimo em seu IP corporativo/residencial.
 2. **Confiança Zero no Cliente**: O backend HTTP jamais aceitará estruturas `SessionInfo` originadas do frontend. A autenticação utilizará tokens de sessão opacos gerados e armazenados no servidor (ou cookies seguros `HttpOnly`, `SameSite=Strict`), com validação rigorosa de assinatura e revogação no banco.
 3. **Mecanismo de Desbloqueio e Alertas**: Disparo assíncrono de notificações transacionais por e-mail quando tentativas anômalas forem detectadas, permitindo desbloqueio seguro por link assinado sem depender exclusivamente do tempo de expiração.
+
+---
+
+## 7. Privacidade e Conformidade LGPD no Módulo de Clientes (Fase 1B.2)
+
+O tratamento de dados pessoais e fiscais de clientes (CPF, CNPJ, contatos e endereços) observa o princípio de minimização em trilhas de auditoria e telemetria:
+
+1. **Mascaramento de Documentos em Auditoria (`mask_document_for_audit`)**:
+   - Os registros em `audit_log` referentes a criação, atualização e exclusão lógica de clientes (`customer.created`, `customer.updated`, `customer.deleted`) não expõem o número integral do documento em campos resumidos ou logs de execução:
+     - **CPF**: mascarado preservando apenas os 2 dígitos verificadores (`***.***.***-25`).
+     - **CNPJ**: mascarado preservando apenas o identificador de ordem/filial (`**.***.***/0001-**`).
+   - O documento completo permanece exclusivamente na tabela `customer` para fins operacionais, fiscais e de emissão contratual.
+2. **Guarda de Comandos Tauri**:
+   - Os 5 comandos de clientes (`list_customers`, `get_customer`, `create_customer`, `update_customer`, `delete_customer`) passam obrigatoriamente por `require_session(&state)` no backend Rust, validam expiração por inatividade e delegam integralmente às permissões `customer:read` / `customer:manage` em `CoreServices`, sem acesso direto das interfaces aos repositórios de banco.
+3. **Ocultação de Erros Cru de Banco (`map_sqlx_err`)**:
+   - Conflitos de unicidade de documento (código SQLite `2067` / `1555`) são convertidos em mensagens de domínio amigáveis (`CoreError::Conflict`) sem vazar consultas SQL ou estrutura interna de índices ao usuário.

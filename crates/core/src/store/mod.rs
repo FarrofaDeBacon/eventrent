@@ -1,5 +1,6 @@
 use crate::domain::{
-    AuditLogEntry, Role, RoleWithPermissions, Tenant, TenantBranding, UpdateBrandingInput,
+    AuditLogEntry, Customer, CustomerAddress, CustomerContact, CustomerFilter, CustomerPage,
+    CustomerWithDetails, Role, RoleWithPermissions, Tenant, TenantBranding, UpdateBrandingInput,
     UserRecord, UserWithRole,
 };
 use crate::error::{CoreError, Result};
@@ -128,6 +129,31 @@ pub trait AuditStore: Send + Sync {
     async fn list_by_tenant(&self, tenant_id: &str, limit: usize) -> Result<Vec<AuditLogEntry>>;
 }
 
+#[async_trait]
+pub trait CustomerStore: Send + Sync {
+    async fn find_by_id(&self, tenant_id: &str, id: &str) -> Result<Option<CustomerWithDetails>>;
+    async fn find_by_document(
+        &self,
+        tenant_id: &str,
+        document_number: &str,
+    ) -> Result<Option<Customer>>;
+    async fn list(&self, tenant_id: &str, filter: &CustomerFilter) -> Result<CustomerPage>;
+    async fn create(
+        &self,
+        customer: &Customer,
+        contacts: &[CustomerContact],
+        addresses: &[CustomerAddress],
+    ) -> Result<()>;
+    async fn update(
+        &self,
+        customer: &Customer,
+        contacts: &[CustomerContact],
+        addresses: &[CustomerAddress],
+    ) -> Result<()>;
+    async fn soft_delete(&self, tenant_id: &str, id: &str, deleted_at: &str) -> Result<()>;
+    async fn count_active(&self, tenant_id: &str) -> Result<u64>;
+}
+
 #[derive(Clone)]
 pub struct StoreBundle {
     pub tenants: Arc<dyn TenantStore>,
@@ -135,6 +161,7 @@ pub struct StoreBundle {
     pub roles: Arc<dyn RoleStore>,
     pub users: Arc<dyn UserStore>,
     pub audit: Arc<dyn AuditStore>,
+    pub customers: Arc<dyn CustomerStore>,
     pub tx_manager: Option<Arc<dyn TransactionManager>>,
 }
 
@@ -150,6 +177,7 @@ pub trait TxStoreBundle: Send + Sync {
     fn roles(&self) -> &dyn RoleStore;
     fn users(&self) -> &dyn UserStore;
     fn audit(&self) -> &dyn AuditStore;
+    fn customers(&self) -> &dyn CustomerStore;
 
     async fn commit(self: Box<Self>) -> Result<()>;
     async fn rollback(self: Box<Self>) -> Result<()>;

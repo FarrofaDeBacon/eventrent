@@ -7,15 +7,11 @@
     <script>
       (function () {
         try {
-          var raw = localStorage.getItem("eventrent:brand:local");
-          if (!raw) {
-            for (var i = 0; i < localStorage.length; i++) {
-              var k = localStorage.key(i);
-              if (k && k.indexOf("eventrent:brand:") === 0) {
-                raw = localStorage.getItem(k);
-                break;
-              }
-            }
+          var lastTenant =
+            localStorage.getItem("eventrent:brand:last") || "local";
+          var raw = localStorage.getItem("eventrent:brand:" + lastTenant);
+          if (!raw && lastTenant !== "local") {
+            raw = localStorage.getItem("eventrent:brand:local");
           }
           if (raw) {
             var b = JSON.parse(raw);

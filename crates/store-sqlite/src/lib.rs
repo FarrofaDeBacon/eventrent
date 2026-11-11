@@ -1,9 +1,11 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use eventrent_core::{
-    run_in_tx, AuditLogEntry, AuditStore, BrandingStore, CoreError, Result, Role, RoleStore,
-    RoleWithPermissions, StoreBundle, Tenant, TenantBranding, TenantStore, TransactionManager,
-    TransactionPolicy, TxStoreBundle, UpdateBrandingInput, UserRecord, UserStore, UserWithRole,
+    normalize_for_search, run_in_tx, AuditLogEntry, AuditStore, BrandingStore, CoreError, Customer,
+    CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter, CustomerPage, CustomerStore,
+    CustomerWithDetails, Result, Role, RoleStore, RoleWithPermissions, StoreBundle, Tenant,
+    TenantBranding, TenantStore, TransactionManager, TransactionPolicy, TxStoreBundle,
+    UpdateBrandingInput, UserRecord, UserStore, UserWithRole,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, Row, Sqlite};
@@ -18,33 +20,44 @@ pub(crate) fn map_sqlx_err(err: sqlx::Error) -> CoreError {
     match &err {
         sqlx::Error::Database(db_err) => {
             if let Some(code) = db_err.code() {
-                if code == "5"
-                    || code == "6"
-                    || code == "261"
-                    || code == "517"
-                    || code == "773"
-                    || code == "262"
-                    || code == "518"
-                {
-                    return CoreError::TransientConflict(format!(
-                        "SQLite ocupado ou bloqueado (código {code}): {}",
-                        db_err.message()
-                    ));
+                match code.as_ref() {
+                    // SQLite BUSY (5) e códigos estendidos: 261, 517, 773
+                    // SQLite LOCKED (6) e códigos estendidos: 262, 518
+                    "5" | "6" | "261" | "517" | "773" | "262" | "518" => {
+                        return CoreError::TransientConflict(format!(
+                            "SQLite ocupado ou bloqueado (código {code}): {}",
+                            db_err.message()
+                        ));
+                    }
+                    // SQLite UNIQUE (2067) e PRIMARY KEY (1555)
+                    "2067" | "1555" => {
+                        return CoreError::Conflict("Registro conflitante já existe.".to_string());
+                    }
+                    // SQLite FOREIGN KEY (787)
+                    "787" => {
+                        return CoreError::Validation(
+                            "Registro relacionado não encontrado ou inválido.".to_string(),
+                        );
+                    }
+                    _ => {}
                 }
             }
-            let msg = db_err.message();
-            let lower = msg.to_lowercase();
-            if lower.contains("busy") || lower.contains("locked") {
-                return CoreError::TransientConflict(format!(
-                    "SQLite conflito de concorrência: {msg}"
-                ));
-            }
-            CoreError::Database(err.to_string())
+            // NUNCA expor texto cru do SQL para o usuário/frontend.
+            // Registrar em log estruturado com tracing::error! e retornar mensagem genérica segura.
+            tracing::error!(
+                code = db_err.code().as_deref().unwrap_or("none"),
+                message = %db_err.message(),
+                "Erro interno de banco de dados SQLite não mapeado"
+            );
+            CoreError::Database("Erro interno de banco de dados. Operação cancelada.".to_string())
         }
         sqlx::Error::PoolTimedOut => {
             CoreError::TransientConflict("Timeout ao adquirir conexão do pool".to_string())
         }
-        _ => CoreError::Database(err.to_string()),
+        _ => {
+            tracing::error!(error = %err, "Erro interno sqlx não mapeado");
+            CoreError::Database("Erro interno de banco de dados. Operação cancelada.".to_string())
+        }
     }
 }
 
@@ -192,7 +205,8 @@ impl TransactionManager for SqliteTxManager {
             branding: arc.clone(),
             roles: arc.clone(),
             users: arc.clone(),
-            audit: arc,
+            audit: arc.clone(),
+            customers: arc,
         }))
     }
 }
@@ -204,6 +218,7 @@ pub struct SqliteTxStoreBundle {
     pub roles: Arc<dyn RoleStore>,
     pub users: Arc<dyn UserStore>,
     pub audit: Arc<dyn AuditStore>,
+    pub customers: Arc<dyn CustomerStore>,
 }
 
 #[async_trait]
@@ -226,6 +241,10 @@ impl TxStoreBundle for SqliteTxStoreBundle {
 
     fn audit(&self) -> &dyn AuditStore {
         self.audit.as_ref()
+    }
+
+    fn customers(&self) -> &dyn CustomerStore {
+        self.customers.as_ref()
     }
 
     async fn commit(self: Box<Self>) -> Result<()> {
@@ -283,7 +302,8 @@ impl SqliteStore {
             branding: arc.clone(),
             roles: arc.clone(),
             users: arc.clone(),
-            audit: arc,
+            audit: arc.clone(),
+            customers: arc,
             tx_manager,
         }
     }
@@ -1385,6 +1405,523 @@ impl AuditStore for SqliteStore {
     }
 }
 
+#[async_trait]
+impl CustomerStore for SqliteStore {
+    async fn find_by_id(&self, tenant_id: &str, id: &str) -> Result<Option<CustomerWithDetails>> {
+        let row = self
+            .fetch_optional(
+                sqlx::query(
+                    r#"
+                    SELECT id, tenant_id, person_type, name, trade_name, document_number,
+                           state_registration, municipal_registration, notes, search_text,
+                           name_sort, created_at, updated_at, deleted_at, created_by
+                    FROM customer
+                    WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+                    LIMIT 1
+                    "#,
+                )
+                .bind(tenant_id)
+                .bind(id),
+            )
+            .await?;
+
+        let customer = match row {
+            Some(r) => {
+                let person_type_str: String = r.get("person_type");
+                let person_type = person_type_str
+                    .parse()
+                    .map_err(|e: String| CoreError::Database(e))?;
+                Customer {
+                    id: r.get("id"),
+                    tenant_id: r.get("tenant_id"),
+                    person_type,
+                    name: r.get("name"),
+                    trade_name: r.get("trade_name"),
+                    document_number: r.get("document_number"),
+                    state_registration: r.get("state_registration"),
+                    municipal_registration: r.get("municipal_registration"),
+                    notes: r.get("notes"),
+                    search_text: r.get("search_text"),
+                    name_sort: r.get("name_sort"),
+                    created_at: r.get("created_at"),
+                    updated_at: r.get("updated_at"),
+                    deleted_at: r.get("deleted_at"),
+                    created_by: r.get("created_by"),
+                }
+            }
+            None => return Ok(None),
+        };
+
+        let contact_rows = self
+            .fetch_all(
+                sqlx::query(
+                    r#"
+                    SELECT id, customer_id, name, email, phone, role, is_primary,
+                           created_at, updated_at, deleted_at
+                    FROM customer_contact
+                    WHERE customer_id = ? AND deleted_at IS NULL
+                    ORDER BY is_primary DESC, name ASC
+                    "#,
+                )
+                .bind(id),
+            )
+            .await?;
+
+        let contacts = contact_rows
+            .into_iter()
+            .map(|r| {
+                let is_primary_int: i64 = r.get("is_primary");
+                CustomerContact {
+                    id: r.get("id"),
+                    customer_id: r.get("customer_id"),
+                    name: r.get("name"),
+                    email: r.get("email"),
+                    phone: r.get("phone"),
+                    role: r.get("role"),
+                    is_primary: is_primary_int != 0,
+                    created_at: r.get("created_at"),
+                    updated_at: r.get("updated_at"),
+                    deleted_at: r.get("deleted_at"),
+                }
+            })
+            .collect();
+
+        let address_rows = self
+            .fetch_all(
+                sqlx::query(
+                    r#"
+                    SELECT id, customer_id, label, street, number, complement,
+                           neighborhood, city, state, postal_code, is_primary,
+                           created_at, updated_at, deleted_at
+                    FROM customer_address
+                    WHERE customer_id = ? AND deleted_at IS NULL
+                    ORDER BY is_primary DESC, label ASC
+                    "#,
+                )
+                .bind(id),
+            )
+            .await?;
+
+        let addresses = address_rows
+            .into_iter()
+            .map(|r| {
+                let is_primary_int: i64 = r.get("is_primary");
+                CustomerAddress {
+                    id: r.get("id"),
+                    customer_id: r.get("customer_id"),
+                    label: r.get("label"),
+                    street: r.get("street"),
+                    number: r.get("number"),
+                    complement: r.get("complement"),
+                    neighborhood: r.get("neighborhood"),
+                    city: r.get("city"),
+                    state: r.get("state"),
+                    postal_code: r.get("postal_code"),
+                    is_primary: is_primary_int != 0,
+                    created_at: r.get("created_at"),
+                    updated_at: r.get("updated_at"),
+                    deleted_at: r.get("deleted_at"),
+                }
+            })
+            .collect();
+
+        Ok(Some(CustomerWithDetails {
+            customer,
+            contacts,
+            addresses,
+        }))
+    }
+
+    async fn find_by_document(
+        &self,
+        tenant_id: &str,
+        document_number: &str,
+    ) -> Result<Option<Customer>> {
+        let row = self
+            .fetch_optional(
+                sqlx::query(
+                    r#"
+                    SELECT id, tenant_id, person_type, name, trade_name, document_number,
+                           state_registration, municipal_registration, notes, search_text,
+                           name_sort, created_at, updated_at, deleted_at, created_by
+                    FROM customer
+                    WHERE tenant_id = ? AND document_number = ? AND deleted_at IS NULL
+                    LIMIT 1
+                    "#,
+                )
+                .bind(tenant_id)
+                .bind(document_number),
+            )
+            .await?;
+
+        match row {
+            Some(r) => {
+                let person_type_str: String = r.get("person_type");
+                let person_type = person_type_str
+                    .parse()
+                    .map_err(|e: String| CoreError::Database(e))?;
+                Ok(Some(Customer {
+                    id: r.get("id"),
+                    tenant_id: r.get("tenant_id"),
+                    person_type,
+                    name: r.get("name"),
+                    trade_name: r.get("trade_name"),
+                    document_number: r.get("document_number"),
+                    state_registration: r.get("state_registration"),
+                    municipal_registration: r.get("municipal_registration"),
+                    notes: r.get("notes"),
+                    search_text: r.get("search_text"),
+                    name_sort: r.get("name_sort"),
+                    created_at: r.get("created_at"),
+                    updated_at: r.get("updated_at"),
+                    deleted_at: r.get("deleted_at"),
+                    created_by: r.get("created_by"),
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn list(&self, tenant_id: &str, filter: &CustomerFilter) -> Result<CustomerPage> {
+        let limit = filter.limit.unwrap_or(20).clamp(1, 100);
+        let fetch_limit = (limit + 1) as i64;
+
+        let cursor_data = filter.cursor.as_deref().and_then(CustomerCursor::decode);
+
+        let mut sql = String::from(
+            r#"
+            SELECT id, tenant_id, person_type, name, trade_name, document_number,
+                   state_registration, municipal_registration, notes, search_text,
+                   name_sort, created_at, updated_at, deleted_at, created_by
+            FROM customer
+            WHERE tenant_id = ? AND deleted_at IS NULL
+            "#,
+        );
+
+        if let Some(pt) = filter.person_type {
+            sql.push_str(" AND person_type = '");
+            sql.push_str(&pt.to_string());
+            sql.push('\'');
+        }
+
+        let query_words: Vec<String> = filter
+            .query
+            .as_deref()
+            .map(|q| {
+                normalize_for_search(q)
+                    .split_whitespace()
+                    .map(|w| format!("%{w}%"))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for _ in &query_words {
+            sql.push_str(" AND search_text LIKE ?");
+        }
+
+        if cursor_data.is_some() {
+            sql.push_str(" AND (name_sort > ? OR (name_sort = ? AND id > ?))");
+        }
+
+        sql.push_str(" ORDER BY name_sort ASC, id ASC LIMIT ?");
+
+        let mut query = sqlx::query(&sql).bind(tenant_id);
+
+        for word_pattern in &query_words {
+            query = query.bind(word_pattern);
+        }
+
+        if let Some(ref c) = cursor_data {
+            query = query.bind(&c.name_sort).bind(&c.name_sort).bind(&c.id);
+        }
+
+        query = query.bind(fetch_limit);
+
+        let rows = self.fetch_all(query).await?;
+
+        let mut items = Vec::new();
+        for r in rows {
+            let person_type_str: String = r.get("person_type");
+            let person_type = person_type_str
+                .parse()
+                .map_err(|e: String| CoreError::Database(e))?;
+            items.push(Customer {
+                id: r.get("id"),
+                tenant_id: r.get("tenant_id"),
+                person_type,
+                name: r.get("name"),
+                trade_name: r.get("trade_name"),
+                document_number: r.get("document_number"),
+                state_registration: r.get("state_registration"),
+                municipal_registration: r.get("municipal_registration"),
+                notes: r.get("notes"),
+                search_text: r.get("search_text"),
+                name_sort: r.get("name_sort"),
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+                deleted_at: r.get("deleted_at"),
+                created_by: r.get("created_by"),
+            });
+        }
+
+        let has_more = items.len() > limit as usize;
+        if has_more {
+            items.pop();
+        }
+
+        let next_cursor = if has_more {
+            items
+                .last()
+                .map(|last| CustomerCursor::new(&last.name_sort, &last.id).encode())
+        } else {
+            None
+        };
+
+        Ok(CustomerPage {
+            items,
+            next_cursor,
+            has_more,
+            total_count: None,
+        })
+    }
+
+    async fn create(
+        &self,
+        customer: &Customer,
+        contacts: &[CustomerContact],
+        addresses: &[CustomerAddress],
+    ) -> Result<()> {
+        self.execute(
+            sqlx::query(
+                r#"
+                INSERT INTO customer (
+                    id, tenant_id, person_type, name, trade_name, document_number,
+                    state_registration, municipal_registration, notes, search_text,
+                    name_sort, created_at, updated_at, deleted_at, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&customer.id)
+            .bind(&customer.tenant_id)
+            .bind(customer.person_type.to_string())
+            .bind(&customer.name)
+            .bind(&customer.trade_name)
+            .bind(&customer.document_number)
+            .bind(&customer.state_registration)
+            .bind(&customer.municipal_registration)
+            .bind(&customer.notes)
+            .bind(&customer.search_text)
+            .bind(&customer.name_sort)
+            .bind(&customer.created_at)
+            .bind(&customer.updated_at)
+            .bind(&customer.deleted_at)
+            .bind(&customer.created_by),
+        )
+        .await?;
+
+        for c in contacts {
+            self.execute(
+                sqlx::query(
+                    r#"
+                    INSERT INTO customer_contact (
+                        id, customer_id, name, email, phone, role, is_primary,
+                        created_at, updated_at, deleted_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&c.id)
+                .bind(&c.customer_id)
+                .bind(&c.name)
+                .bind(&c.email)
+                .bind(&c.phone)
+                .bind(&c.role)
+                .bind(if c.is_primary { 1i64 } else { 0i64 })
+                .bind(&c.created_at)
+                .bind(&c.updated_at)
+                .bind(&c.deleted_at),
+            )
+            .await?;
+        }
+
+        for a in addresses {
+            self.execute(
+                sqlx::query(
+                    r#"
+                    INSERT INTO customer_address (
+                        id, customer_id, label, street, number, complement,
+                        neighborhood, city, state, postal_code, is_primary,
+                        created_at, updated_at, deleted_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&a.id)
+                .bind(&a.customer_id)
+                .bind(&a.label)
+                .bind(&a.street)
+                .bind(&a.number)
+                .bind(&a.complement)
+                .bind(&a.neighborhood)
+                .bind(&a.city)
+                .bind(&a.state)
+                .bind(&a.postal_code)
+                .bind(if a.is_primary { 1i64 } else { 0i64 })
+                .bind(&a.created_at)
+                .bind(&a.updated_at)
+                .bind(&a.deleted_at),
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn update(
+        &self,
+        customer: &Customer,
+        contacts: &[CustomerContact],
+        addresses: &[CustomerAddress],
+    ) -> Result<()> {
+        self.execute(
+            sqlx::query(
+                r#"
+                UPDATE customer
+                SET person_type = ?, name = ?, trade_name = ?, document_number = ?,
+                    state_registration = ?, municipal_registration = ?, notes = ?,
+                    search_text = ?, name_sort = ?, updated_at = ?
+                WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL
+                "#,
+            )
+            .bind(customer.person_type.to_string())
+            .bind(&customer.name)
+            .bind(&customer.trade_name)
+            .bind(&customer.document_number)
+            .bind(&customer.state_registration)
+            .bind(&customer.municipal_registration)
+            .bind(&customer.notes)
+            .bind(&customer.search_text)
+            .bind(&customer.name_sort)
+            .bind(&customer.updated_at)
+            .bind(&customer.id)
+            .bind(&customer.tenant_id),
+        )
+        .await?;
+
+        // Remove contatos e endereços antigos e regrava os novos
+        self.execute(
+            sqlx::query("DELETE FROM customer_contact WHERE customer_id = ?").bind(&customer.id),
+        )
+        .await?;
+
+        for c in contacts {
+            self.execute(
+                sqlx::query(
+                    r#"
+                    INSERT INTO customer_contact (
+                        id, customer_id, name, email, phone, role, is_primary,
+                        created_at, updated_at, deleted_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&c.id)
+                .bind(&c.customer_id)
+                .bind(&c.name)
+                .bind(&c.email)
+                .bind(&c.phone)
+                .bind(&c.role)
+                .bind(if c.is_primary { 1i64 } else { 0i64 })
+                .bind(&c.created_at)
+                .bind(&c.updated_at)
+                .bind(&c.deleted_at),
+            )
+            .await?;
+        }
+
+        self.execute(
+            sqlx::query("DELETE FROM customer_address WHERE customer_id = ?").bind(&customer.id),
+        )
+        .await?;
+
+        for a in addresses {
+            self.execute(
+                sqlx::query(
+                    r#"
+                    INSERT INTO customer_address (
+                        id, customer_id, label, street, number, complement,
+                        neighborhood, city, state, postal_code, is_primary,
+                        created_at, updated_at, deleted_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&a.id)
+                .bind(&a.customer_id)
+                .bind(&a.label)
+                .bind(&a.street)
+                .bind(&a.number)
+                .bind(&a.complement)
+                .bind(&a.neighborhood)
+                .bind(&a.city)
+                .bind(&a.state)
+                .bind(&a.postal_code)
+                .bind(if a.is_primary { 1i64 } else { 0i64 })
+                .bind(&a.created_at)
+                .bind(&a.updated_at)
+                .bind(&a.deleted_at),
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn soft_delete(&self, tenant_id: &str, id: &str, deleted_at: &str) -> Result<()> {
+        self.execute(
+            sqlx::query(
+                "UPDATE customer SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL",
+            )
+            .bind(deleted_at)
+            .bind(deleted_at)
+            .bind(tenant_id)
+            .bind(id),
+        )
+        .await?;
+
+        self.execute(
+            sqlx::query(
+                "UPDATE customer_contact SET deleted_at = ?, updated_at = ? WHERE customer_id = ? AND deleted_at IS NULL",
+            )
+            .bind(deleted_at)
+            .bind(deleted_at)
+            .bind(id),
+        )
+        .await?;
+
+        self.execute(
+            sqlx::query(
+                "UPDATE customer_address SET deleted_at = ?, updated_at = ? WHERE customer_id = ? AND deleted_at IS NULL",
+            )
+            .bind(deleted_at)
+            .bind(deleted_at)
+            .bind(id),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    async fn count_active(&self, tenant_id: &str) -> Result<u64> {
+        let row = self
+            .fetch_one(
+                sqlx::query(
+                    "SELECT COUNT(*) as count FROM customer WHERE tenant_id = ? AND deleted_at IS NULL",
+                )
+                .bind(tenant_id),
+            )
+            .await?;
+        let count: i64 = row.get("count");
+        Ok(count as u64)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1668,6 +2205,7 @@ mod tests {
                 roles: store.clone(),
                 users: store.clone(),
                 audit: failing_audit,
+                customers: store.clone(),
             }))
         }
     }
@@ -1689,6 +2227,7 @@ mod tests {
             roles: Arc::new(normal_store.clone()),
             users: Arc::new(normal_store.clone()),
             audit: Arc::new(normal_store.clone()),
+            customers: Arc::new(normal_store.clone()),
             tx_manager: Some(tx_manager),
         };
         let services = CoreServices::new(bundle.clone());
@@ -2184,6 +2723,7 @@ mod tests {
             roles: store.clone(),
             users: store.clone(),
             audit: store.clone(),
+            customers: store.clone(),
             tx_manager: None,
         };
 
@@ -2293,18 +2833,27 @@ mod tests {
             );
         }
 
-        // 2. Erros com mensagens de busy/locked sem código explícito
-        let msg_busy = make_db_err(None, "operational error: database is busy");
-        assert!(matches!(
-            map_sqlx_err(msg_busy),
-            CoreError::TransientConflict(_)
-        ));
+        // 2. Erros de unicidade e integridade referencial com códigos mapeados
+        let unique_err = make_db_err(
+            Some("2067"),
+            "UNIQUE constraint failed: customer.document_number",
+        );
+        assert_eq!(
+            map_sqlx_err(unique_err),
+            CoreError::Conflict("Registro conflitante já existe.".to_string())
+        );
 
-        let msg_locked = make_db_err(None, "locking protocol error: table locked");
-        assert!(matches!(
-            map_sqlx_err(msg_locked),
-            CoreError::TransientConflict(_)
-        ));
+        let pk_err = make_db_err(Some("1555"), "PRIMARY KEY constraint failed: customer.id");
+        assert_eq!(
+            map_sqlx_err(pk_err),
+            CoreError::Conflict("Registro conflitante já existe.".to_string())
+        );
+
+        let fk_err = make_db_err(Some("787"), "FOREIGN KEY constraint failed");
+        assert_eq!(
+            map_sqlx_err(fk_err),
+            CoreError::Validation("Registro relacionado não encontrado ou inválido.".to_string())
+        );
 
         // 3. PoolTimedOut
         let pool_timeout = sqlx::Error::PoolTimedOut;
@@ -2313,11 +2862,24 @@ mod tests {
             CoreError::TransientConflict(_)
         ));
 
-        // 4. Códigos e erros permanentes NÃO viram TransientConflict
+        // 4. Sem código ou fallback contains("busy") removido:
+        // Mensagem de texto "busy" sem código numérico NÃO vira TransientConflict,
+        // e nunca vaza texto cru SQL para o usuário.
+        let msg_busy = make_db_err(None, "operational error: database is busy");
+        assert_eq!(
+            map_sqlx_err(msg_busy),
+            CoreError::Database("Erro interno de banco de dados. Operação cancelada.".to_string())
+        );
+
+        let msg_locked = make_db_err(None, "locking protocol error: table locked");
+        assert_eq!(
+            map_sqlx_err(msg_locked),
+            CoreError::Database("Erro interno de banco de dados. Operação cancelada.".to_string())
+        );
+
+        // 5. Códigos permanentes retornam mensagem genérica segura, nunca SQL cru
         let permanent_codes = [
             ("1", "syntax error in SQL statement"),
-            ("19", "UNIQUE constraint failed: user.email"),
-            ("2067", "UNIQUE constraint failed"),
             ("14", "unable to open database file"),
             ("8", "attempt to write a readonly database"),
         ];
@@ -2325,18 +2887,19 @@ mod tests {
         for (code, msg) in permanent_codes {
             let err = make_db_err(Some(code), msg);
             let mapped = map_sqlx_err(err);
-            assert!(
-                matches!(mapped, CoreError::Database(_)),
-                "Código permanente {code} ({msg}) deveria virar CoreError::Database, mas virou: {mapped:?}"
+            assert_eq!(
+                mapped,
+                CoreError::Database("Erro interno de banco de dados. Operação cancelada.".to_string()),
+                "Código permanente {code} ({msg}) deveria virar CoreError::Database genérico, mas virou: {mapped:?}"
             );
         }
 
-        // 5. Outros tipos de sqlx::Error que não são transitórios
+        // 6. Outros tipos de sqlx::Error que não são de banco
         let row_not_found = sqlx::Error::RowNotFound;
-        assert!(matches!(
+        assert_eq!(
             map_sqlx_err(row_not_found),
-            CoreError::Database(_)
-        ));
+            CoreError::Database("Erro interno de banco de dados. Operação cancelada.".to_string())
+        );
     }
 
     #[tokio::test]
@@ -2408,5 +2971,136 @@ mod tests {
         assert!(!branding_audit.summary.contains("base64"));
         assert!(!branding_audit.summary.contains("iVBORw0KGgo"));
         assert!(branding_audit.summary.len() < 300);
+    }
+
+    #[tokio::test]
+    async fn test_benchmark_20k_customers_search_and_pagination() {
+        use std::time::Instant;
+
+        let pool = init_memory_db()
+            .await
+            .expect("Falha ao criar banco SQLite em memória");
+        let store = SqliteStore::new(pool.clone()).into_bundle();
+        let tenant_id = ensure_default_tenant(store.tenants.as_ref(), store.branding.as_ref())
+            .await
+            .unwrap();
+
+        let insert_start = Instant::now();
+        let mut tx = pool.begin().await.expect("Falha ao abrir transação");
+        let now = "2026-11-11T12:00:00Z";
+
+        for i in 0..20_000usize {
+            let id = format!("cust-bench-{i:05}");
+            let person_type = if i % 3 == 0 { "individual" } else { "legal" };
+            let name = format!("Empresa Evento Audiovisual {i:05}");
+            let trade_name = format!("Evento {i:05}");
+            let doc = format!("{:014}", 10_000_000_000_000u64 + i as u64);
+            let search_text = format!(
+                "empresa evento audiovisual {i:05} evento {i:05} {doc} contato{i}@eventos.com.br"
+            );
+            let name_sort = format!("empresa evento audiovisual {i:05}");
+
+            sqlx::query(
+                r#"
+                INSERT INTO customer (
+                    id, tenant_id, person_type, name, trade_name, document_number,
+                    state_registration, municipal_registration, notes, search_text,
+                    name_sort, created_at, updated_at, deleted_at, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, NULL)
+                "#,
+            )
+            .bind(&id)
+            .bind(&tenant_id)
+            .bind(person_type)
+            .bind(&name)
+            .bind(&trade_name)
+            .bind(&doc)
+            .bind(&search_text)
+            .bind(&name_sort)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .expect("Falha ao inserir cliente de benchmark");
+        }
+        tx.commit().await.expect("Falha ao comitar lote de 20k");
+        let insert_ms = insert_start.elapsed().as_millis();
+
+        // 1. Primeira página (limit 50)
+        let page1_start = Instant::now();
+        let page1 = store
+            .customers
+            .list(
+                &tenant_id,
+                &CustomerFilter {
+                    query: None,
+                    person_type: None,
+                    cursor: None,
+                    limit: Some(50),
+                },
+            )
+            .await
+            .expect("Falha ao listar primeira página");
+        let page1_ms = page1_start.elapsed().as_millis();
+
+        assert_eq!(page1.items.len(), 50);
+        assert!(page1.has_more);
+        assert!(page1.next_cursor.is_some());
+        assert!(
+            page1_ms < 500,
+            "Primeira página demorou {page1_ms}ms (limite 500ms)"
+        );
+
+        // 2. Segunda página via cursor
+        let page2_start = Instant::now();
+        let page2 = store
+            .customers
+            .list(
+                &tenant_id,
+                &CustomerFilter {
+                    query: None,
+                    person_type: None,
+                    cursor: page1.next_cursor.clone(),
+                    limit: Some(50),
+                },
+            )
+            .await
+            .expect("Falha ao listar segunda página via cursor");
+        let page2_ms = page2_start.elapsed().as_millis();
+
+        assert_eq!(page2.items.len(), 50);
+        assert_ne!(page2.items[0].id, page1.items[0].id);
+        assert!(
+            page2_ms < 500,
+            "Segunda página por cursor demorou {page2_ms}ms (limite 500ms)"
+        );
+
+        // 3. Busca textual multi-palavra em 20.000 registros
+        let search_start = Instant::now();
+        let search_res = store
+            .customers
+            .list(
+                &tenant_id,
+                &CustomerFilter {
+                    query: Some("empresa 15432".to_string()),
+                    person_type: None,
+                    cursor: None,
+                    limit: Some(50),
+                },
+            )
+            .await
+            .expect("Falha na busca entre 20.000 clientes");
+        let search_ms = search_start.elapsed().as_millis();
+
+        assert_eq!(search_res.items.len(), 1);
+        assert_eq!(search_res.items[0].id, "cust-bench-15432");
+        assert!(
+            search_ms < 500,
+            "Busca textual em 20k clientes demorou {search_ms}ms (limite 500ms)"
+        );
+
+        println!(
+            "[BENCHMARK 20K CLIENTES] insert={insert_ms}ms, page1={page1_ms}ms, page2_cursor={page2_ms}ms, search={search_ms}ms"
+        );
     }
 }

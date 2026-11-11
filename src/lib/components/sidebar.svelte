@@ -67,9 +67,9 @@
     },
     {
       labelKey: "nav.customers",
-      href: "#customers",
+      href: "/customers",
       icon: Users,
-      disabled: true,
+      permission: PERMISSIONS.CUSTOMER_READ,
     },
     {
       labelKey: "nav.users",
@@ -155,7 +155,10 @@
 
   <nav class="flex-1 space-y-1.5 p-3 overflow-y-auto">
     {#each visibleNavItems as item (item.labelKey)}
-      {@const isActive = page.url.pathname === item.href}
+      {@const isActive =
+        item.href === "/"
+          ? page.url.pathname === "/"
+          : page.url.pathname.startsWith(item.href)}
       <a
         href={item.disabled ? undefined : item.href}
         class={cn(

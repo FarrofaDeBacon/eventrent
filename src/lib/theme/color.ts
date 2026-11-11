@@ -56,20 +56,30 @@ export function linearToSrgb(c: number): number {
   return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
 }
 
+export const HEX_COLOR_STRICT_REGEX = /^#[0-9a-fA-F]{6}$/;
+
+/**
+ * Valida se uma string é um código de cor hexadecimal estrito no formato #RRGGBB.
+ */
+export function isValidHexColor(hex: string): boolean {
+  return HEX_COLOR_STRICT_REGEX.test(hex.trim());
+}
+
 /**
  * Converte cor HEX (#RRGGBB) para valores normalizados sRGB [0, 1].
+ * Valida estritamente contra caracteres não-hexadecimais, rejeitando strings como '#1g0000'.
  */
 export function hexToRgb(hex: string): [number, number, number] {
-  const clean = hex.replace("#", "").trim();
-  if (clean.length !== 6) {
-    throw new Error(`Cor HEX inválida: '${hex}'. Esperado formato #RRGGBB.`);
+  const trimmed = hex.trim();
+  const clean = trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
+  if (!/^[0-9a-fA-F]{6}$/.test(clean)) {
+    throw new Error(
+      `Cor HEX inválida ou com caracteres não-hexadecimais: '${hex}'. Esperado formato #RRGGBB com 6 dígitos hexadecimais válidos.`,
+    );
   }
   const r = parseInt(clean.substring(0, 2), 16) / 255;
   const g = parseInt(clean.substring(2, 4), 16) / 255;
   const b = parseInt(clean.substring(4, 6), 16) / 255;
-  if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) {
-    throw new Error(`Cor HEX contém caracteres não-hexadecimais: '${hex}'`);
-  }
   return [r, g, b];
 }
 
@@ -285,27 +295,48 @@ export function getRelativeLuminance(hex: string): number {
 }
 
 /**
- * Calcula a taxa de contraste WCAG 2.1 entre duas cores (entre 1:1 e 21:1).
+ * Calcula a razão bruta de contraste WCAG 2.1 entre duas cores (sem arredondamento).
  */
-export function calculateContrast(hex1: string, hex2: string): number {
+export function getRawContrastRatio(hex1: string, hex2: string): number {
   const lum1 = getRelativeLuminance(hex1);
   const lum2 = getRelativeLuminance(hex2);
   const lighter = Math.max(lum1, lum2);
   const darker = Math.min(lum1, lum2);
-  const ratio = (lighter + 0.05) / (darker + 0.05);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+/**
+ * Avalia conformidade WCAG AA (taxa >= 4.5:1) usando estritamente a razão BRUTA sem arredondamentos prévios.
+ * Exemplo: 4.4999 reprova (false), 4.5000 aprova (true).
+ */
+export function isAccessibleContrast(rawRatio: number): boolean {
+  return rawRatio >= 4.5;
+}
+
+/**
+ * Arredonda a taxa de contraste para 2 casas decimais estritamente para fins de exibição na interface.
+ */
+export function formatContrastRatio(ratio: number): number {
   return Math.round(ratio * 100) / 100;
+}
+
+/**
+ * Calcula a taxa de contraste WCAG 2.1 entre duas cores (exibição arredondada para 2 casas decimais).
+ */
+export function calculateContrast(hex1: string, hex2: string): number {
+  return formatContrastRatio(getRawContrastRatio(hex1, hex2));
 }
 
 export interface ForegroundOption {
   hex: string;
   css: string;
   contrast: number;
-  isAccessible: boolean; // >= 4.5:1 (WCAG AA)
+  isAccessible: boolean; // >= 4.5:1 (WCAG AA usando razão bruta)
 }
 
 /**
  * Escolhe automaticamente a cor de texto (foreground) acessível (branco ou escuro neutro)
- * garantindo taxa de contraste >= 4.5:1 (WCAG AA) em relação ao fundo.
+ * garantindo taxa de contraste >= 4.5:1 (WCAG AA) em relação ao fundo usando a razão BRUTA.
  */
 export function getAccessibleForeground(
   backgroundHex: string,
@@ -315,47 +346,50 @@ export function getAccessibleForeground(
   const whiteCss = "oklch(0.99 0 0)";
   const darkCss = "oklch(0.12 0.015 260)";
 
-  const contrastWhite = calculateContrast(backgroundHex, whiteHex);
-  const contrastDark = calculateContrast(backgroundHex, darkHex);
+  const rawWhite = getRawContrastRatio(backgroundHex, whiteHex);
+  const rawDark = getRawContrastRatio(backgroundHex, darkHex);
 
-  if (contrastWhite >= 4.5) {
+  const displayWhite = formatContrastRatio(rawWhite);
+  const displayDark = formatContrastRatio(rawDark);
+
+  if (isAccessibleContrast(rawWhite)) {
     return {
       hex: whiteHex,
       css: whiteCss,
-      contrast: contrastWhite,
+      contrast: displayWhite,
       isAccessible: true,
     };
   }
 
-  if (contrastDark >= 4.5) {
+  if (isAccessibleContrast(rawDark)) {
     return {
       hex: darkHex,
       css: darkCss,
-      contrast: contrastDark,
+      contrast: displayDark,
       isAccessible: true,
     };
   }
 
-  // Se nenhum atingir 4.5:1, escolhe a opção com maior contraste relativo
-  if (contrastWhite >= contrastDark) {
+  // Se nenhum atingir 4.5:1 bruto, escolhe a opção com maior contraste relativo bruto
+  if (rawWhite >= rawDark) {
     return {
       hex: whiteHex,
       css: whiteCss,
-      contrast: contrastWhite,
+      contrast: displayWhite,
       isAccessible: false,
     };
   } else {
     return {
       hex: darkHex,
       css: darkCss,
-      contrast: contrastDark,
+      contrast: displayDark,
       isAccessible: false,
     };
   }
 }
 
 /**
- * Ajusta a luminosidade no espaço OKLCH para atingir taxa de contraste >= 4.5:1 (WCAG AA).
+ * Ajusta a luminosidade no espaço OKLCH para atingir taxa de contraste >= 4.5:1 (WCAG AA) usando razão bruta.
  * Preserva o matiz (h) e croma (c) da cor original da marca.
  */
 export function autoAdjustContrast(hex: string): string {
@@ -365,26 +399,24 @@ export function autoAdjustContrast(hex: string): string {
     return hex;
   }
 
-  const whiteContrast = calculateContrast(hex, "#ffffff");
-  const darkContrast = calculateContrast(hex, "#090d16");
+  const rawWhite = getRawContrastRatio(hex, "#ffffff");
+  const rawDark = getRawContrastRatio(hex, "#090d16");
 
-  if (whiteContrast >= darkContrast) {
-    // Escurece para contrastar com branco
+  if (rawWhite >= rawDark) {
     let l = oklch.l;
     for (let i = 0; i < 25; i++) {
       l = Math.max(0.05, l - 0.025);
       const candidateHex = oklchToHex(l, oklch.c, oklch.h);
-      if (calculateContrast(candidateHex, "#ffffff") >= 4.5) {
+      if (isAccessibleContrast(getRawContrastRatio(candidateHex, "#ffffff"))) {
         return candidateHex;
       }
     }
   } else {
-    // Clareia para contrastar com escuro
     let l = oklch.l;
     for (let i = 0; i < 25; i++) {
       l = Math.min(0.95, l + 0.025);
       const candidateHex = oklchToHex(l, oklch.c, oklch.h);
-      if (calculateContrast(candidateHex, "#090d16") >= 4.5) {
+      if (isAccessibleContrast(getRawContrastRatio(candidateHex, "#090d16"))) {
         return candidateHex;
       }
     }
