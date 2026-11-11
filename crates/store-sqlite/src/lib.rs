@@ -2972,4 +2972,135 @@ mod tests {
         assert!(!branding_audit.summary.contains("iVBORw0KGgo"));
         assert!(branding_audit.summary.len() < 300);
     }
+
+    #[tokio::test]
+    async fn test_benchmark_20k_customers_search_and_pagination() {
+        use std::time::Instant;
+
+        let pool = init_memory_db()
+            .await
+            .expect("Falha ao criar banco SQLite em memória");
+        let store = SqliteStore::new(pool.clone()).into_bundle();
+        let tenant_id = ensure_default_tenant(store.tenants.as_ref(), store.branding.as_ref())
+            .await
+            .unwrap();
+
+        let insert_start = Instant::now();
+        let mut tx = pool.begin().await.expect("Falha ao abrir transação");
+        let now = "2026-11-11T12:00:00Z";
+
+        for i in 0..20_000usize {
+            let id = format!("cust-bench-{i:05}");
+            let person_type = if i % 3 == 0 { "individual" } else { "legal" };
+            let name = format!("Empresa Evento Audiovisual {i:05}");
+            let trade_name = format!("Evento {i:05}");
+            let doc = format!("{:014}", 10_000_000_000_000u64 + i as u64);
+            let search_text = format!(
+                "empresa evento audiovisual {i:05} evento {i:05} {doc} contato{i}@eventos.com.br"
+            );
+            let name_sort = format!("empresa evento audiovisual {i:05}");
+
+            sqlx::query(
+                r#"
+                INSERT INTO customer (
+                    id, tenant_id, person_type, name, trade_name, document_number,
+                    state_registration, municipal_registration, notes, search_text,
+                    name_sort, created_at, updated_at, deleted_at, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, NULL)
+                "#,
+            )
+            .bind(&id)
+            .bind(&tenant_id)
+            .bind(person_type)
+            .bind(&name)
+            .bind(&trade_name)
+            .bind(&doc)
+            .bind(&search_text)
+            .bind(&name_sort)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .expect("Falha ao inserir cliente de benchmark");
+        }
+        tx.commit().await.expect("Falha ao comitar lote de 20k");
+        let insert_ms = insert_start.elapsed().as_millis();
+
+        // 1. Primeira página (limit 50)
+        let page1_start = Instant::now();
+        let page1 = store
+            .customers
+            .list(
+                &tenant_id,
+                &CustomerFilter {
+                    query: None,
+                    person_type: None,
+                    cursor: None,
+                    limit: Some(50),
+                },
+            )
+            .await
+            .expect("Falha ao listar primeira página");
+        let page1_ms = page1_start.elapsed().as_millis();
+
+        assert_eq!(page1.items.len(), 50);
+        assert!(page1.has_more);
+        assert!(page1.next_cursor.is_some());
+        assert!(
+            page1_ms < 500,
+            "Primeira página demorou {page1_ms}ms (limite 500ms)"
+        );
+
+        // 2. Segunda página via cursor
+        let page2_start = Instant::now();
+        let page2 = store
+            .customers
+            .list(
+                &tenant_id,
+                &CustomerFilter {
+                    query: None,
+                    person_type: None,
+                    cursor: page1.next_cursor.clone(),
+                    limit: Some(50),
+                },
+            )
+            .await
+            .expect("Falha ao listar segunda página via cursor");
+        let page2_ms = page2_start.elapsed().as_millis();
+
+        assert_eq!(page2.items.len(), 50);
+        assert_ne!(page2.items[0].id, page1.items[0].id);
+        assert!(
+            page2_ms < 500,
+            "Segunda página por cursor demorou {page2_ms}ms (limite 500ms)"
+        );
+
+        // 3. Busca textual multi-palavra em 20.000 registros
+        let search_start = Instant::now();
+        let search_res = store
+            .customers
+            .list(
+                &tenant_id,
+                &CustomerFilter {
+                    query: Some("empresa 15432".to_string()),
+                    person_type: None,
+                    cursor: None,
+                    limit: Some(50),
+                },
+            )
+            .await
+            .expect("Falha na busca entre 20.000 clientes");
+        let search_ms = search_start.elapsed().as_millis();
+
+        assert_eq!(search_res.items.len(), 1);
+        assert_eq!(search_res.items[0].id, "cust-bench-15432");
+        assert!(
+            search_ms < 500,
+            "Busca textual em 20k clientes demorou {search_ms}ms (limite 500ms)"
+        );
+
+        println!(
+            "[BENCHMARK 20K CLIENTES] insert={insert_ms}ms, page1={page1_ms}ms, page2_cursor={page2_ms}ms, search={search_ms}ms"
+        );
+    }
 }
