@@ -180,3 +180,111 @@ export const ROLE_SLUGS = {
 } as const;
 
 export const DEFAULT_COMPANY_NAME = "Minha empresa";
+
+// =========================================================================
+// TIPOS DO DOMÍNIO DE CLIENTES (FASE 1B.2)
+// =========================================================================
+
+export type PersonType = "individual" | "legal";
+
+export interface Customer {
+  id: string;
+  tenant_id: string;
+  person_type: PersonType;
+  name: string;
+  trade_name?: string | null;
+  document_number: string;
+  state_registration?: string | null;
+  municipal_registration?: string | null;
+  notes?: string | null;
+  search_text: string;
+  name_sort: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+  created_by?: string | null;
+}
+
+export interface CustomerContact {
+  id: string;
+  customer_id: string;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  role?: string | null;
+  is_primary: boolean;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+}
+
+export interface CustomerAddress {
+  id: string;
+  customer_id: string;
+  label: string;
+  street: string;
+  number: string;
+  complement?: string | null;
+  neighborhood: string;
+  city: string;
+  state: string;
+  postal_code: string;
+  is_primary: boolean;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+}
+
+export interface CustomerWithDetails {
+  customer: Customer;
+  contacts: CustomerContact[];
+  addresses: CustomerAddress[];
+}
+
+export interface CreateContactInput {
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  role?: string | null;
+  is_primary: boolean;
+}
+
+export interface CreateAddressInput {
+  label: string;
+  street: string;
+  number: string;
+  complement?: string | null;
+  neighborhood: string;
+  city: string;
+  state: string;
+  postal_code: string;
+  is_primary: boolean;
+}
+
+export interface CreateCustomerInput {
+  person_type: PersonType;
+  name: string;
+  trade_name?: string | null;
+  document_number: string;
+  state_registration?: string | null;
+  municipal_registration?: string | null;
+  notes?: string | null;
+  contacts: CreateContactInput[];
+  addresses: CreateAddressInput[];
+}
+
+export type UpdateCustomerInput = CreateCustomerInput;
+
+export interface CustomerFilter {
+  query?: string;
+  person_type?: PersonType;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface CustomerPage {
+  items: Customer[];
+  next_cursor?: string | null;
+  has_more: boolean;
+  total_count?: number | null;
+}
