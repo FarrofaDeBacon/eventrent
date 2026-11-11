@@ -380,6 +380,11 @@ pub fn run() {
             commands::users::list_roles,
             commands::branding::get_branding,
             commands::branding::save_branding,
+            commands::customers::list_customers,
+            commands::customers::get_customer,
+            commands::customers::create_customer,
+            commands::customers::update_customer,
+            commands::customers::delete_customer,
         ])
         .run(tauri::generate_context!());
 
