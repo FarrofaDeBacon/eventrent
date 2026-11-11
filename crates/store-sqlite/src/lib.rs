@@ -1,9 +1,11 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use eventrent_core::{
-    run_in_tx, AuditLogEntry, AuditStore, BrandingStore, CoreError, Result, Role, RoleStore,
-    RoleWithPermissions, StoreBundle, Tenant, TenantBranding, TenantStore, TransactionManager,
-    TransactionPolicy, TxStoreBundle, UpdateBrandingInput, UserRecord, UserStore, UserWithRole,
+    normalize_for_search, run_in_tx, AuditLogEntry, AuditStore, BrandingStore, CoreError, Customer,
+    CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter, CustomerPage, CustomerStore,
+    CustomerWithDetails, Result, Role, RoleStore, RoleWithPermissions, StoreBundle, Tenant,
+    TenantBranding, TenantStore, TransactionManager, TransactionPolicy, TxStoreBundle,
+    UpdateBrandingInput, UserRecord, UserStore, UserWithRole,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, Row, Sqlite};
@@ -203,7 +205,8 @@ impl TransactionManager for SqliteTxManager {
             branding: arc.clone(),
             roles: arc.clone(),
             users: arc.clone(),
-            audit: arc,
+            audit: arc.clone(),
+            customers: arc,
         }))
     }
 }
@@ -215,6 +218,7 @@ pub struct SqliteTxStoreBundle {
     pub roles: Arc<dyn RoleStore>,
     pub users: Arc<dyn UserStore>,
     pub audit: Arc<dyn AuditStore>,
+    pub customers: Arc<dyn CustomerStore>,
 }
 
 #[async_trait]
@@ -237,6 +241,10 @@ impl TxStoreBundle for SqliteTxStoreBundle {
 
     fn audit(&self) -> &dyn AuditStore {
         self.audit.as_ref()
+    }
+
+    fn customers(&self) -> &dyn CustomerStore {
+        self.customers.as_ref()
     }
 
     async fn commit(self: Box<Self>) -> Result<()> {
@@ -294,7 +302,8 @@ impl SqliteStore {
             branding: arc.clone(),
             roles: arc.clone(),
             users: arc.clone(),
-            audit: arc,
+            audit: arc.clone(),
+            customers: arc,
             tx_manager,
         }
     }
@@ -1396,6 +1405,523 @@ impl AuditStore for SqliteStore {
     }
 }
 
+#[async_trait]
+impl CustomerStore for SqliteStore {
+    async fn find_by_id(&self, tenant_id: &str, id: &str) -> Result<Option<CustomerWithDetails>> {
+        let row = self
+            .fetch_optional(
+                sqlx::query(
+                    r#"
+                    SELECT id, tenant_id, person_type, name, trade_name, document_number,
+                           state_registration, municipal_registration, notes, search_text,
+                           name_sort, created_at, updated_at, deleted_at, created_by
+                    FROM customer
+                    WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+                    LIMIT 1
+                    "#,
+                )
+                .bind(tenant_id)
+                .bind(id),
+            )
+            .await?;
+
+        let customer = match row {
+            Some(r) => {
+                let person_type_str: String = r.get("person_type");
+                let person_type = person_type_str
+                    .parse()
+                    .map_err(|e: String| CoreError::Database(e))?;
+                Customer {
+                    id: r.get("id"),
+                    tenant_id: r.get("tenant_id"),
+                    person_type,
+                    name: r.get("name"),
+                    trade_name: r.get("trade_name"),
+                    document_number: r.get("document_number"),
+                    state_registration: r.get("state_registration"),
+                    municipal_registration: r.get("municipal_registration"),
+                    notes: r.get("notes"),
+                    search_text: r.get("search_text"),
+                    name_sort: r.get("name_sort"),
+                    created_at: r.get("created_at"),
+                    updated_at: r.get("updated_at"),
+                    deleted_at: r.get("deleted_at"),
+                    created_by: r.get("created_by"),
+                }
+            }
+            None => return Ok(None),
+        };
+
+        let contact_rows = self
+            .fetch_all(
+                sqlx::query(
+                    r#"
+                    SELECT id, customer_id, name, email, phone, role, is_primary,
+                           created_at, updated_at, deleted_at
+                    FROM customer_contact
+                    WHERE customer_id = ? AND deleted_at IS NULL
+                    ORDER BY is_primary DESC, name ASC
+                    "#,
+                )
+                .bind(id),
+            )
+            .await?;
+
+        let contacts = contact_rows
+            .into_iter()
+            .map(|r| {
+                let is_primary_int: i64 = r.get("is_primary");
+                CustomerContact {
+                    id: r.get("id"),
+                    customer_id: r.get("customer_id"),
+                    name: r.get("name"),
+                    email: r.get("email"),
+                    phone: r.get("phone"),
+                    role: r.get("role"),
+                    is_primary: is_primary_int != 0,
+                    created_at: r.get("created_at"),
+                    updated_at: r.get("updated_at"),
+                    deleted_at: r.get("deleted_at"),
+                }
+            })
+            .collect();
+
+        let address_rows = self
+            .fetch_all(
+                sqlx::query(
+                    r#"
+                    SELECT id, customer_id, label, street, number, complement,
+                           neighborhood, city, state, postal_code, is_primary,
+                           created_at, updated_at, deleted_at
+                    FROM customer_address
+                    WHERE customer_id = ? AND deleted_at IS NULL
+                    ORDER BY is_primary DESC, label ASC
+                    "#,
+                )
+                .bind(id),
+            )
+            .await?;
+
+        let addresses = address_rows
+            .into_iter()
+            .map(|r| {
+                let is_primary_int: i64 = r.get("is_primary");
+                CustomerAddress {
+                    id: r.get("id"),
+                    customer_id: r.get("customer_id"),
+                    label: r.get("label"),
+                    street: r.get("street"),
+                    number: r.get("number"),
+                    complement: r.get("complement"),
+                    neighborhood: r.get("neighborhood"),
+                    city: r.get("city"),
+                    state: r.get("state"),
+                    postal_code: r.get("postal_code"),
+                    is_primary: is_primary_int != 0,
+                    created_at: r.get("created_at"),
+                    updated_at: r.get("updated_at"),
+                    deleted_at: r.get("deleted_at"),
+                }
+            })
+            .collect();
+
+        Ok(Some(CustomerWithDetails {
+            customer,
+            contacts,
+            addresses,
+        }))
+    }
+
+    async fn find_by_document(
+        &self,
+        tenant_id: &str,
+        document_number: &str,
+    ) -> Result<Option<Customer>> {
+        let row = self
+            .fetch_optional(
+                sqlx::query(
+                    r#"
+                    SELECT id, tenant_id, person_type, name, trade_name, document_number,
+                           state_registration, municipal_registration, notes, search_text,
+                           name_sort, created_at, updated_at, deleted_at, created_by
+                    FROM customer
+                    WHERE tenant_id = ? AND document_number = ? AND deleted_at IS NULL
+                    LIMIT 1
+                    "#,
+                )
+                .bind(tenant_id)
+                .bind(document_number),
+            )
+            .await?;
+
+        match row {
+            Some(r) => {
+                let person_type_str: String = r.get("person_type");
+                let person_type = person_type_str
+                    .parse()
+                    .map_err(|e: String| CoreError::Database(e))?;
+                Ok(Some(Customer {
+                    id: r.get("id"),
+                    tenant_id: r.get("tenant_id"),
+                    person_type,
+                    name: r.get("name"),
+                    trade_name: r.get("trade_name"),
+                    document_number: r.get("document_number"),
+                    state_registration: r.get("state_registration"),
+                    municipal_registration: r.get("municipal_registration"),
+                    notes: r.get("notes"),
+                    search_text: r.get("search_text"),
+                    name_sort: r.get("name_sort"),
+                    created_at: r.get("created_at"),
+                    updated_at: r.get("updated_at"),
+                    deleted_at: r.get("deleted_at"),
+                    created_by: r.get("created_by"),
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn list(&self, tenant_id: &str, filter: &CustomerFilter) -> Result<CustomerPage> {
+        let limit = filter.limit.unwrap_or(20).clamp(1, 100);
+        let fetch_limit = (limit + 1) as i64;
+
+        let cursor_data = filter.cursor.as_deref().and_then(CustomerCursor::decode);
+
+        let mut sql = String::from(
+            r#"
+            SELECT id, tenant_id, person_type, name, trade_name, document_number,
+                   state_registration, municipal_registration, notes, search_text,
+                   name_sort, created_at, updated_at, deleted_at, created_by
+            FROM customer
+            WHERE tenant_id = ? AND deleted_at IS NULL
+            "#,
+        );
+
+        if let Some(pt) = filter.person_type {
+            sql.push_str(" AND person_type = '");
+            sql.push_str(&pt.to_string());
+            sql.push('\'');
+        }
+
+        let query_words: Vec<String> = filter
+            .query
+            .as_deref()
+            .map(|q| {
+                normalize_for_search(q)
+                    .split_whitespace()
+                    .map(|w| format!("%{w}%"))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for _ in &query_words {
+            sql.push_str(" AND search_text LIKE ?");
+        }
+
+        if cursor_data.is_some() {
+            sql.push_str(" AND (name_sort > ? OR (name_sort = ? AND id > ?))");
+        }
+
+        sql.push_str(" ORDER BY name_sort ASC, id ASC LIMIT ?");
+
+        let mut query = sqlx::query(&sql).bind(tenant_id);
+
+        for word_pattern in &query_words {
+            query = query.bind(word_pattern);
+        }
+
+        if let Some(ref c) = cursor_data {
+            query = query.bind(&c.name_sort).bind(&c.name_sort).bind(&c.id);
+        }
+
+        query = query.bind(fetch_limit);
+
+        let rows = self.fetch_all(query).await?;
+
+        let mut items = Vec::new();
+        for r in rows {
+            let person_type_str: String = r.get("person_type");
+            let person_type = person_type_str
+                .parse()
+                .map_err(|e: String| CoreError::Database(e))?;
+            items.push(Customer {
+                id: r.get("id"),
+                tenant_id: r.get("tenant_id"),
+                person_type,
+                name: r.get("name"),
+                trade_name: r.get("trade_name"),
+                document_number: r.get("document_number"),
+                state_registration: r.get("state_registration"),
+                municipal_registration: r.get("municipal_registration"),
+                notes: r.get("notes"),
+                search_text: r.get("search_text"),
+                name_sort: r.get("name_sort"),
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+                deleted_at: r.get("deleted_at"),
+                created_by: r.get("created_by"),
+            });
+        }
+
+        let has_more = items.len() > limit as usize;
+        if has_more {
+            items.pop();
+        }
+
+        let next_cursor = if has_more {
+            items
+                .last()
+                .map(|last| CustomerCursor::new(&last.name_sort, &last.id).encode())
+        } else {
+            None
+        };
+
+        Ok(CustomerPage {
+            items,
+            next_cursor,
+            has_more,
+            total_count: None,
+        })
+    }
+
+    async fn create(
+        &self,
+        customer: &Customer,
+        contacts: &[CustomerContact],
+        addresses: &[CustomerAddress],
+    ) -> Result<()> {
+        self.execute(
+            sqlx::query(
+                r#"
+                INSERT INTO customer (
+                    id, tenant_id, person_type, name, trade_name, document_number,
+                    state_registration, municipal_registration, notes, search_text,
+                    name_sort, created_at, updated_at, deleted_at, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&customer.id)
+            .bind(&customer.tenant_id)
+            .bind(customer.person_type.to_string())
+            .bind(&customer.name)
+            .bind(&customer.trade_name)
+            .bind(&customer.document_number)
+            .bind(&customer.state_registration)
+            .bind(&customer.municipal_registration)
+            .bind(&customer.notes)
+            .bind(&customer.search_text)
+            .bind(&customer.name_sort)
+            .bind(&customer.created_at)
+            .bind(&customer.updated_at)
+            .bind(&customer.deleted_at)
+            .bind(&customer.created_by),
+        )
+        .await?;
+
+        for c in contacts {
+            self.execute(
+                sqlx::query(
+                    r#"
+                    INSERT INTO customer_contact (
+                        id, customer_id, name, email, phone, role, is_primary,
+                        created_at, updated_at, deleted_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&c.id)
+                .bind(&c.customer_id)
+                .bind(&c.name)
+                .bind(&c.email)
+                .bind(&c.phone)
+                .bind(&c.role)
+                .bind(if c.is_primary { 1i64 } else { 0i64 })
+                .bind(&c.created_at)
+                .bind(&c.updated_at)
+                .bind(&c.deleted_at),
+            )
+            .await?;
+        }
+
+        for a in addresses {
+            self.execute(
+                sqlx::query(
+                    r#"
+                    INSERT INTO customer_address (
+                        id, customer_id, label, street, number, complement,
+                        neighborhood, city, state, postal_code, is_primary,
+                        created_at, updated_at, deleted_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&a.id)
+                .bind(&a.customer_id)
+                .bind(&a.label)
+                .bind(&a.street)
+                .bind(&a.number)
+                .bind(&a.complement)
+                .bind(&a.neighborhood)
+                .bind(&a.city)
+                .bind(&a.state)
+                .bind(&a.postal_code)
+                .bind(if a.is_primary { 1i64 } else { 0i64 })
+                .bind(&a.created_at)
+                .bind(&a.updated_at)
+                .bind(&a.deleted_at),
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn update(
+        &self,
+        customer: &Customer,
+        contacts: &[CustomerContact],
+        addresses: &[CustomerAddress],
+    ) -> Result<()> {
+        self.execute(
+            sqlx::query(
+                r#"
+                UPDATE customer
+                SET person_type = ?, name = ?, trade_name = ?, document_number = ?,
+                    state_registration = ?, municipal_registration = ?, notes = ?,
+                    search_text = ?, name_sort = ?, updated_at = ?
+                WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL
+                "#,
+            )
+            .bind(customer.person_type.to_string())
+            .bind(&customer.name)
+            .bind(&customer.trade_name)
+            .bind(&customer.document_number)
+            .bind(&customer.state_registration)
+            .bind(&customer.municipal_registration)
+            .bind(&customer.notes)
+            .bind(&customer.search_text)
+            .bind(&customer.name_sort)
+            .bind(&customer.updated_at)
+            .bind(&customer.id)
+            .bind(&customer.tenant_id),
+        )
+        .await?;
+
+        // Remove contatos e endereços antigos e regrava os novos
+        self.execute(
+            sqlx::query("DELETE FROM customer_contact WHERE customer_id = ?").bind(&customer.id),
+        )
+        .await?;
+
+        for c in contacts {
+            self.execute(
+                sqlx::query(
+                    r#"
+                    INSERT INTO customer_contact (
+                        id, customer_id, name, email, phone, role, is_primary,
+                        created_at, updated_at, deleted_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&c.id)
+                .bind(&c.customer_id)
+                .bind(&c.name)
+                .bind(&c.email)
+                .bind(&c.phone)
+                .bind(&c.role)
+                .bind(if c.is_primary { 1i64 } else { 0i64 })
+                .bind(&c.created_at)
+                .bind(&c.updated_at)
+                .bind(&c.deleted_at),
+            )
+            .await?;
+        }
+
+        self.execute(
+            sqlx::query("DELETE FROM customer_address WHERE customer_id = ?").bind(&customer.id),
+        )
+        .await?;
+
+        for a in addresses {
+            self.execute(
+                sqlx::query(
+                    r#"
+                    INSERT INTO customer_address (
+                        id, customer_id, label, street, number, complement,
+                        neighborhood, city, state, postal_code, is_primary,
+                        created_at, updated_at, deleted_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&a.id)
+                .bind(&a.customer_id)
+                .bind(&a.label)
+                .bind(&a.street)
+                .bind(&a.number)
+                .bind(&a.complement)
+                .bind(&a.neighborhood)
+                .bind(&a.city)
+                .bind(&a.state)
+                .bind(&a.postal_code)
+                .bind(if a.is_primary { 1i64 } else { 0i64 })
+                .bind(&a.created_at)
+                .bind(&a.updated_at)
+                .bind(&a.deleted_at),
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn soft_delete(&self, tenant_id: &str, id: &str, deleted_at: &str) -> Result<()> {
+        self.execute(
+            sqlx::query(
+                "UPDATE customer SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL",
+            )
+            .bind(deleted_at)
+            .bind(deleted_at)
+            .bind(tenant_id)
+            .bind(id),
+        )
+        .await?;
+
+        self.execute(
+            sqlx::query(
+                "UPDATE customer_contact SET deleted_at = ?, updated_at = ? WHERE customer_id = ? AND deleted_at IS NULL",
+            )
+            .bind(deleted_at)
+            .bind(deleted_at)
+            .bind(id),
+        )
+        .await?;
+
+        self.execute(
+            sqlx::query(
+                "UPDATE customer_address SET deleted_at = ?, updated_at = ? WHERE customer_id = ? AND deleted_at IS NULL",
+            )
+            .bind(deleted_at)
+            .bind(deleted_at)
+            .bind(id),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    async fn count_active(&self, tenant_id: &str) -> Result<u64> {
+        let row = self
+            .fetch_one(
+                sqlx::query(
+                    "SELECT COUNT(*) as count FROM customer WHERE tenant_id = ? AND deleted_at IS NULL",
+                )
+                .bind(tenant_id),
+            )
+            .await?;
+        let count: i64 = row.get("count");
+        Ok(count as u64)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1679,6 +2205,7 @@ mod tests {
                 roles: store.clone(),
                 users: store.clone(),
                 audit: failing_audit,
+                customers: store.clone(),
             }))
         }
     }
@@ -1700,6 +2227,7 @@ mod tests {
             roles: Arc::new(normal_store.clone()),
             users: Arc::new(normal_store.clone()),
             audit: Arc::new(normal_store.clone()),
+            customers: Arc::new(normal_store.clone()),
             tx_manager: Some(tx_manager),
         };
         let services = CoreServices::new(bundle.clone());
@@ -2195,6 +2723,7 @@ mod tests {
             roles: store.clone(),
             users: store.clone(),
             audit: store.clone(),
+            customers: store.clone(),
             tx_manager: None,
         };
 

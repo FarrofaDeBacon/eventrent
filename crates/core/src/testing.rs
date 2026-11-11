@@ -1,7 +1,9 @@
 use crate::domain::{
-    CreateUserInput, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
-    RecoverPasswordInput, ResetPasswordInput, SessionInfo, UpdateBrandingInput, UpdateUserInput,
-    UserRecord, UserWithRole, ROLE_SLUG_COMMERCIAL, ROLE_SLUG_OWNER,
+    CreateAddressInput, CreateContactInput, CreateCustomerInput, CreateUserInput, CustomerFilter,
+    InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode, PersonType,
+    RecoverPasswordInput, ResetPasswordInput, SessionInfo, UpdateBrandingInput,
+    UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole, ROLE_SLUG_COMMERCIAL,
+    ROLE_SLUG_OWNER,
 };
 use crate::error::CoreError;
 use crate::services::{
@@ -613,6 +615,236 @@ pub async fn contract_branding_dark_logo_and_icon(stores: &StoreBundle, tenant_i
     assert_eq!(retrieved.icon_url, input.icon_url);
 }
 
+/// 12. Contrato: CRUD completo de clientes, contatos, endereços, unicidade ativa e auditoria LGPD mascarada.
+pub async fn contract_customer_crud_and_lgpd_audit(
+    services: &CoreServices,
+    session: &SessionInfo,
+    _tenant_id: &str,
+) {
+    // 1. Cria cliente PF com CPF válido
+    let pf_input = CreateCustomerInput {
+        person_type: PersonType::Individual,
+        name: "Carlos Eduardo da Silva".to_string(),
+        trade_name: None,
+        document_number: "529.982.247-25".to_string(),
+        state_registration: None,
+        municipal_registration: None,
+        notes: Some("Cliente VIP de eventos corporativos".to_string()),
+        contacts: vec![CreateContactInput {
+            name: "Carlos Silva".to_string(),
+            email: Some("carlos@silvaeventos.com.br".to_string()),
+            phone: Some("(11) 99887-7665".to_string()),
+            role: Some("Titular".to_string()),
+            is_primary: true,
+        }],
+        addresses: vec![CreateAddressInput {
+            label: "Sede".to_string(),
+            street: "Av. Paulista".to_string(),
+            number: "1000".to_string(),
+            complement: Some("Conjunto 42".to_string()),
+            neighborhood: "Bela Vista".to_string(),
+            city: "São Paulo".to_string(),
+            state: "SP".to_string(),
+            postal_code: "01310-100".to_string(),
+            is_primary: true,
+        }],
+    };
+
+    let created_pf = services
+        .create_customer(session, &pf_input)
+        .await
+        .expect("Falha ao criar cliente PF com CPF válido");
+    assert_eq!(created_pf.customer.name, "Carlos Eduardo da Silva");
+    assert_eq!(created_pf.customer.document_number, "52998224725");
+    assert_eq!(created_pf.contacts.len(), 1);
+    assert_eq!(created_pf.addresses.len(), 1);
+
+    // 2. Cria cliente PJ com CNPJ alfanumérico válido (IN RFB nº 2.229/2025)
+    let pj_input = CreateCustomerInput {
+        person_type: PersonType::Legal,
+        name: "Prime Audiovisual & Iluminação Ltda.".to_string(),
+        trade_name: Some("Prime Eventos".to_string()),
+        document_number: "12.ABC.345/0001-88".to_string(),
+        state_registration: Some("123.456.789.000".to_string()),
+        municipal_registration: Some("987654".to_string()),
+        notes: None,
+        contacts: vec![CreateContactInput {
+            name: "Diretoria Financeira".to_string(),
+            email: Some("financeiro@primeeventos.com".to_string()),
+            phone: Some("(11) 3322-1100".to_string()),
+            role: Some("Financeiro".to_string()),
+            is_primary: true,
+        }],
+        addresses: vec![CreateAddressInput {
+            label: "Galpão Principal".to_string(),
+            street: "Rua dos Produtores".to_string(),
+            number: "500".to_string(),
+            complement: None,
+            neighborhood: "Vila Leopoldina".to_string(),
+            city: "São Paulo".to_string(),
+            state: "SP".to_string(),
+            postal_code: "05311-000".to_string(),
+            is_primary: true,
+        }],
+    };
+
+    let created_pj = services
+        .create_customer(session, &pj_input)
+        .await
+        .expect("Falha ao criar cliente PJ com CNPJ alfanumérico");
+    assert_eq!(created_pj.customer.document_number, "12ABC345000188");
+
+    // 3. Unicidade ativa: tentativa de criar cliente duplicado com mesmo CPF deve falhar com CoreError::Conflict
+    let dup_pf = services.create_customer(session, &pf_input).await;
+    assert!(dup_pf.is_err());
+    assert!(matches!(dup_pf.unwrap_err(), CoreError::Conflict(_)));
+
+    // 4. Incompatibilidade: PF com CNPJ e PJ com CPF
+    let mut invalid_pair1 = pf_input.clone();
+    invalid_pair1.document_number = "12.ABC.345/0001-88".to_string();
+    assert!(services
+        .create_customer(session, &invalid_pair1)
+        .await
+        .is_err());
+
+    let mut invalid_pair2 = pj_input.clone();
+    invalid_pair2.document_number = "529.982.247-25".to_string();
+    assert!(services
+        .create_customer(session, &invalid_pair2)
+        .await
+        .is_err());
+
+    // 5. Busca e paginação (list_customers)
+    // 5.1 Busca sem acento e case-insensitive
+    let list_search = services
+        .list_customers(
+            session,
+            &CustomerFilter {
+                query: Some("eduardo silva".to_string()),
+                person_type: None,
+                cursor: None,
+                limit: Some(10),
+            },
+        )
+        .await
+        .expect("Busca por 'eduardo silva' deve suceder");
+    assert_eq!(list_search.items.len(), 1);
+    assert_eq!(list_search.items[0].id, created_pf.customer.id);
+
+    // 5.2 Busca por CNPJ alfanumérico com máscara
+    let list_cnpj = services
+        .list_customers(
+            session,
+            &CustomerFilter {
+                query: Some("12.ABC.345".to_string()),
+                person_type: None,
+                cursor: None,
+                limit: Some(10),
+            },
+        )
+        .await
+        .expect("Busca por CNPJ parcial");
+    assert_eq!(list_cnpj.items.len(), 1);
+    assert_eq!(list_cnpj.items[0].id, created_pj.customer.id);
+
+    // 6. Atualização de cliente
+    let update_input = UpdateCustomerInput {
+        person_type: PersonType::Individual,
+        name: "Carlos Eduardo da Silva Atualizado".to_string(),
+        trade_name: Some("Carlos VIP".to_string()),
+        document_number: "529.982.247-25".to_string(),
+        state_registration: None,
+        municipal_registration: None,
+        notes: Some("Notas atualizadas".to_string()),
+        contacts: created_pf
+            .contacts
+            .into_iter()
+            .map(|c| CreateContactInput {
+                name: c.name,
+                email: c.email,
+                phone: c.phone,
+                role: c.role,
+                is_primary: c.is_primary,
+            })
+            .collect(),
+        addresses: created_pf
+            .addresses
+            .into_iter()
+            .map(|a| CreateAddressInput {
+                label: a.label,
+                street: a.street,
+                number: a.number,
+                complement: a.complement,
+                neighborhood: a.neighborhood,
+                city: a.city,
+                state: a.state,
+                postal_code: a.postal_code,
+                is_primary: a.is_primary,
+            })
+            .collect(),
+    };
+
+    let updated = services
+        .update_customer(session, &created_pf.customer.id, &update_input)
+        .await
+        .expect("Falha ao atualizar cliente");
+    assert_eq!(updated.customer.name, "Carlos Eduardo da Silva Atualizado");
+
+    // 7. Soft delete e reativação de documento
+    services
+        .delete_customer(session, &created_pf.customer.id)
+        .await
+        .expect("Falha ao excluir cliente");
+
+    // Cliente excluído não deve aparecer na busca ativa
+    let after_delete = services
+        .get_customer(session, &created_pf.customer.id)
+        .await;
+    assert!(after_delete.is_err());
+    assert!(matches!(after_delete.unwrap_err(), CoreError::NotFound(_)));
+
+    // Índice único parcial permite re-cadastrar o mesmo CPF após exclusão lógica
+    let recreate_res = services.create_customer(session, &pf_input).await;
+    assert!(
+        recreate_res.is_ok(),
+        "Deve ser possível cadastrar cliente com mesmo documento após exclusão lógica do anterior"
+    );
+
+    // 8. Proteção LGPD na Auditoria: inspeciona logs e garante mascaramento
+    let audits = services
+        .stores
+        .audit
+        .list_by_tenant(&session.tenant_id, 20)
+        .await
+        .unwrap();
+    let customer_audits: Vec<_> = audits
+        .iter()
+        .filter(|a| a.action.starts_with("customer."))
+        .collect();
+    assert!(!customer_audits.is_empty());
+
+    for entry in &customer_audits {
+        // NUNCA deve conter o CPF completo 52998224725 nem 529.982.247-25
+        assert!(
+            !entry.summary.contains("52998224725"),
+            "Violação LGPD: CPF cru no log de auditoria!"
+        );
+        assert!(
+            !entry.summary.contains("529.982.247-25"),
+            "Violação LGPD: CPF cru formatado no log de auditoria!"
+        );
+        // NUNCA deve conter o CNPJ completo 12ABC345000188 nem 12.ABC.345/0001-88
+        assert!(
+            !entry.summary.contains("12ABC345000188"),
+            "Violação LGPD: CNPJ cru no log de auditoria!"
+        );
+        assert!(
+            !entry.summary.contains("12.ABC.345/0001-88"),
+            "Violação LGPD: CNPJ cru formatado no log de auditoria!"
+        );
+    }
+}
+
 /// Suíte genérica agregadora de testes de contrato.
 /// Executa todos os testes comportamentais sequencialmente sobre um mesmo ambiente.
 pub async fn run_store_contract_suite<F, Fut>(factory: F)
@@ -649,6 +881,7 @@ where
     contract_audit_log(&stores, &tenant_id).await;
     contract_unique_partial_indexes(&stores, &tenant_id).await;
     contract_branding_dark_logo_and_icon(&stores, &tenant_id).await;
+    contract_customer_crud_and_lgpd_audit(&services, &setup_result.session, &tenant_id).await;
 }
 
 #[cfg(test)]
@@ -931,8 +1164,8 @@ mod unit_tests {
     async fn test_run_in_tx_retry_and_max_retries() {
         use crate::error::{CoreError, Result};
         use crate::store::{
-            run_in_tx, AuditStore, BrandingStore, RoleStore, TenantStore, TransactionManager,
-            TransactionPolicy, TxStoreBundle, UserStore,
+            run_in_tx, AuditStore, BrandingStore, CustomerStore, RoleStore, TenantStore,
+            TransactionManager, TransactionPolicy, TxStoreBundle, UserStore,
         };
         use async_trait::async_trait;
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -954,6 +1187,9 @@ mod unit_tests {
                 unreachable!()
             }
             fn audit(&self) -> &dyn AuditStore {
+                unreachable!()
+            }
+            fn customers(&self) -> &dyn CustomerStore {
                 unreachable!()
             }
             async fn commit(self: Box<Self>) -> Result<()> {
@@ -1053,8 +1289,8 @@ mod unit_tests {
     async fn test_run_in_tx_retry_on_begin_and_commit() {
         use crate::error::{CoreError, Result};
         use crate::store::{
-            run_in_tx, AuditStore, BrandingStore, RoleStore, TenantStore, TransactionManager,
-            TransactionPolicy, TxStoreBundle, UserStore,
+            run_in_tx, AuditStore, BrandingStore, CustomerStore, RoleStore, TenantStore,
+            TransactionManager, TransactionPolicy, TxStoreBundle, UserStore,
         };
         use async_trait::async_trait;
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1080,6 +1316,9 @@ mod unit_tests {
                 unreachable!()
             }
             fn audit(&self) -> &dyn AuditStore {
+                unreachable!()
+            }
+            fn customers(&self) -> &dyn CustomerStore {
                 unreachable!()
             }
             async fn commit(self: Box<Self>) -> Result<()> {

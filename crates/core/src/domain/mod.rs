@@ -15,11 +15,11 @@ pub use customer::{
     build_customer_search_text, build_name_sort, normalize_for_search, remove_diacritics,
     CreateAddressInput, CreateContactInput, CreateCustomerInput, Customer, CustomerAddress,
     CustomerContact, CustomerCursor, CustomerFilter, CustomerPage, CustomerWithDetails, PersonType,
-    UpdateCustomerInput,
+    UpdateAddressInput, UpdateContactInput, UpdateCustomerInput,
 };
 pub use document::{
-    format_cnpj, format_cpf, normalize_document, parse_document, validate_cnpj, validate_cpf,
-    DocumentNumber, DocumentType,
+    format_cnpj, format_cpf, mask_document_for_audit, normalize_document, parse_document,
+    validate_cnpj, validate_cpf, DocumentNumber, DocumentType,
 };
 pub use permission::*;
 pub use role::{Role, RoleWithPermissions};

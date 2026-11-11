@@ -109,6 +109,9 @@ pub struct CreateAddressInput {
     pub is_primary: bool,
 }
 
+pub type UpdateContactInput = CreateContactInput;
+pub type UpdateAddressInput = CreateAddressInput;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateCustomerInput {
     pub person_type: PersonType,

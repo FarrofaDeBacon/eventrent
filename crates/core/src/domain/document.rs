@@ -227,6 +227,20 @@ pub fn format_cnpj(clean: &str) -> String {
     )
 }
 
+/// Mascara o número do documento para conformidade com a LGPD em logs de auditoria e telemetria:
+/// - CPF: `***.***.***-25` (preserva apenas os dígitos verificadores).
+/// - CNPJ: `**.***.***/0001-**` (preserva apenas o número de ordem/filial).
+pub fn mask_document_for_audit(document: &str) -> String {
+    let clean = normalize_document(document);
+    if clean.len() == 11 {
+        format!("***.***.***-{}", &clean[9..11])
+    } else if clean.len() == 14 {
+        format!("**.***.***/{}-**", &clean[8..12])
+    } else {
+        "***".to_string()
+    }
+}
+
 /// Utilitários de geração para suítes de teste automatizadas.
 pub mod testing_utils {
     /// Gera um CPF válido arbitrário a partir dos 9 primeiros dígitos fornecidos (ou base fixa).

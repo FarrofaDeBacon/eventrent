@@ -1,15 +1,18 @@
 use crate::domain::{
-    AuditLogEntry, BrandingValidator, CreateUserInput, InitialSetupInput, InitialSetupResult,
-    LoginInput, LoginPolicy, OperationMode, PublicBranding, RecoverPasswordInput,
-    RecoverPasswordResult, ResetPasswordInput, Role, RoleWithPermissions, SessionInfo, Tenant,
-    TenantBranding, UpdateBrandingInput, UpdateUserInput, UserRecord, UserWithRole,
-    PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_ROLE_READ, PERM_USER_MANAGE, PERM_USER_READ,
-    ROLE_SLUG_OWNER, SYSTEM_ROLES,
+    build_customer_search_text, build_name_sort, mask_document_for_audit, parse_document,
+    AuditLogEntry, BrandingValidator, CreateCustomerInput, CreateUserInput, Customer,
+    CustomerAddress, CustomerContact, CustomerFilter, CustomerPage, CustomerWithDetails,
+    DocumentType, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
+    PersonType, PublicBranding, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput,
+    Role, RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput,
+    UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole, PERM_BRANDING_MANAGE,
+    PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_USER_MANAGE,
+    PERM_USER_READ, ROLE_SLUG_OWNER, SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
-    run_in_tx, BrandingStore, RoleStore, StoreBundle, TenantStore, TransactionPolicy, TxBoxFuture,
-    TxStoreBundle, UserStore,
+    run_in_tx, BrandingStore, CustomerStore, RoleStore, StoreBundle, TenantStore,
+    TransactionPolicy, TxBoxFuture, TxStoreBundle, UserStore,
 };
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
@@ -358,6 +361,9 @@ impl<'a> TxStoreBundle for PassthroughTxStoreBundle<'a> {
     }
     fn audit(&self) -> &dyn crate::store::AuditStore {
         self.stores.audit.as_ref()
+    }
+    fn customers(&self) -> &dyn CustomerStore {
+        self.stores.customers.as_ref()
     }
     async fn commit(self: Box<Self>) -> Result<()> {
         Ok(())
@@ -1417,5 +1423,589 @@ impl CoreServices {
     /// Obtém as configurações de identidade visual do tenant para verificação de status do app.
     pub async fn get_tenant_branding(&self, tenant_id: &str) -> Result<Option<TenantBranding>> {
         self.stores.branding.get_by_tenant_id(tenant_id).await
+    }
+
+    // =========================================================================
+    // SERVIÇOS DE GESTÃO DE CLIENTES (FASE 1B.2)
+    // =========================================================================
+
+    /// Lista clientes com suporte a filtro textual, tipo de pessoa e paginação por cursor.
+    /// Requer permissão `customer:read`.
+    pub async fn list_customers(
+        &self,
+        session: &SessionInfo,
+        filter: &CustomerFilter,
+    ) -> Result<CustomerPage> {
+        self.check_session_and_permission(session, PERM_CUSTOMER_READ)?;
+        self.stores.customers.list(&session.tenant_id, filter).await
+    }
+
+    /// Obtém detalhes completos de um cliente (dados cadastrais, contatos e endereços).
+    /// Requer permissão `customer:read`.
+    pub async fn get_customer(
+        &self,
+        session: &SessionInfo,
+        id: &str,
+    ) -> Result<CustomerWithDetails> {
+        self.check_session_and_permission(session, PERM_CUSTOMER_READ)?;
+        self.stores
+            .customers
+            .find_by_id(&session.tenant_id, id)
+            .await?
+            .ok_or_else(|| CoreError::NotFound("Cliente não encontrado.".to_string()))
+    }
+
+    /// Cria um novo cliente com validação estrita de CPF/CNPJ, unicidade, contatos e endereços.
+    /// Requer permissão `customer:manage`.
+    pub async fn create_customer(
+        &self,
+        session: &SessionInfo,
+        input: &CreateCustomerInput,
+    ) -> Result<CustomerWithDetails> {
+        self.check_session_and_permission(session, PERM_CUSTOMER_MANAGE)?;
+
+        let name = input.name.trim();
+        if name.is_empty() {
+            return Err(CoreError::Validation(
+                "Nome ou Razão Social do cliente é obrigatório.".to_string(),
+            ));
+        }
+
+        // Validação estrita de CPF/CNPJ (suportando CNPJ alfanumérico IN RFB 2.229/2025)
+        let parsed_doc = parse_document(&input.document_number)?;
+        match (input.person_type, parsed_doc.doc_type) {
+            (PersonType::Individual, DocumentType::Cpf) => {}
+            (PersonType::Legal, DocumentType::Cnpj) => {}
+            (PersonType::Individual, DocumentType::Cnpj) => {
+                return Err(CoreError::Validation(
+                    "Pessoa Física requer um CPF válido de 11 dígitos, não um CNPJ.".to_string(),
+                ));
+            }
+            (PersonType::Legal, DocumentType::Cpf) => {
+                return Err(CoreError::Validation(
+                    "Pessoa Jurídica requer um CNPJ válido de 14 caracteres, não um CPF."
+                        .to_string(),
+                ));
+            }
+        }
+
+        // Verificação prévia de unicidade ativa no tenant
+        if self
+            .stores
+            .customers
+            .find_by_document(&session.tenant_id, &parsed_doc.raw)
+            .await?
+            .is_some()
+        {
+            return Err(CoreError::Conflict(
+                "Já existe um cliente ativo cadastrado com este CPF/CNPJ.".to_string(),
+            ));
+        }
+
+        // Validação de contatos
+        if input.contacts.is_empty() {
+            return Err(CoreError::Validation(
+                "Cliente deve possuir pelo menos um contato.".to_string(),
+            ));
+        }
+        for (idx, c) in input.contacts.iter().enumerate() {
+            if c.name.trim().is_empty() {
+                return Err(CoreError::Validation(format!(
+                    "Nome do contato #{} é obrigatório.",
+                    idx + 1
+                )));
+            }
+        }
+
+        // Validação de endereços
+        if input.addresses.is_empty() {
+            return Err(CoreError::Validation(
+                "Cliente deve possuir pelo menos um endereço cadastrado.".to_string(),
+            ));
+        }
+        for (idx, a) in input.addresses.iter().enumerate() {
+            if a.street.trim().is_empty()
+                || a.number.trim().is_empty()
+                || a.city.trim().is_empty()
+                || a.state.trim().is_empty()
+                || a.postal_code.trim().is_empty()
+            {
+                return Err(CoreError::Validation(format!(
+                    "Endereço #{} possui campos obrigatórios em branco (logradouro, número, cidade, UF ou CEP).",
+                    idx + 1
+                )));
+            }
+        }
+
+        let customer_id = Uuid::now_v7().to_string();
+        let now = Utc::now().to_rfc3339();
+
+        // Garante que haja pelo menos 1 contato primário
+        let has_primary_contact = input.contacts.iter().any(|c| c.is_primary);
+        let contacts: Vec<CustomerContact> = input
+            .contacts
+            .iter()
+            .enumerate()
+            .map(|(i, c)| CustomerContact {
+                id: Uuid::now_v7().to_string(),
+                customer_id: customer_id.clone(),
+                name: c.name.trim().to_string(),
+                email: c.email.as_ref().map(|e| e.trim().to_string()),
+                phone: c.phone.as_ref().map(|p| p.trim().to_string()),
+                role: c.role.as_ref().map(|r| r.trim().to_string()),
+                is_primary: if !has_primary_contact && i == 0 {
+                    true
+                } else {
+                    c.is_primary
+                },
+                created_at: now.clone(),
+                updated_at: now.clone(),
+                deleted_at: None,
+            })
+            .collect();
+
+        // Garante que haja pelo menos 1 endereço primário
+        let has_primary_address = input.addresses.iter().any(|a| a.is_primary);
+        let addresses: Vec<CustomerAddress> = input
+            .addresses
+            .iter()
+            .enumerate()
+            .map(|(i, a)| CustomerAddress {
+                id: Uuid::now_v7().to_string(),
+                customer_id: customer_id.clone(),
+                label: if a.label.trim().is_empty() {
+                    "Principal".to_string()
+                } else {
+                    a.label.trim().to_string()
+                },
+                street: a.street.trim().to_string(),
+                number: a.number.trim().to_string(),
+                complement: a.complement.as_ref().map(|c| c.trim().to_string()),
+                neighborhood: a.neighborhood.trim().to_string(),
+                city: a.city.trim().to_string(),
+                state: a.state.trim().to_uppercase(),
+                postal_code: a.postal_code.trim().to_string(),
+                is_primary: if !has_primary_address && i == 0 {
+                    true
+                } else {
+                    a.is_primary
+                },
+                created_at: now.clone(),
+                updated_at: now.clone(),
+                deleted_at: None,
+            })
+            .collect();
+
+        // Constrói termos de busca
+        let mut search_terms = Vec::new();
+        for c in &contacts {
+            if let Some(ref e) = c.email {
+                search_terms.push(e.clone());
+            }
+            if let Some(ref p) = c.phone {
+                search_terms.push(p.clone());
+            }
+        }
+        for a in &addresses {
+            search_terms.push(a.city.clone());
+            search_terms.push(a.neighborhood.clone());
+        }
+
+        let trade_trimmed = input
+            .trade_name
+            .as_ref()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty());
+        let search_text = build_customer_search_text(
+            name,
+            trade_trimmed.as_deref(),
+            &parsed_doc.raw,
+            &parsed_doc.formatted,
+            &search_terms,
+        );
+        let name_sort = build_name_sort(name);
+
+        let customer = Customer {
+            id: customer_id.clone(),
+            tenant_id: session.tenant_id.clone(),
+            person_type: input.person_type,
+            name: name.to_string(),
+            trade_name: trade_trimmed,
+            document_number: parsed_doc.raw.clone(),
+            state_registration: input
+                .state_registration
+                .as_ref()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            municipal_registration: input
+                .municipal_registration
+                .as_ref()
+                .map(|m| m.trim().to_string())
+                .filter(|m| !m.is_empty()),
+            notes: input
+                .notes
+                .as_ref()
+                .map(|n| n.trim().to_string())
+                .filter(|n| !n.is_empty()),
+            search_text,
+            name_sort,
+            created_at: now.clone(),
+            updated_at: now,
+            deleted_at: None,
+            created_by: Some(session.user_id.clone()),
+        };
+
+        let session_clone = session.clone();
+        let customer_clone = customer.clone();
+        let contacts_clone = contacts.clone();
+        let addresses_clone = addresses.clone();
+        let masked_doc = mask_document_for_audit(&parsed_doc.raw);
+
+        self.run_transaction(|stores| {
+            let session = session_clone.clone();
+            let customer = customer_clone.clone();
+            let contacts = contacts_clone.clone();
+            let addresses = addresses_clone.clone();
+            let masked = masked_doc.clone();
+
+            Box::pin(async move {
+                stores
+                    .customers()
+                    .create(&customer, &contacts, &addresses)
+                    .await?;
+
+                let audit_detail = format!(
+                    "Cliente '{}' criado com sucesso (documento: {}, tipo: {})",
+                    customer.name, masked, customer.person_type
+                );
+
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &session.tenant_id,
+                        Some(&session.user_id),
+                        "customer.created",
+                        "customer",
+                        &customer.id,
+                        &audit_detail,
+                    ))
+                    .await?;
+
+                Ok(())
+            })
+        })
+        .await?;
+
+        Ok(CustomerWithDetails {
+            customer,
+            contacts,
+            addresses,
+        })
+    }
+
+    /// Atualiza os dados de um cliente existente com validações completas e auditoria mascarada (LGPD).
+    /// Requer permissão `customer:manage`.
+    pub async fn update_customer(
+        &self,
+        session: &SessionInfo,
+        id: &str,
+        input: &UpdateCustomerInput,
+    ) -> Result<CustomerWithDetails> {
+        self.check_session_and_permission(session, PERM_CUSTOMER_MANAGE)?;
+
+        let existing = self
+            .stores
+            .customers
+            .find_by_id(&session.tenant_id, id)
+            .await?
+            .ok_or_else(|| CoreError::NotFound("Cliente não encontrado.".to_string()))?;
+
+        let name = input.name.trim();
+        if name.is_empty() {
+            return Err(CoreError::Validation(
+                "Nome ou Razão Social do cliente é obrigatório.".to_string(),
+            ));
+        }
+
+        let parsed_doc = parse_document(&input.document_number)?;
+        match (input.person_type, parsed_doc.doc_type) {
+            (PersonType::Individual, DocumentType::Cpf) => {}
+            (PersonType::Legal, DocumentType::Cnpj) => {}
+            (PersonType::Individual, DocumentType::Cnpj) => {
+                return Err(CoreError::Validation(
+                    "Pessoa Física requer um CPF válido de 11 dígitos, não um CNPJ.".to_string(),
+                ));
+            }
+            (PersonType::Legal, DocumentType::Cpf) => {
+                return Err(CoreError::Validation(
+                    "Pessoa Jurídica requer um CNPJ válido de 14 caracteres, não um CPF."
+                        .to_string(),
+                ));
+            }
+        }
+
+        // Se o documento foi alterado, checa duplicidade com outro cliente ativo
+        if parsed_doc.raw != existing.customer.document_number {
+            if let Some(other) = self
+                .stores
+                .customers
+                .find_by_document(&session.tenant_id, &parsed_doc.raw)
+                .await?
+            {
+                if other.id != id {
+                    return Err(CoreError::Conflict(
+                        "Já existe outro cliente ativo cadastrado com este CPF/CNPJ.".to_string(),
+                    ));
+                }
+            }
+        }
+
+        if input.contacts.is_empty() {
+            return Err(CoreError::Validation(
+                "Cliente deve possuir pelo menos um contato.".to_string(),
+            ));
+        }
+        for (idx, c) in input.contacts.iter().enumerate() {
+            if c.name.trim().is_empty() {
+                return Err(CoreError::Validation(format!(
+                    "Nome do contato #{} é obrigatório.",
+                    idx + 1
+                )));
+            }
+        }
+
+        if input.addresses.is_empty() {
+            return Err(CoreError::Validation(
+                "Cliente deve possuir pelo menos um endereço cadastrado.".to_string(),
+            ));
+        }
+        for (idx, a) in input.addresses.iter().enumerate() {
+            if a.street.trim().is_empty()
+                || a.number.trim().is_empty()
+                || a.city.trim().is_empty()
+                || a.state.trim().is_empty()
+                || a.postal_code.trim().is_empty()
+            {
+                return Err(CoreError::Validation(format!(
+                    "Endereço #{} possui campos obrigatórios em branco (logradouro, número, cidade, UF ou CEP).",
+                    idx + 1
+                )));
+            }
+        }
+
+        let now = Utc::now().to_rfc3339();
+
+        let has_primary_contact = input.contacts.iter().any(|c| c.is_primary);
+        let contacts: Vec<CustomerContact> = input
+            .contacts
+            .iter()
+            .enumerate()
+            .map(|(i, c)| CustomerContact {
+                id: Uuid::now_v7().to_string(),
+                customer_id: id.to_string(),
+                name: c.name.trim().to_string(),
+                email: c.email.as_ref().map(|e| e.trim().to_string()),
+                phone: c.phone.as_ref().map(|p| p.trim().to_string()),
+                role: c.role.as_ref().map(|r| r.trim().to_string()),
+                is_primary: if !has_primary_contact && i == 0 {
+                    true
+                } else {
+                    c.is_primary
+                },
+                created_at: now.clone(),
+                updated_at: now.clone(),
+                deleted_at: None,
+            })
+            .collect();
+
+        let has_primary_address = input.addresses.iter().any(|a| a.is_primary);
+        let addresses: Vec<CustomerAddress> = input
+            .addresses
+            .iter()
+            .enumerate()
+            .map(|(i, a)| CustomerAddress {
+                id: Uuid::now_v7().to_string(),
+                customer_id: id.to_string(),
+                label: if a.label.trim().is_empty() {
+                    "Principal".to_string()
+                } else {
+                    a.label.trim().to_string()
+                },
+                street: a.street.trim().to_string(),
+                number: a.number.trim().to_string(),
+                complement: a.complement.as_ref().map(|c| c.trim().to_string()),
+                neighborhood: a.neighborhood.trim().to_string(),
+                city: a.city.trim().to_string(),
+                state: a.state.trim().to_uppercase(),
+                postal_code: a.postal_code.trim().to_string(),
+                is_primary: if !has_primary_address && i == 0 {
+                    true
+                } else {
+                    a.is_primary
+                },
+                created_at: now.clone(),
+                updated_at: now.clone(),
+                deleted_at: None,
+            })
+            .collect();
+
+        let mut search_terms = Vec::new();
+        for c in &contacts {
+            if let Some(ref e) = c.email {
+                search_terms.push(e.clone());
+            }
+            if let Some(ref p) = c.phone {
+                search_terms.push(p.clone());
+            }
+        }
+        for a in &addresses {
+            search_terms.push(a.city.clone());
+            search_terms.push(a.neighborhood.clone());
+        }
+
+        let trade_trimmed = input
+            .trade_name
+            .as_ref()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty());
+        let search_text = build_customer_search_text(
+            name,
+            trade_trimmed.as_deref(),
+            &parsed_doc.raw,
+            &parsed_doc.formatted,
+            &search_terms,
+        );
+        let name_sort = build_name_sort(name);
+
+        let updated_customer = Customer {
+            id: id.to_string(),
+            tenant_id: session.tenant_id.clone(),
+            person_type: input.person_type,
+            name: name.to_string(),
+            trade_name: trade_trimmed,
+            document_number: parsed_doc.raw.clone(),
+            state_registration: input
+                .state_registration
+                .as_ref()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            municipal_registration: input
+                .municipal_registration
+                .as_ref()
+                .map(|m| m.trim().to_string())
+                .filter(|m| !m.is_empty()),
+            notes: input
+                .notes
+                .as_ref()
+                .map(|n| n.trim().to_string())
+                .filter(|n| !n.is_empty()),
+            search_text,
+            name_sort,
+            created_at: existing.customer.created_at,
+            updated_at: now,
+            deleted_at: None,
+            created_by: existing.customer.created_by,
+        };
+
+        let session_clone = session.clone();
+        let customer_clone = updated_customer.clone();
+        let contacts_clone = contacts.clone();
+        let addresses_clone = addresses.clone();
+        let masked_doc = mask_document_for_audit(&parsed_doc.raw);
+
+        self.run_transaction(|stores| {
+            let session = session_clone.clone();
+            let customer = customer_clone.clone();
+            let contacts = contacts_clone.clone();
+            let addresses = addresses_clone.clone();
+            let masked = masked_doc.clone();
+
+            Box::pin(async move {
+                stores
+                    .customers()
+                    .update(&customer, &contacts, &addresses)
+                    .await?;
+
+                let audit_detail = format!(
+                    "Cliente '{}' atualizado com sucesso (documento: {})",
+                    customer.name, masked
+                );
+
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &session.tenant_id,
+                        Some(&session.user_id),
+                        "customer.updated",
+                        "customer",
+                        &customer.id,
+                        &audit_detail,
+                    ))
+                    .await?;
+
+                Ok(())
+            })
+        })
+        .await?;
+
+        Ok(CustomerWithDetails {
+            customer: updated_customer,
+            contacts,
+            addresses,
+        })
+    }
+
+    /// Realiza exclusão lógica (soft delete) do cliente e seus contatos/endereços.
+    /// Requer permissão `customer:manage`.
+    pub async fn delete_customer(&self, session: &SessionInfo, id: &str) -> Result<()> {
+        self.check_session_and_permission(session, PERM_CUSTOMER_MANAGE)?;
+
+        let existing = self
+            .stores
+            .customers
+            .find_by_id(&session.tenant_id, id)
+            .await?
+            .ok_or_else(|| CoreError::NotFound("Cliente não encontrado.".to_string()))?;
+
+        let now = Utc::now().to_rfc3339();
+        let session_clone = session.clone();
+        let id_str = id.to_string();
+        let masked_doc = mask_document_for_audit(&existing.customer.document_number);
+        let name_str = existing.customer.name.clone();
+
+        self.run_transaction(|stores| {
+            let session = session_clone.clone();
+            let id = id_str.clone();
+            let now = now.clone();
+            let masked = masked_doc.clone();
+            let name = name_str.clone();
+
+            Box::pin(async move {
+                stores
+                    .customers()
+                    .soft_delete(&session.tenant_id, &id, &now)
+                    .await?;
+
+                let audit_detail = format!(
+                    "Cliente '{}' excluído (soft delete, documento: {})",
+                    name, masked
+                );
+
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &session.tenant_id,
+                        Some(&session.user_id),
+                        "customer.deleted",
+                        "customer",
+                        &id,
+                        &audit_detail,
+                    ))
+                    .await?;
+
+                Ok(())
+            })
+        })
+        .await
     }
 }
