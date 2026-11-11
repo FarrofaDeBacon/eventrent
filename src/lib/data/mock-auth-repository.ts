@@ -125,10 +125,12 @@ function createSystemRoles(tenantId: string): RoleWithPermissions[] {
       is_system: true,
       permissions: [
         PERMISSIONS.BRANDING_READ,
+        PERMISSIONS.CUSTOMER_READ,
         PERMISSIONS.QUOTE_READ,
+        PERMISSIONS.RESERVATION_READ,
         PERMISSIONS.FINANCE_READ,
         PERMISSIONS.FINANCE_MANAGE,
-        PERMISSIONS.RESERVATION_READ,
+        PERMISSIONS.AUDIT_READ,
       ],
       created_at: now,
       updated_at: now,
