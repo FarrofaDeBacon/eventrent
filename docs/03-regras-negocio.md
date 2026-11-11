@@ -112,3 +112,21 @@ Criados de forma idempotente por `ensure_system_roles` para cada tenant:
 - O nome inicial padrão da empresa antes da configuração pelo cliente é `"Minha empresa"`, evitando exibir a marca do software (`EventRent`) como se fosse a razão social da locadora.
 - A paleta de cores do tenant sobrescreve dinamicamente as variáveis de tema no `:root` sem que nenhum componente precise de código condicional.
 - O tema respeita alternância entre modo claro e modo escuro, assegurando que o contraste atenda aos critérios WCAG AA.
+
+### 5.4. Cadastro de Clientes, Documentos e IN RFB nº 2.229/2025 (Fase 1B.2)
+
+- **Tipos de Pessoa**:
+  - **Pessoa Física (`individual`)**: exige CPF válido com 11 dígitos numéricos (Módulo 11, pesos `10..2` e `11..2`), rejeitando sequências repetidas (`000...`, `111...`).
+  - **Pessoa Jurídica (`legal`)**: exige CNPJ válido com 14 posições, suportando tanto o formato puramente numérico tradicional quanto o **CNPJ Alfanumérico (IN RFB nº 2.229/2025)**.
+- **Regra do CNPJ Alfanumérico (IN RFB nº 2.229/2025)**:
+  - As 12 primeiras posições aceitam caracteres alfanuméricos `[0-9A-Z]` (convertidos por `ASCII - 48`: `'0'..'9' -> 0..9` e `'A'..'Z' -> 17..42`).
+  - Os 2 últimos caracteres são estritamente dígitos verificadores numéricos `[0-9]`, calculados em Módulo 11 com pesos `[5,4,3,2,9,8,7,6,5,4,3,2]` e `[6,5,4,3,2,9,8,7,6,5,4,3,2]`.
+- **Unicidade e Soft Delete**:
+  - O documento normalizado é único entre clientes ativos do mesmo tenant via índice parcial (`idx_customer_tenant_document_active WHERE deleted_at IS NULL`). Ao excluir logicamente um cliente, o documento fica liberado para eventual recadastro futuro sem violar histórico.
+- **Integridade de Contatos e Endereços**:
+  - Todo cliente deve possuir no mínimo **1 contato** e **1 endereço** cadastrados, mantendo ao menos um registro sinalizado como principal (`is_primary`).
+- **Busca Desacentuada e Paginação Determinística**:
+  - Os campos normalizados `search_text` e `name_sort` removem acentuação e padronizam caixa baixa para busca instantânea em SQLite e paginação por cursor composto `(name_sort, id)` sem duplicações ou lacunas entre páginas.
+- **Autorização (RBAC)**:
+  - Consulta permitida com `customer:read` (**Proprietário**, **Comercial**, **Financeiro**).
+  - Criação, edição e exclusão lógica exigem `customer:manage` (**Proprietário**, **Comercial**).
