@@ -10,6 +10,12 @@ function runGit(args, cwd) {
   }).trim();
 }
 
+function isMigrationFile(filePath) {
+  return /^crates\/[^/]+\/migrations\/.+\.sql$/i.test(
+    filePath.replace(/\\/g, "/"),
+  );
+}
+
 function parseMigrationVersion(filePath) {
   const baseName = path.posix.basename(filePath.replace(/\\/g, "/"));
   const match = /^(\d+)_.+\.sql$/.exec(baseName);
@@ -26,27 +32,23 @@ export function checkFrozenMigrations(
     let baseFilesRaw = "";
     try {
       baseFilesRaw = runGit(
-        ["ls-tree", "-r", "--name-only", baseRef, "--", "crates/*/migrations"],
+        ["ls-tree", "-r", "--name-only", baseRef, "--", "crates"],
         cwd,
       );
     } catch {
       const fallbackRef = baseRef.replace(/^origin\//, "");
       baseFilesRaw = runGit(
-        [
-          "ls-tree",
-          "-r",
-          "--name-only",
-          fallbackRef,
-          "--",
-          "crates/*/migrations",
-        ],
+        ["ls-tree", "-r", "--name-only", fallbackRef, "--", "crates"],
         cwd,
       );
       baseRef = fallbackRef;
     }
 
     const baseMigrationFiles = baseFilesRaw
-      ? baseFilesRaw.split(/\r?\n/).map((f) => f.trim())
+      ? baseFilesRaw
+          .split(/\r?\n/)
+          .map((f) => f.trim())
+          .filter(isMigrationFile)
       : [];
 
     // Calcula a maior versão existente na base por diretório de migrações
@@ -65,13 +67,7 @@ export function checkFrozenMigrations(
 
     // 2. Obter alterações nos diretórios crates/*/migrations em relação à base
     const diffStatusRaw = runGit(
-      [
-        "diff",
-        "--name-status",
-        `${baseRef}...HEAD`,
-        "--",
-        "crates/*/migrations",
-      ],
+      ["diff", "--name-status", `${baseRef}...HEAD`, "--", "crates"],
       cwd,
     );
 
@@ -83,6 +79,10 @@ export function checkFrozenMigrations(
       const parts = line.split(/\t+/);
       const statusCode = parts[0].trim();
       const filePath = parts[1] ? parts[1].trim().replace(/\\/g, "/") : "";
+      const secondPath = parts[2] ? parts[2].trim().replace(/\\/g, "/") : "";
+      if (!isMigrationFile(filePath) && !isMigrationFile(secondPath)) {
+        continue;
+      }
 
       if (statusCode.startsWith("A")) {
         added.push(filePath);

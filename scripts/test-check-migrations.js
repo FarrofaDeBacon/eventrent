@@ -25,11 +25,10 @@ try {
   const migDir = path.join(tmpDir, "crates", "store-sqlite", "migrations");
   fs.mkdirSync(migDir, { recursive: true });
 
-  // Cria as migrações REAIS 0001..0005 na base main
+  // Cria as migrações 0001, 0002, 0003 e 0005 na base main (deixando 0004 livre para testar versão menor que a maior)
   const mig1 = path.join(migDir, "0001_init_tenant_and_branding.sql");
   const mig2 = path.join(migDir, "0002_users_roles_and_audit.sql");
   const mig3 = path.join(migDir, "0003_branding_dark_logo_and_icon.sql");
-  const mig4 = path.join(migDir, "0004_customers.sql");
   const mig5 = path.join(migDir, "0005_customers_rev.sql");
 
   fs.writeFileSync(
@@ -43,10 +42,6 @@ try {
   fs.writeFileSync(
     mig3,
     "-- 0003_branding_dark_logo_and_icon.sql\nALTER TABLE tenant_branding ADD COLUMN logo_dark_url TEXT;\n",
-  );
-  fs.writeFileSync(
-    mig4,
-    "-- 0004_customers.sql\nCREATE TABLE customer (id TEXT PRIMARY KEY);\n",
   );
   fs.writeFileSync(
     mig5,
@@ -115,14 +110,14 @@ try {
   if (res4.passed)
     throw new Error("Cenário 4 (versão duplicada 0005) deveria falhar!");
 
-  // CENÁRIO 5: Versão menor que a maior existente na base (0003_retroativa.sql) -> DEVE FALHAR
+  // CENÁRIO 5: Versão menor que a maior existente na base (0004_retroativa.sql < 0005) -> DEVE FALHAR
   console.log(
-    "\n--- CENÁRIO 5: Adicionar migração com versão menor que a maior da base (0003_retroativa.sql) ---",
+    "\n--- CENÁRIO 5: Adicionar migração com versão menor que a maior da base (0004_retroativa.sql) ---",
   );
   runGit(["checkout", "main"], tmpDir);
   runGit(["checkout", "-b", "branch-cenario-5"], tmpDir);
   fs.writeFileSync(
-    path.join(migDir, "0003_retroativa.sql"),
+    path.join(migDir, "0004_retroativa.sql"),
     "-- versao menor que 0005\n",
   );
   runGit(["add", "."], tmpDir);
@@ -130,7 +125,7 @@ try {
 
   const res5 = checkFrozenMigrations(tmpDir, "main");
   console.log(`Resultado: ${res5.passed ? "PASSA" : "FALHA"}\n${res5.output}`);
-  if (res5.passed)
+  if (res5.passed || !res5.output.includes("VERSÃO MENOR"))
     throw new Error("Cenário 5 (versão menor que 0005) deveria falhar!");
 
   // CENÁRIO 6: Adicionar 0006 válida -> DEVE PASSAR
