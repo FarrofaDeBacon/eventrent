@@ -102,11 +102,13 @@ Para a transição da nuvem na Fase 2.5, as seguintes salvaguardas serão obriga
 
 O tratamento de dados pessoais e fiscais de clientes (CPF, CNPJ, contatos e endereços) observa o princípio de minimização em trilhas de auditoria e telemetria:
 
-1. **Mascaramento de Documentos em Auditoria (`mask_document_for_audit`)**:
-   - Os registros em `audit_log` referentes a criação, atualização e exclusão lógica de clientes (`customer.created`, `customer.updated`, `customer.deleted`) não expõem o número integral do documento em campos resumidos ou logs de execução:
+1. **Mascaramento de Dados Pessoais em Auditoria e Logs (`mask_document_for_audit`, `mask_email_for_audit`, `mask_phone_for_audit`)**:
+   - Os registros em `audit_log` referentes a criação, atualização, ativação/desativação e exclusão lógica de clientes (`customer.created`, `customer.updated`, `customer.activated`, `customer.deactivated`, `customer.deleted`) não expõem CPF, CNPJ, e-mail ou telefone completos:
      - **CPF**: mascarado preservando apenas os 2 dígitos verificadores (`***.***.***-25`).
      - **CNPJ**: mascarado preservando apenas o identificador de ordem/filial (`**.***.***/0001-**`).
-   - O documento completo permanece exclusivamente na tabela `customer` para fins operacionais, fiscais e de emissão contratual.
+     - **E-mail**: mascarado preservando inicial e domínio (`j***@dominio.com`).
+     - **Telefone**: mascarado preservando DDD e os 4 últimos dígitos (`(21) *****-1234`).
+   - Todas as structs de domínio de cliente (`Customer`, `CustomerContact`, `CustomerAddress`, inputs e `CustomerFilter`) implementam `fmt::Debug` manual com ofuscação/mascaramento, impedindo vazamento acidental em `{:?}`.
 2. **Guarda de Comandos Tauri**:
    - Os 5 comandos de clientes (`list_customers`, `get_customer`, `create_customer`, `update_customer`, `delete_customer`) passam obrigatoriamente por `require_session(&state)` no backend Rust, validam expiração por inatividade e delegam integralmente às permissões `customer:read` / `customer:manage` em `CoreServices`, sem acesso direto das interfaces aos repositórios de banco.
 3. **Ocultação de Erros Cru de Banco (`map_sqlx_err`)**:

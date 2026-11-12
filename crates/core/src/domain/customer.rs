@@ -1,7 +1,10 @@
-use crate::domain::document::DocumentType;
+use crate::domain::document::{
+    mask_document_for_audit, mask_email_for_audit, mask_phone_for_audit, DocumentType,
+};
 use crate::error::{CoreError, Result as CoreResult};
 use base64::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -31,7 +34,7 @@ impl std::str::FromStr for PersonType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Customer {
     pub id: String,
     pub tenant_id: String,
@@ -52,7 +55,7 @@ pub struct Customer {
     pub created_by: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CustomerContact {
     pub id: String,
     pub tenant_id: String,
@@ -68,7 +71,7 @@ pub struct CustomerContact {
     pub created_by: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CustomerAddress {
     pub id: String,
     pub tenant_id: String,
@@ -96,7 +99,7 @@ pub struct CustomerWithDetails {
     pub addresses: Vec<CustomerAddress>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateContactInput {
     #[serde(default)]
     pub id: Option<String>,
@@ -107,7 +110,7 @@ pub struct CreateContactInput {
     pub is_primary: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateAddressInput {
     #[serde(default)]
     pub id: Option<String>,
@@ -127,7 +130,7 @@ pub struct CreateAddressInput {
 pub type UpdateContactInput = CreateContactInput;
 pub type UpdateAddressInput = CreateAddressInput;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateCustomerInput {
     pub person_type: PersonType,
     pub name: String,
@@ -144,7 +147,7 @@ pub struct CreateCustomerInput {
     pub addresses: Vec<CreateAddressInput>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UpdateCustomerInput {
     pub person_type: PersonType,
     pub name: String,
@@ -161,7 +164,7 @@ pub struct UpdateCustomerInput {
     pub addresses: Vec<CreateAddressInput>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct CustomerFilter {
     pub query: Option<String>,
     pub person_type: Option<PersonType>,
@@ -287,4 +290,126 @@ pub fn build_customer_search_text(
     }
 
     parts.join(" ")
+}
+
+impl fmt::Debug for Customer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Customer")
+            .field("id", &self.id)
+            .field("tenant_id", &self.tenant_id)
+            .field("person_type", &self.person_type)
+            .field("name", &self.name)
+            .field("document_type", &self.document_type)
+            .field(
+                "document_number",
+                &self.document_number.as_deref().map(mask_document_for_audit),
+            )
+            .field("active", &self.active)
+            .field("search_text", &"[REDACTED]")
+            .field("name_sort", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl fmt::Debug for CustomerContact {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CustomerContact")
+            .field("id", &self.id)
+            .field("tenant_id", &self.tenant_id)
+            .field("customer_id", &self.customer_id)
+            .field("name", &self.name)
+            .field("email", &self.email.as_deref().map(mask_email_for_audit))
+            .field("phone", &self.phone.as_deref().map(mask_phone_for_audit))
+            .field("is_primary", &self.is_primary)
+            .finish()
+    }
+}
+
+impl fmt::Debug for CustomerAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CustomerAddress")
+            .field("id", &self.id)
+            .field("tenant_id", &self.tenant_id)
+            .field("customer_id", &self.customer_id)
+            .field("label", &self.label)
+            .field("street", &"[REDACTED]")
+            .field("number", &"[REDACTED]")
+            .field("city", &self.city)
+            .field("state", &self.state)
+            .field("postal_code", &"[REDACTED]")
+            .field("country", &self.country)
+            .field("is_primary", &self.is_primary)
+            .finish()
+    }
+}
+
+impl fmt::Debug for CreateContactInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateContactInput")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("email", &self.email.as_deref().map(mask_email_for_audit))
+            .field("phone", &self.phone.as_deref().map(mask_phone_for_audit))
+            .field("is_primary", &self.is_primary)
+            .finish()
+    }
+}
+
+impl fmt::Debug for CreateAddressInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateAddressInput")
+            .field("id", &self.id)
+            .field("label", &self.label)
+            .field("street", &"[REDACTED]")
+            .field("number", &"[REDACTED]")
+            .field("city", &self.city)
+            .field("state", &self.state)
+            .field("postal_code", &"[REDACTED]")
+            .field("country", &self.country)
+            .field("is_primary", &self.is_primary)
+            .finish()
+    }
+}
+
+impl fmt::Debug for CreateCustomerInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateCustomerInput")
+            .field("person_type", &self.person_type)
+            .field("name", &self.name)
+            .field("document_type", &self.document_type)
+            .field(
+                "document_number",
+                &self.document_number.as_deref().map(mask_document_for_audit),
+            )
+            .field("contacts_count", &self.contacts.len())
+            .field("addresses_count", &self.addresses.len())
+            .finish()
+    }
+}
+
+impl fmt::Debug for UpdateCustomerInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UpdateCustomerInput")
+            .field("person_type", &self.person_type)
+            .field("name", &self.name)
+            .field("document_type", &self.document_type)
+            .field(
+                "document_number",
+                &self.document_number.as_deref().map(mask_document_for_audit),
+            )
+            .field("contacts_count", &self.contacts.len())
+            .field("addresses_count", &self.addresses.len())
+            .finish()
+    }
+}
+
+impl fmt::Debug for CustomerFilter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CustomerFilter")
+            .field("query", &self.query.as_ref().map(|_| "[REDACTED]"))
+            .field("person_type", &self.person_type)
+            .field("cursor", &self.cursor.as_ref().map(|_| "[REDACTED]"))
+            .field("limit", &self.limit)
+            .finish()
+    }
 }

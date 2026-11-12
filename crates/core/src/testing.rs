@@ -924,25 +924,51 @@ pub async fn contract_customer_crud_and_lgpd_audit(
     assert!(!customer_audits.is_empty());
 
     for entry in &customer_audits {
-        // NUNCA deve conter o CPF completo 52998224725 nem 529.982.247-25
+        // NUNCA deve conter o CPF completo, CNPJ completo, e-mail completo ou telefone completo
         assert!(
-            !entry.summary.contains("52998224725"),
+            !entry.summary.contains("52998224725") && !entry.summary.contains("529.982.247-25"),
             "Violação LGPD: CPF cru no log de auditoria!"
         );
         assert!(
-            !entry.summary.contains("529.982.247-25"),
-            "Violação LGPD: CPF cru formatado no log de auditoria!"
-        );
-        // NUNCA deve conter o CNPJ completo 12ABC345000188 nem 12.ABC.345/0001-88
-        assert!(
-            !entry.summary.contains("12ABC345000188"),
+            !entry.summary.contains("12ABC34501DE35")
+                && !entry.summary.contains("12.ABC.345/01DE-35"),
             "Violação LGPD: CNPJ cru no log de auditoria!"
         );
         assert!(
-            !entry.summary.contains("12.ABC.345/0001-88"),
-            "Violação LGPD: CNPJ cru formatado no log de auditoria!"
+            !entry.summary.contains("carlos@silvaeventos.com.br")
+                && !entry.summary.contains("financeiro@primeeventos.com"),
+            "Violação LGPD: e-mail completo no log de auditoria!"
         );
+        assert!(
+            !entry.summary.contains("99887-7665") && !entry.summary.contains("3322-1100"),
+            "Violação LGPD: telefone completo no log de auditoria!"
+        );
+        println!("[AUDIT SUMMARY] {} => {}", entry.action, entry.summary);
     }
+
+    // 9. Prova LGPD em {:?} (Debug manual)
+    let debug_details = format!("{deactivated:?}");
+    let debug_filter = format!(
+        "{:?}",
+        CustomerFilter {
+            query: Some("529.982.247-25".to_string()),
+            person_type: Some(PersonType::Individual),
+            cursor: Some("abc".to_string()),
+            limit: Some(50),
+        }
+    );
+    let debug_create = format!("{pf_input:?}");
+    let debug_update = format!("{update_input:?}");
+    for dbg in [&debug_details, &debug_filter, &debug_create, &debug_update] {
+        assert!(!dbg.contains("52998224725") && !dbg.contains("529.982.247-25"));
+        assert!(!dbg.contains("carlos@silvaeventos.com.br"));
+        assert!(!dbg.contains("99887-7665"));
+        assert!(!dbg.contains("Av. Paulista"));
+        assert!(!dbg.contains("01310-100"));
+    }
+    assert!(debug_details.contains("***.***.***-25"));
+    assert!(debug_details.contains("c***@silvaeventos.com.br"));
+    assert!(debug_details.contains("(11) *****-7665"));
 }
 
 /// Suíte genérica agregadora de testes de contrato.

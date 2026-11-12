@@ -360,6 +360,35 @@ pub fn mask_document_for_audit(document: &str) -> String {
     }
 }
 
+/// Mascara endereço de e-mail para conformidade com a LGPD (ex.: `j***@dominio.com`).
+pub fn mask_email_for_audit(email: &str) -> String {
+    let trimmed = email.trim();
+    let Some((local, domain)) = trimmed.split_once('@') else {
+        return "***".to_string();
+    };
+    if domain.is_empty() {
+        return "***".to_string();
+    }
+    let first = local.chars().next().unwrap_or('*');
+    format!("{first}***@{domain}")
+}
+
+/// Mascara telefone brasileiro para conformidade com a LGPD (ex.: `(21) *****-1234`).
+pub fn mask_phone_for_audit(phone: &str) -> String {
+    let digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() >= 10 {
+        let ddd = &digits[0..2];
+        let last4 = &digits[digits.len() - 4..];
+        let masked_mid = "*".repeat(digits.len() - 6);
+        format!("({ddd}) {masked_mid}-{last4}")
+    } else if digits.len() >= 4 {
+        let last4 = &digits[digits.len() - 4..];
+        format!("****-{last4}")
+    } else {
+        "***".to_string()
+    }
+}
+
 /// Utilitários de geração para suítes de teste automatizadas.
 #[cfg(any(test, feature = "test-utils"))]
 pub mod testing_utils {

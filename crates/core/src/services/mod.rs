@@ -1,14 +1,14 @@
 use crate::domain::{
-    build_customer_search_text, build_name_sort, mask_document_for_audit, parse_document_with_type,
-    AuditLogEntry, BrandingValidator, CreateCustomerInput, CreateUserInput, Customer,
-    CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter, CustomerPage,
-    CustomerWithDetails, DocumentType, InitialSetupInput, InitialSetupResult, LoginInput,
-    LoginPolicy, OperationMode, PersonType, PublicBranding, RecoverPasswordInput,
-    RecoverPasswordResult, ResetPasswordInput, Role, RoleWithPermissions, SessionInfo, Tenant,
-    TenantBranding, UpdateBrandingInput, UpdateCustomerInput, UpdateUserInput, UserRecord,
-    UserWithRole, PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE,
-    PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_USER_MANAGE, PERM_USER_READ, ROLE_SLUG_OWNER,
-    SYSTEM_ROLES,
+    build_customer_search_text, build_name_sort, mask_document_for_audit, mask_email_for_audit,
+    mask_phone_for_audit, parse_document_with_type, AuditLogEntry, BrandingValidator,
+    CreateCustomerInput, CreateUserInput, Customer, CustomerAddress, CustomerContact,
+    CustomerCursor, CustomerFilter, CustomerPage, CustomerWithDetails, DocumentType,
+    InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode, PersonType,
+    PublicBranding, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput, Role,
+    RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput,
+    UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole, PERM_BRANDING_MANAGE,
+    PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_USER_MANAGE,
+    PERM_USER_READ, ROLE_SLUG_OWNER, SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
@@ -377,6 +377,29 @@ impl<'a> TxStoreBundle for PassthroughTxStoreBundle<'a> {
 #[derive(Clone)]
 pub struct CoreServices {
     pub stores: StoreBundle,
+}
+
+fn format_primary_contact_for_audit(contacts: &[CustomerContact]) -> String {
+    let primary = contacts
+        .iter()
+        .find(|c| c.is_primary)
+        .or_else(|| contacts.first());
+    let Some(c) = primary else {
+        return "sem contato".to_string();
+    };
+    let email = c
+        .email
+        .as_deref()
+        .filter(|e| !e.trim().is_empty())
+        .map(mask_email_for_audit)
+        .unwrap_or_else(|| "-".to_string());
+    let phone = c
+        .phone
+        .as_deref()
+        .filter(|p| !p.trim().is_empty())
+        .map(mask_phone_for_audit)
+        .unwrap_or_else(|| "-".to_string());
+    format!("email: {email}, tel: {phone}")
 }
 
 fn validate_customer_document_for_person_type(
@@ -1720,9 +1743,10 @@ impl CoreServices {
                     .create(&customer, &contacts, &addresses)
                     .await?;
 
+                let masked_contact = format_primary_contact_for_audit(&contacts);
                 let audit_detail = format!(
-                    "Cliente '{}' criado com sucesso (documento: {}, tipo: {})",
-                    customer.name, masked, customer.person_type
+                    "Cliente '{}' criado com sucesso (documento: {}, tipo: {}, {})",
+                    customer.name, masked, customer.person_type, masked_contact
                 );
 
                 stores
@@ -2014,9 +2038,10 @@ impl CoreServices {
                     .update(&customer, &contacts, &addresses)
                     .await?;
 
+                let masked_contact = format_primary_contact_for_audit(&contacts);
                 let audit_detail = format!(
-                    "Cliente '{}' atualizado com sucesso (documento: {})",
-                    customer.name, masked
+                    "Cliente '{}' atualizado com sucesso (documento: {}, {})",
+                    customer.name, masked, masked_contact
                 );
 
                 stores

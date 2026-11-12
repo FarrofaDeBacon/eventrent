@@ -18,9 +18,9 @@ pub use customer::{
     UpdateAddressInput, UpdateContactInput, UpdateCustomerInput,
 };
 pub use document::{
-    format_cnpj, format_cpf, mask_document_for_audit, normalize_document, parse_document,
-    parse_document_with_type, validate_cnpj, validate_cpf, validate_foreign_document,
-    DocumentNumber, DocumentType,
+    format_cnpj, format_cpf, mask_document_for_audit, mask_email_for_audit, mask_phone_for_audit,
+    normalize_document, parse_document, parse_document_with_type, validate_cnpj, validate_cpf,
+    validate_foreign_document, DocumentNumber, DocumentType,
 };
 pub use permission::*;
 pub use role::{Role, RoleWithPermissions};
