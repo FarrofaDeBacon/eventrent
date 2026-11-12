@@ -51,17 +51,27 @@ pub fn validate_cpf(input: &str) -> Result<String> {
     }
 
     // Rejeição de CPFs com todos os dígitos repetidos (00000000000, 11111111111, ...)
-    let first_char = clean.chars().next().unwrap();
-    if clean.chars().all(|c| c == first_char) {
+    let mut chars_iter = clean.chars();
+    let Some(first_char) = chars_iter.next() else {
+        return Err(CoreError::Validation(
+            "CPF deve conter exatamente 11 dígitos numéricos.".to_string(),
+        ));
+    };
+    if chars_iter.all(|c| c == first_char) {
         return Err(CoreError::Validation(
             "CPF inválido: sequência com todos os dígitos repetidos.".to_string(),
         ));
     }
 
-    let digits: Vec<u32> = clean
-        .chars()
-        .map(|c| c.to_digit(10).expect("dígito garantido"))
-        .collect();
+    let mut digits = Vec::with_capacity(11);
+    for c in clean.chars() {
+        let Some(d) = c.to_digit(10) else {
+            return Err(CoreError::Validation(
+                "CPF deve conter apenas dígitos numéricos.".to_string(),
+            ));
+        };
+        digits.push(d);
+    }
 
     // Primeiro dígito verificador (pesos de 10 a 2)
     let sum1: u32 = (0..9).map(|i| digits[i] * (10 - i as u32)).sum();
@@ -144,7 +154,12 @@ pub fn validate_cnpj(input: &str) -> Result<String> {
     let remainder1 = sum1 % 11;
     let expected_dv1 = if remainder1 < 2 { 0 } else { 11 - remainder1 };
 
-    let dv1 = chars[12].to_digit(10).expect("validado como dígito");
+    let Some(dv1) = chars[12].to_digit(10) else {
+        return Err(CoreError::Validation(
+            "Os dois últimos caracteres do CNPJ (dígitos verificadores) devem ser numéricos."
+                .to_string(),
+        ));
+    };
     if dv1 != expected_dv1 {
         return Err(CoreError::Validation(format!(
             "CNPJ inválido: primeiro dígito verificador incorreto (esperado {expected_dv1}, recebido {dv1})."
@@ -159,7 +174,12 @@ pub fn validate_cnpj(input: &str) -> Result<String> {
     let remainder2 = sum2 % 11;
     let expected_dv2 = if remainder2 < 2 { 0 } else { 11 - remainder2 };
 
-    let dv2 = chars[13].to_digit(10).expect("validado como dígito");
+    let Some(dv2) = chars[13].to_digit(10) else {
+        return Err(CoreError::Validation(
+            "Os dois últimos caracteres do CNPJ (dígitos verificadores) devem ser numéricos."
+                .to_string(),
+        ));
+    };
     if dv2 != expected_dv2 {
         return Err(CoreError::Validation(format!(
             "CNPJ inválido: segundo dígito verificador incorreto (esperado {expected_dv2}, recebido {dv2})."
@@ -242,6 +262,7 @@ pub fn mask_document_for_audit(document: &str) -> String {
 }
 
 /// Utilitários de geração para suítes de teste automatizadas.
+#[cfg(any(test, feature = "test-utils"))]
 pub mod testing_utils {
     /// Gera um CPF válido arbitrário a partir dos 9 primeiros dígitos fornecidos (ou base fixa).
     pub fn generate_valid_cpf_from_base(base9: &[u32; 9]) -> String {

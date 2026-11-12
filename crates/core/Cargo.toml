@@ -5,6 +5,9 @@ edition = "2021"
 authors = ["EventRent Team"]
 description = "Database-agnostic core domain, business rules, services and store traits (ports) for EventRent"
 
+[features]
+test-utils = []
+
 [dependencies]
 async-trait = "0.1"
 argon2 = "0.5"
