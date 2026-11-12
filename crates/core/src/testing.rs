@@ -659,7 +659,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
     assert_eq!(created_pf.contacts.len(), 1);
     assert_eq!(created_pf.addresses.len(), 1);
 
-    // 2. Cria cliente PJ com CNPJ alfanumérico válido (IN RFB nº 2.229/2025)
+    // 2. Cria cliente PJ com CNPJ alfanumérico válido (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024)
     let pj_input = CreateCustomerInput {
         person_type: PersonType::Legal,
         name: "Prime Audiovisual & Iluminação Ltda.".to_string(),
@@ -1749,7 +1749,7 @@ mod unit_tests {
             .to_string()
             .contains("segundo dígito verificador"));
 
-        // 4. Validação de CNPJ Alfanumérico (IN RFB nº 2.229/2025)
+        // 4. Validação de CNPJ Alfanumérico (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024)
         // 4.1 Exemplo calculado matematicamente: 12.ABC.345/0001-88
         let alpha_cnpj_1 = "12.ABC.345/0001-88";
         let valid_alpha_1 = validate_cnpj(alpha_cnpj_1).expect("CNPJ alfanumérico válido");

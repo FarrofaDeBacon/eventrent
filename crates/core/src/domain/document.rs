@@ -91,9 +91,9 @@ pub fn validate_cpf(input: &str) -> Result<String> {
 }
 
 /// Valida um CNPJ (14 caracteres) suportando tanto o formato puramente numérico tradicional
-/// quanto o CNPJ ALFANUMÉRICO regulamentado pela IN RFB nº 2.229/2025.
+/// quanto o CNPJ ALFANUMÉRICO regulamentado pela Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024.
 ///
-/// Regras IN RFB nº 2.229/2025:
+/// Regras (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024):
 /// - As primeiras 12 posições são alfanuméricas [0-9A-Z] (raiz e filial).
 /// - As 2 últimas posições são estritamente dígitos verificadores numéricos [0-9].
 /// - O valor de cada caractere é o código ASCII - 48 ('0'-'9' = 0-9; 'A'-'Z' = 17-42).

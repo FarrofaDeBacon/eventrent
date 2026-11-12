@@ -33,7 +33,7 @@ export const BRAZILIAN_UFS = [
 
 /**
  * Remove pontuação, espaços e converte letras para maiúsculas.
- * Mantém dígitos e letras ASCII [0-9A-Z] para suportar CNPJ Alfanumérico (IN RFB nº 2.229/2025).
+ * Mantém dígitos e letras ASCII [0-9A-Z] para suportar CNPJ Alfanumérico (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024).
  */
 export function normalizeDocument(input: string): string {
   return input.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
@@ -85,9 +85,9 @@ export function validateCpf(input: string): boolean {
 
 /**
  * Valida CNPJ (14 caracteres), suportando tanto o padrão numérico quanto o
- * CNPJ ALFANUMÉRICO regulamentado pela IN RFB nº 2.229/2025.
+ * CNPJ ALFANUMÉRICO regulamentado pela Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024.
  *
- * Regras IN RFB nº 2.229/2025:
+ * Regras (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024):
  * - Posições 1..12: alfanuméricas [0-9A-Z]
  * - Posições 13..14 (dígitos verificadores): estritamente numéricas [0-9]
  * - Valor do caractere: charCodeAt(0) - 48 ('0'..'9' -> 0..9, 'A'..'Z' -> 17..42)

@@ -42,14 +42,14 @@ describe("Utilitários de Documentos Brasileiros e Máscaras", () => {
     expect(validateCpf("12345")).toBe(false);
   });
 
-  it("deve validar CNPJs numéricos e alfanuméricos conforme IN RFB nº 2.229/2025", () => {
+  it("deve validar CNPJs numéricos e alfanuméricos conforme Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024", () => {
     // CNPJ numérico tradicional
     expect(validateCnpj("11222333000181")).toBe(true);
     expect(validateCnpj("11.222.333/0001-81")).toBe(true);
     expect(validateCnpj("11222333000182")).toBe(false);
     expect(validateCnpj("00000000000000")).toBe(false);
 
-    // CNPJ alfanumérico (IN RFB nº 2.229/2025: ASCII - 48)
+    // CNPJ alfanumérico (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024: ASCII - 48)
     const alphaCnpj = generateValidAlphaCnpj("12ABC34501DE");
     expect(validateCnpj(alphaCnpj)).toBe(true);
     expect(validateCnpj(alphaCnpj.toLowerCase())).toBe(true);

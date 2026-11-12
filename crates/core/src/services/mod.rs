@@ -1471,7 +1471,7 @@ impl CoreServices {
             ));
         }
 
-        // Validação estrita de CPF/CNPJ (suportando CNPJ alfanumérico IN RFB 2.229/2025)
+        // Validação estrita de CPF/CNPJ (suportando CNPJ alfanumérico conforme Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024)
         let parsed_doc = parse_document(&input.document_number)?;
         match (input.person_type, parsed_doc.doc_type) {
             (PersonType::Individual, DocumentType::Cpf) => {}

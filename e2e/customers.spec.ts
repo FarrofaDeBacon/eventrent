@@ -65,7 +65,7 @@ test.describe("E2E — Módulo de Clientes (Fase 1B.2)", () => {
       page.getByText("Produtora Horizonte Eventos Ltda"),
     ).toBeVisible();
 
-    // 4. Cadastro de Novo Cliente PJ com CNPJ Alfanumérico (IN RFB nº 2.229/2025)
+    // 4. Cadastro de Novo Cliente PJ com CNPJ Alfanumérico (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024)
     await page.getByTestId("new-customer-btn").click();
     await expect(page).toHaveURL(/\/customers\/new$/);
 

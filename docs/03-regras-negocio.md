@@ -113,12 +113,12 @@ Criados de forma idempotente por `ensure_system_roles` para cada tenant:
 - A paleta de cores do tenant sobrescreve dinamicamente as variáveis de tema no `:root` sem que nenhum componente precise de código condicional.
 - O tema respeita alternância entre modo claro e modo escuro, assegurando que o contraste atenda aos critérios WCAG AA.
 
-### 5.4. Cadastro de Clientes, Documentos e IN RFB nº 2.229/2025 (Fase 1B.2)
+### 5.4. Cadastro de Clientes, Documentos e Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024 (Fase 1B.2)
 
 - **Tipos de Pessoa**:
   - **Pessoa Física (`individual`)**: exige CPF válido com 11 dígitos numéricos (Módulo 11, pesos `10..2` e `11..2`), rejeitando sequências repetidas (`000...`, `111...`).
-  - **Pessoa Jurídica (`legal`)**: exige CNPJ válido com 14 posições, suportando tanto o formato puramente numérico tradicional quanto o **CNPJ Alfanumérico (IN RFB nº 2.229/2025)**.
-- **Regra do CNPJ Alfanumérico (IN RFB nº 2.229/2025)**:
+  - **Pessoa Jurídica (`legal`)**: exige CNPJ válido com 14 posições, suportando tanto o formato puramente numérico tradicional quanto o **CNPJ Alfanumérico (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024)**.
+- **Regra do CNPJ Alfanumérico (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024)**:
   - As 12 primeiras posições aceitam caracteres alfanuméricos `[0-9A-Z]` (convertidos por `ASCII - 48`: `'0'..'9' -> 0..9` e `'A'..'Z' -> 17..42`).
   - Os 2 últimos caracteres são estritamente dígitos verificadores numéricos `[0-9]`, calculados em Módulo 11 com pesos `[5,4,3,2,9,8,7,6,5,4,3,2]` e `[6,5,4,3,2,9,8,7,6,5,4,3,2]`.
 - **Unicidade e Soft Delete**:

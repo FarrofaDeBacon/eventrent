@@ -95,7 +95,7 @@ export const customerFormSchema = z
           code: z.ZodIssueCode.custom,
           path: ["document_number"],
           message:
-            "CNPJ inválido. Verifique os 14 caracteres (numérico ou alfanumérico IN RFB nº 2.229/2025).",
+            "CNPJ inválido. Verifique os 14 caracteres (numérico ou alfanumérico conforme Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024).",
         });
       }
     }
