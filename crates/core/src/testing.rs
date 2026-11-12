@@ -1967,13 +1967,16 @@ mod unit_tests {
             CustomerCursor,
         };
 
-        // 1. Remoção de acentos em português e normalização
+        // 1. Remoção de acentos em português (NFC e NFD com combinantes U+0300..U+036F)
         let accented = "José da Conceição & Filhos — Produções Audiovisuais Ltda.";
         let unaccented = remove_diacritics(accented);
         assert_eq!(
             unaccented,
             "jose da conceicao & filhos — producoes audiovisuais ltda."
         );
+        assert_eq!(normalize_for_search("José"), "jose");
+        assert_eq!(normalize_for_search("Jose\u{0301}"), "jose");
+        assert_eq!(normalize_for_search("Sa\u{0303}o Joa\u{0303}o"), "sao joao");
 
         // 2. Colapso de múltiplos espaços e trim
         let raw_spacing = "   Som   &   Luz    Avançada   ";

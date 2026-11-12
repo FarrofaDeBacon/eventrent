@@ -127,7 +127,8 @@ Criados de forma idempotente por `ensure_system_roles` para cada tenant:
 - **Integridade de Contatos e Endereços**:
   - Todo cliente deve possuir no mínimo **1 contato** e **1 endereço** cadastrados, mantendo ao menos um registro sinalizado como principal (`is_primary`).
 - **Busca Desacentuada e Paginação Determinística**:
-  - Os campos normalizados `search_text` e `name_sort` removem acentuação e padronizam caixa baixa para busca instantânea em SQLite e paginação por cursor composto `(name_sort, id)` sem duplicações ou lacunas entre páginas.
+  - Os campos normalizados `search_text` e `name_sort` removem acentuação (formas NFC e marcas combinantes NFD `U+0300..U+036F`) e padronizam caixa baixa para busca em SQLite e paginação por cursor composto `(name_sort, id)`.
+  - **Limite de Escala da Busca por Trecho (`LIKE '%termo%'`)**: Na Fase 1B.2, a consulta `WHERE tenant_id = ? AND deleted_at IS NULL AND search_text LIKE ? ORDER BY name_sort ASC, id ASC` utiliza o índice `idx_customer_tenant_sort (tenant_id=?)` e realiza varredura linear sobre os registros ativos do tenant (~11 ms para 20.000 registros). Para volumes muito maiores de clientes por tenant, a evolução planejada para a **Fase 2.5** utilizará **FTS5** no SQLite local e **índices trigram (`pg_trgm` com GIN/GiST)** no PostgreSQL.
 - **Exclusão Lógica (`delete_customer`) e Ativação (`set_active`)**:
   - `delete_customer` executa **exclusão lógica** (`soft delete`), preenchendo `deleted_at` em `customer`, `customer_contact` e `customer_address` na mesma transação e gravando evento `customer.deleted` em `audit_log`, liberando o documento no índice único parcial para eventual recadastro.
   - `set_active` (permissão `customer:manage`) alterna a flag `active` (`true`/`false`) preservando integralmente o cadastro e gravando `customer.activated` / `customer.deactivated` no `audit_log`.

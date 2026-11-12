@@ -201,10 +201,11 @@ impl CustomerCursor {
     }
 }
 
-/// Remove acentos de caracteres Unicode em português/latim e converte para minúsculas.
+/// Remove acentos de caracteres Unicode (suportando formas precompostas NFC e decompostas NFD U+0300..U+036F) e converte para minúsculas.
 pub fn remove_diacritics(input: &str) -> String {
     input
         .chars()
+        .filter(|&c| !('\u{0300}'..='\u{036f}').contains(&c))
         .map(|c| match c {
             'á' | 'à' | 'â' | 'ã' | 'ä' | 'Á' | 'À' | 'Â' | 'Ã' | 'Ä' => 'a',
             'é' | 'è' | 'ê' | 'ë' | 'É' | 'È' | 'Ê' | 'Ë' => 'e',
