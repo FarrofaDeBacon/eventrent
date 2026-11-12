@@ -1819,68 +1819,100 @@ impl CoreServices {
 
         let now = Utc::now().to_rfc3339();
 
+        let existing_contacts: std::collections::HashMap<&str, &CustomerContact> = existing
+            .contacts
+            .iter()
+            .map(|c| (c.id.as_str(), c))
+            .collect();
         let has_primary_contact = input.contacts.iter().any(|c| c.is_primary);
         let contacts: Vec<CustomerContact> = input
             .contacts
             .iter()
             .enumerate()
-            .map(|(i, c)| CustomerContact {
-                id: Uuid::now_v7().to_string(),
-                tenant_id: session.tenant_id.clone(),
-                customer_id: id.to_string(),
-                name: c.name.trim().to_string(),
-                email: c.email.as_ref().map(|e| e.trim().to_string()),
-                phone: c.phone.as_ref().map(|p| p.trim().to_string()),
-                role: c.role.as_ref().map(|r| r.trim().to_string()),
-                is_primary: if !has_primary_contact && i == 0 {
-                    true
-                } else {
-                    c.is_primary
-                },
-                created_at: now.clone(),
-                updated_at: now.clone(),
-                deleted_at: None,
-                created_by: Some(session.user_id.clone()),
+            .map(|(i, c)| {
+                let prev =
+                    c.id.as_deref()
+                        .and_then(|cid| existing_contacts.get(cid).copied());
+                CustomerContact {
+                    id: prev
+                        .map(|p| p.id.clone())
+                        .unwrap_or_else(|| Uuid::now_v7().to_string()),
+                    tenant_id: session.tenant_id.clone(),
+                    customer_id: id.to_string(),
+                    name: c.name.trim().to_string(),
+                    email: c.email.as_ref().map(|e| e.trim().to_string()),
+                    phone: c.phone.as_ref().map(|p| p.trim().to_string()),
+                    role: c.role.as_ref().map(|r| r.trim().to_string()),
+                    is_primary: if !has_primary_contact && i == 0 {
+                        true
+                    } else {
+                        c.is_primary
+                    },
+                    created_at: prev
+                        .map(|p| p.created_at.clone())
+                        .unwrap_or_else(|| now.clone()),
+                    updated_at: now.clone(),
+                    deleted_at: None,
+                    created_by: prev
+                        .and_then(|p| p.created_by.clone())
+                        .or_else(|| Some(session.user_id.clone())),
+                }
             })
             .collect();
 
+        let existing_addresses: std::collections::HashMap<&str, &CustomerAddress> = existing
+            .addresses
+            .iter()
+            .map(|a| (a.id.as_str(), a))
+            .collect();
         let has_primary_address = input.addresses.iter().any(|a| a.is_primary);
         let addresses: Vec<CustomerAddress> = input
             .addresses
             .iter()
             .enumerate()
-            .map(|(i, a)| CustomerAddress {
-                id: Uuid::now_v7().to_string(),
-                tenant_id: session.tenant_id.clone(),
-                customer_id: id.to_string(),
-                label: if a.label.trim().is_empty() {
-                    "Principal".to_string()
-                } else {
-                    a.label.trim().to_string()
-                },
-                street: a.street.trim().to_string(),
-                number: a.number.trim().to_string(),
-                complement: a.complement.as_ref().map(|c| c.trim().to_string()),
-                neighborhood: a.neighborhood.trim().to_string(),
-                city: a.city.trim().to_string(),
-                state: a.state.trim().to_uppercase(),
-                postal_code: a.postal_code.trim().to_string(),
-                country: a
-                    .country
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|c| !c.is_empty())
-                    .map(str::to_uppercase)
-                    .unwrap_or_else(|| "BR".to_string()),
-                is_primary: if !has_primary_address && i == 0 {
-                    true
-                } else {
-                    a.is_primary
-                },
-                created_at: now.clone(),
-                updated_at: now.clone(),
-                deleted_at: None,
-                created_by: Some(session.user_id.clone()),
+            .map(|(i, a)| {
+                let prev =
+                    a.id.as_deref()
+                        .and_then(|aid| existing_addresses.get(aid).copied());
+                CustomerAddress {
+                    id: prev
+                        .map(|p| p.id.clone())
+                        .unwrap_or_else(|| Uuid::now_v7().to_string()),
+                    tenant_id: session.tenant_id.clone(),
+                    customer_id: id.to_string(),
+                    label: if a.label.trim().is_empty() {
+                        "Principal".to_string()
+                    } else {
+                        a.label.trim().to_string()
+                    },
+                    street: a.street.trim().to_string(),
+                    number: a.number.trim().to_string(),
+                    complement: a.complement.as_ref().map(|c| c.trim().to_string()),
+                    neighborhood: a.neighborhood.trim().to_string(),
+                    city: a.city.trim().to_string(),
+                    state: a.state.trim().to_uppercase(),
+                    postal_code: a.postal_code.trim().to_string(),
+                    country: a
+                        .country
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|c| !c.is_empty())
+                        .map(str::to_uppercase)
+                        .unwrap_or_else(|| "BR".to_string()),
+                    is_primary: if !has_primary_address && i == 0 {
+                        true
+                    } else {
+                        a.is_primary
+                    },
+                    created_at: prev
+                        .map(|p| p.created_at.clone())
+                        .unwrap_or_else(|| now.clone()),
+                    updated_at: now.clone(),
+                    deleted_at: None,
+                    created_by: prev
+                        .and_then(|p| p.created_by.clone())
+                        .or_else(|| Some(session.user_id.clone())),
+                }
             })
             .collect();
 

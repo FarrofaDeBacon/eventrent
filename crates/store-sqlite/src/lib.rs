@@ -1784,14 +1784,34 @@ impl CustomerStore for SqliteStore {
         )
         .await?;
 
-        // Remove contatos e endereços antigos e regrava os novos
+        // Limpa flag primária temporariamente para permitir troca de principal sem violar índice único parcial
         self.execute(
-            sqlx::query("DELETE FROM customer_contact WHERE tenant_id = ? AND customer_id = ?")
-                .bind(&customer.tenant_id)
-                .bind(&customer.id),
+            sqlx::query(
+                "UPDATE customer_contact SET is_primary = 0 WHERE tenant_id = ? AND customer_id = ? AND deleted_at IS NULL",
+            )
+            .bind(&customer.tenant_id)
+            .bind(&customer.id),
         )
         .await?;
 
+        // Exclusão lógica (soft delete) dos contatos removidos
+        if !contacts.is_empty() {
+            let placeholders = vec!["?"; contacts.len()].join(", ");
+            let sql_soft_del = format!(
+                "UPDATE customer_contact SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND customer_id = ? AND deleted_at IS NULL AND id NOT IN ({placeholders})"
+            );
+            let mut q = sqlx::query(&sql_soft_del)
+                .bind(&customer.updated_at)
+                .bind(&customer.updated_at)
+                .bind(&customer.tenant_id)
+                .bind(&customer.id);
+            for c in contacts {
+                q = q.bind(&c.id);
+            }
+            self.execute(q).await?;
+        }
+
+        // Upsert preservando IDs existentes
         for c in contacts {
             self.execute(
                 sqlx::query(
@@ -1800,6 +1820,16 @@ impl CustomerStore for SqliteStore {
                         id, tenant_id, customer_id, name, email, phone, role, is_primary,
                         created_at, updated_at, deleted_at, created_by
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        name = excluded.name,
+                        email = excluded.email,
+                        phone = excluded.phone,
+                        role = excluded.role,
+                        is_primary = excluded.is_primary,
+                        updated_at = excluded.updated_at,
+                        deleted_at = NULL
+                    WHERE customer_contact.tenant_id = excluded.tenant_id
+                      AND customer_contact.customer_id = excluded.customer_id
                     "#,
                 )
                 .bind(&c.id)
@@ -1819,11 +1849,29 @@ impl CustomerStore for SqliteStore {
         }
 
         self.execute(
-            sqlx::query("DELETE FROM customer_address WHERE tenant_id = ? AND customer_id = ?")
-                .bind(&customer.tenant_id)
-                .bind(&customer.id),
+            sqlx::query(
+                "UPDATE customer_address SET is_primary = 0 WHERE tenant_id = ? AND customer_id = ? AND deleted_at IS NULL",
+            )
+            .bind(&customer.tenant_id)
+            .bind(&customer.id),
         )
         .await?;
+
+        if !addresses.is_empty() {
+            let placeholders = vec!["?"; addresses.len()].join(", ");
+            let sql_soft_del = format!(
+                "UPDATE customer_address SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND customer_id = ? AND deleted_at IS NULL AND id NOT IN ({placeholders})"
+            );
+            let mut q = sqlx::query(&sql_soft_del)
+                .bind(&customer.updated_at)
+                .bind(&customer.updated_at)
+                .bind(&customer.tenant_id)
+                .bind(&customer.id);
+            for a in addresses {
+                q = q.bind(&a.id);
+            }
+            self.execute(q).await?;
+        }
 
         for a in addresses {
             self.execute(
@@ -1834,6 +1882,21 @@ impl CustomerStore for SqliteStore {
                         neighborhood, city, state, postal_code, country, is_primary,
                         created_at, updated_at, deleted_at, created_by
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        label = excluded.label,
+                        street = excluded.street,
+                        number = excluded.number,
+                        complement = excluded.complement,
+                        neighborhood = excluded.neighborhood,
+                        city = excluded.city,
+                        state = excluded.state,
+                        postal_code = excluded.postal_code,
+                        country = excluded.country,
+                        is_primary = excluded.is_primary,
+                        updated_at = excluded.updated_at,
+                        deleted_at = NULL
+                    WHERE customer_address.tenant_id = excluded.tenant_id
+                      AND customer_address.customer_id = excluded.customer_id
                     "#,
                 )
                 .bind(&a.id)

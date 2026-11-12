@@ -64,6 +64,7 @@
       municipal_registration: data.customer.municipal_registration ?? "",
       notes: data.customer.notes ?? "",
       contacts: data.contacts.map((c) => ({
+        id: c.id,
         name: c.name,
         email: c.email ?? "",
         phone: c.phone ?? "",
@@ -71,6 +72,7 @@
         is_primary: c.is_primary,
       })),
       addresses: data.addresses.map((a) => ({
+        id: a.id,
         label: a.label,
         street: a.street,
         number: a.number,

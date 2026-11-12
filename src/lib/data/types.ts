@@ -250,6 +250,7 @@ export interface CustomerWithDetails {
 }
 
 export interface CreateContactInput {
+  id?: string | null;
   name: string;
   email?: string | null;
   phone?: string | null;
@@ -258,6 +259,7 @@ export interface CreateContactInput {
 }
 
 export interface CreateAddressInput {
+  id?: string | null;
   label: string;
   street: string;
   number: string;

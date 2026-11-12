@@ -8,6 +8,7 @@ import {
 } from "./document";
 
 export const contactSchema = z.object({
+  id: z.string().optional().nullable(),
   name: z
     .string()
     .trim()
@@ -37,6 +38,7 @@ export const contactSchema = z.object({
 });
 
 export const addressSchema = z.object({
+  id: z.string().optional().nullable(),
   label: z
     .string()
     .trim()

@@ -632,6 +632,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         municipal_registration: None,
         notes: Some("Cliente VIP de eventos corporativos".to_string()),
         contacts: vec![CreateContactInput {
+            id: None,
             name: "Carlos Silva".to_string(),
             email: Some("carlos@silvaeventos.com.br".to_string()),
             phone: Some("(11) 99887-7665".to_string()),
@@ -639,6 +640,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             is_primary: true,
         }],
         addresses: vec![CreateAddressInput {
+            id: None,
             label: "Sede".to_string(),
             street: "Av. Paulista".to_string(),
             number: "1000".to_string(),
@@ -677,6 +679,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         municipal_registration: Some("987654".to_string()),
         notes: None,
         contacts: vec![CreateContactInput {
+            id: None,
             name: "Diretoria Financeira".to_string(),
             email: Some("financeiro@primeeventos.com".to_string()),
             phone: Some("(11) 3322-1100".to_string()),
@@ -684,6 +687,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             is_primary: true,
         }],
         addresses: vec![CreateAddressInput {
+            id: None,
             label: "Galpão Principal".to_string(),
             street: "Rua dos Produtores".to_string(),
             number: "500".to_string(),
@@ -791,7 +795,31 @@ pub async fn contract_customer_crud_and_lgpd_audit(
     assert_eq!(list_cnpj.items.len(), 1);
     assert_eq!(list_cnpj.items[0].id, created_pj.customer.id);
 
-    // 6. Atualização de cliente
+    // 6. Atualização de cliente preservando IDs estáveis de contato e endereço
+    let original_contact_id = created_pf.contacts[0].id.clone();
+    let original_address_id = created_pf.addresses[0].id.clone();
+
+    let mut updated_contacts: Vec<CreateContactInput> = created_pf
+        .contacts
+        .into_iter()
+        .map(|c| CreateContactInput {
+            id: Some(c.id),
+            name: "Carlos Silva Atualizado".to_string(),
+            email: c.email,
+            phone: c.phone,
+            role: c.role,
+            is_primary: false,
+        })
+        .collect();
+    updated_contacts.push(CreateContactInput {
+        id: None,
+        name: "Segundo Contato".to_string(),
+        email: Some("segundo@silvaeventos.com.br".to_string()),
+        phone: None,
+        role: Some("Produção".to_string()),
+        is_primary: true,
+    });
+
     let update_input = UpdateCustomerInput {
         person_type: PersonType::Individual,
         name: "Carlos Eduardo da Silva Atualizado".to_string(),
@@ -801,21 +829,12 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         state_registration: None,
         municipal_registration: None,
         notes: Some("Notas atualizadas".to_string()),
-        contacts: created_pf
-            .contacts
-            .into_iter()
-            .map(|c| CreateContactInput {
-                name: c.name,
-                email: c.email,
-                phone: c.phone,
-                role: c.role,
-                is_primary: c.is_primary,
-            })
-            .collect(),
+        contacts: updated_contacts,
         addresses: created_pf
             .addresses
             .into_iter()
             .map(|a| CreateAddressInput {
+                id: Some(a.id),
                 label: a.label,
                 street: a.street,
                 number: a.number,
@@ -835,6 +854,15 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         .await
         .expect("Falha ao atualizar cliente");
     assert_eq!(updated.customer.name, "Carlos Eduardo da Silva Atualizado");
+    assert!(
+        updated
+            .contacts
+            .iter()
+            .any(|c| c.id == original_contact_id && c.name == "Carlos Silva Atualizado"),
+        "ID do contato existente deve ser preservado após atualização"
+    );
+    assert_eq!(updated.contacts.len(), 2);
+    assert_eq!(updated.addresses[0].id, original_address_id);
 
     // 7. Soft delete e reativação de documento
     services

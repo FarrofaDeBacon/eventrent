@@ -556,40 +556,52 @@ export class MockCustomerRepository implements CustomerRepository {
       updated_at: now,
     };
 
-    const contacts: CustomerContact[] = input.contacts.map((c, cIdx) => ({
-      id: `${id}-ct-${Date.now()}-${cIdx + 1}`,
-      tenant_id: session.tenant_id,
-      customer_id: id,
-      name: c.name.trim(),
-      email: c.email?.trim() || null,
-      phone: c.phone?.trim() || null,
-      role: c.role?.trim() || null,
-      is_primary: c.is_primary,
-      created_at: now,
-      updated_at: now,
-      deleted_at: null,
-      created_by: session.user_id,
-    }));
+    const prevContacts = store.customers[idx].contacts;
+    const contacts: CustomerContact[] = input.contacts.map((c, cIdx) => {
+      const existingCt = c.id
+        ? prevContacts.find((p) => p.id === c.id && !p.deleted_at)
+        : undefined;
+      return {
+        id: existingCt?.id ?? `${id}-ct-${Date.now()}-${cIdx + 1}`,
+        tenant_id: session.tenant_id,
+        customer_id: id,
+        name: c.name.trim(),
+        email: c.email?.trim() || null,
+        phone: c.phone?.trim() || null,
+        role: c.role?.trim() || null,
+        is_primary: c.is_primary,
+        created_at: existingCt?.created_at ?? now,
+        updated_at: now,
+        deleted_at: null,
+        created_by: existingCt?.created_by ?? session.user_id,
+      };
+    });
 
-    const addresses: CustomerAddress[] = input.addresses.map((a, aIdx) => ({
-      id: `${id}-ad-${Date.now()}-${aIdx + 1}`,
-      tenant_id: session.tenant_id,
-      customer_id: id,
-      label: a.label.trim(),
-      street: a.street.trim(),
-      number: a.number.trim(),
-      complement: a.complement?.trim() || null,
-      neighborhood: a.neighborhood.trim(),
-      city: a.city.trim(),
-      state: a.state.trim().toUpperCase(),
-      postal_code: a.postal_code.trim(),
-      country: a.country?.trim().toUpperCase() || "BR",
-      is_primary: a.is_primary,
-      created_at: now,
-      updated_at: now,
-      deleted_at: null,
-      created_by: session.user_id,
-    }));
+    const prevAddresses = store.customers[idx].addresses;
+    const addresses: CustomerAddress[] = input.addresses.map((a, aIdx) => {
+      const existingAd = a.id
+        ? prevAddresses.find((p) => p.id === a.id && !p.deleted_at)
+        : undefined;
+      return {
+        id: existingAd?.id ?? `${id}-ad-${Date.now()}-${aIdx + 1}`,
+        tenant_id: session.tenant_id,
+        customer_id: id,
+        label: a.label.trim(),
+        street: a.street.trim(),
+        number: a.number.trim(),
+        complement: a.complement?.trim() || null,
+        neighborhood: a.neighborhood.trim(),
+        city: a.city.trim(),
+        state: a.state.trim().toUpperCase(),
+        postal_code: a.postal_code.trim(),
+        country: a.country?.trim().toUpperCase() || "BR",
+        is_primary: a.is_primary,
+        created_at: existingAd?.created_at ?? now,
+        updated_at: now,
+        deleted_at: null,
+        created_by: existingAd?.created_by ?? session.user_id,
+      };
+    });
 
     const updated = { customer, contacts, addresses };
     store.customers[idx] = updated;

@@ -97,6 +97,8 @@ pub struct CustomerWithDetails {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateContactInput {
+    #[serde(default)]
+    pub id: Option<String>,
     pub name: String,
     pub email: Option<String>,
     pub phone: Option<String>,
@@ -106,6 +108,8 @@ pub struct CreateContactInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateAddressInput {
+    #[serde(default)]
+    pub id: Option<String>,
     pub label: String,
     pub street: String,
     pub number: String,

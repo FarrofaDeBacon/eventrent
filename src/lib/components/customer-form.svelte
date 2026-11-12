@@ -49,6 +49,7 @@
   }: Props = $props();
 
   interface ContactFormItem {
+    id?: string | null;
     name: string;
     email: string;
     phone: string;
@@ -57,6 +58,7 @@
   }
 
   interface AddressFormItem {
+    id?: string | null;
     label: string;
     street: string;
     number: string;
@@ -141,6 +143,7 @@
       municipal_registration: src.municipal_registration ?? "",
       notes: src.notes ?? "",
       contacts: src.contacts.map((c) => ({
+        id: c.id ?? null,
         name: c.name,
         email: c.email ?? "",
         phone: c.phone ? maskPhone(c.phone) : "",
@@ -148,6 +151,7 @@
         is_primary: c.is_primary,
       })),
       addresses: src.addresses.map((a) => ({
+        id: a.id ?? null,
         label: a.label,
         street: a.street,
         number: a.number,
@@ -355,6 +359,7 @@
           : null,
       notes: parsed.data.notes || null,
       contacts: parsed.data.contacts.map((c) => ({
+        id: c.id ?? null,
         name: c.name,
         email: c.email || null,
         phone: c.phone || null,
@@ -362,6 +367,7 @@
         is_primary: c.is_primary,
       })),
       addresses: parsed.data.addresses.map((a) => ({
+        id: a.id ?? null,
         label: a.label,
         street: a.street,
         number: a.number,
