@@ -115,9 +115,10 @@ Criados de forma idempotente por `ensure_system_roles` para cada tenant:
 
 ### 5.4. Cadastro de Clientes, Documentos e Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024 (Fase 1B.2)
 
-- **Tipos de Pessoa**:
-  - **Pessoa Física (`individual`)**: exige CPF válido com 11 dígitos numéricos (Módulo 11, pesos `10..2` e `11..2`), rejeitando sequências repetidas (`000...`, `111...`).
-  - **Pessoa Jurídica (`legal`)**: exige CNPJ válido com 14 posições, suportando tanto o formato puramente numérico tradicional quanto o **CNPJ Alfanumérico (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024)**.
+- **Tipos de Pessoa e Documentos**:
+  - **Pessoa Física (`individual`)**: aceita `cpf` (11 dígitos numéricos, Módulo 11, rejeitando sequências repetidas), `foreign` (passaporte/documento estrangeiro: 5 a 30 caracteres alfanuméricos normalizados em maiúsculas, sem dígito verificador) ou `none` (pré-cadastro sem documento).
+  - **Pessoa Jurídica (`legal`)**: aceita `cnpj` (14 posições, numérico tradicional ou alfanumérico conforme **Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024**), `foreign` ou `none`.
+  - **Restrição para Contratos e Notas Fiscais (Fases 4 e 7)**: Embora o cadastro inicial permita `document_type = 'none'` (para pré-cadastro/orçamento rápido) ou `foreign`, a **emissão de contratos (Fase 4) e notas fiscais (Fase 7) EXIGEM obrigatoriamente `cpf` ou `cnpj` válidos**.
 - **Regra do CNPJ Alfanumérico (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024)**:
   - As 12 primeiras posições aceitam caracteres alfanuméricos `[0-9A-Z]` (convertidos por `ASCII - 48`: `'0'..'9' -> 0..9` e `'A'..'Z' -> 17..42`).
   - Os 2 últimos caracteres são estritamente dígitos verificadores numéricos `[0-9]`, calculados em Módulo 11 com pesos `[5,4,3,2,9,8,7,6,5,4,3,2]` e `[6,5,4,3,2,9,8,7,6,5,4,3,2]`.

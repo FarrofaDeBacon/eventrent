@@ -165,18 +165,28 @@ export function maskCnpj(input: string): string {
   return `${sanitized.slice(0, 2)}.${sanitized.slice(2, 5)}.${sanitized.slice(5, 8)}/${sanitized.slice(8, 12)}-${sanitized.slice(12, 14)}`;
 }
 
-/** Formata documento conforme tipo (`individual` -> CPF, `legal` -> CNPJ) ou tamanho. */
+/** Valida documento estrangeiro (5 a 30 caracteres alfanuméricos, sem dígito verificador). */
+export function validateForeignDocument(input: string): boolean {
+  if (!hasOnlyAllowedDocumentChars(input)) return false;
+  const clean = normalizeDocument(input);
+  return /^[0-9A-Z]{5,30}$/.test(clean);
+}
+
+/** Formata documento conforme tipo (`individual`/`legal` ou `documentType`) ou tamanho. */
 export function formatDocument(
-  input: string,
+  input: string | null | undefined,
   personType?: "individual" | "legal",
 ): string {
+  if (!input) return "Sem documento";
   const clean = normalizeDocument(input);
-  if (personType === "individual" || (!personType && clean.length === 11)) {
-    return clean.length === 11 ? maskCpf(clean) : input;
+  if (personType === "individual" && clean.length === 11) {
+    return maskCpf(clean);
   }
-  if (personType === "legal" || (!personType && clean.length === 14)) {
-    return clean.length === 14 ? maskCnpj(clean) : input;
+  if (personType === "legal" && clean.length === 14) {
+    return maskCnpj(clean);
   }
+  if (!personType && clean.length === 11) return maskCpf(clean);
+  if (!personType && clean.length === 14) return maskCnpj(clean);
   return input;
 }
 

@@ -1,11 +1,39 @@
 use crate::error::{CoreError, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentType {
     Cpf,
     Cnpj,
+    Foreign,
+    #[default]
+    None,
+}
+
+impl DocumentType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Cpf => "cpf",
+            Self::Cnpj => "cnpj",
+            Self::Foreign => "foreign",
+            Self::None => "none",
+        }
+    }
+}
+
+impl std::str::FromStr for DocumentType {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "cpf" => Ok(Self::Cpf),
+            "cnpj" => Ok(Self::Cnpj),
+            "foreign" => Ok(Self::Foreign),
+            "none" => Ok(Self::None),
+            other => Err(format!("Tipo de documento inválido: '{other}'")),
+        }
+    }
 }
 
 impl std::fmt::Display for DocumentType {
@@ -13,6 +41,8 @@ impl std::fmt::Display for DocumentType {
         match self {
             Self::Cpf => write!(f, "CPF"),
             Self::Cnpj => write!(f, "CNPJ"),
+            Self::Foreign => write!(f, "Estrangeiro"),
+            Self::None => write!(f, "Sem documento"),
         }
     }
 }
@@ -196,6 +226,60 @@ pub fn validate_cnpj(input: &str) -> Result<String> {
     }
 
     Ok(clean)
+}
+
+/// Valida um documento estrangeiro: texto normalizado em maiúsculas, 5 a 30 caracteres alfanuméricos, sem dígito verificador.
+pub fn validate_foreign_document(input: &str) -> Result<String> {
+    let clean = normalize_document(input)?;
+    if !(5..=30).contains(&clean.len()) {
+        return Err(CoreError::Validation(format!(
+            "Documento estrangeiro deve conter entre 5 e 30 caracteres alfanuméricos, mas recebeu {} caracteres.",
+            clean.len()
+        )));
+    }
+    Ok(clean)
+}
+
+/// Valida o documento conforme o tipo informado (`cpf`, `cnpj`, `foreign` ou `none`),
+/// retornando `(document_type, raw_nullable, formatted_for_search)`.
+pub fn parse_document_with_type(
+    doc_type: DocumentType,
+    input: Option<&str>,
+) -> Result<(DocumentType, Option<String>, String)> {
+    let trimmed = input.map(str::trim).filter(|s| !s.is_empty());
+    match doc_type {
+        DocumentType::None => {
+            if trimmed.is_some() {
+                return Err(CoreError::Validation(
+                    "Quando o tipo de documento é 'none', o número do documento deve ficar vazio."
+                        .to_string(),
+                ));
+            }
+            Ok((DocumentType::None, None, String::new()))
+        }
+        DocumentType::Cpf => {
+            let raw_input = trimmed
+                .ok_or_else(|| CoreError::Validation("Número de CPF é obrigatório.".to_string()))?;
+            let valid = validate_cpf(raw_input)?;
+            let formatted = format_cpf(&valid);
+            Ok((DocumentType::Cpf, Some(valid), formatted))
+        }
+        DocumentType::Cnpj => {
+            let raw_input = trimmed.ok_or_else(|| {
+                CoreError::Validation("Número de CNPJ é obrigatório.".to_string())
+            })?;
+            let valid = validate_cnpj(raw_input)?;
+            let formatted = format_cnpj(&valid);
+            Ok((DocumentType::Cnpj, Some(valid), formatted))
+        }
+        DocumentType::Foreign => {
+            let raw_input = trimmed.ok_or_else(|| {
+                CoreError::Validation("Número do documento estrangeiro é obrigatório.".to_string())
+            })?;
+            let valid = validate_foreign_document(raw_input)?;
+            Ok((DocumentType::Foreign, Some(valid.clone()), valid))
+        }
+    }
 }
 
 /// Identifica automaticamente o tipo de documento (CPF ou CNPJ), valida suas regras e formata.

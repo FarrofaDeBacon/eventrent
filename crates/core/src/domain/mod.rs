@@ -19,7 +19,8 @@ pub use customer::{
 };
 pub use document::{
     format_cnpj, format_cpf, mask_document_for_audit, normalize_document, parse_document,
-    validate_cnpj, validate_cpf, DocumentNumber, DocumentType,
+    parse_document_with_type, validate_cnpj, validate_cpf, validate_foreign_document,
+    DocumentNumber, DocumentType,
 };
 pub use permission::*;
 pub use role::{Role, RoleWithPermissions};

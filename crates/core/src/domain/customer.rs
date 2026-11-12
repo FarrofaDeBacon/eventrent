@@ -1,3 +1,4 @@
+use crate::domain::document::DocumentType;
 use base64::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -36,10 +37,12 @@ pub struct Customer {
     pub person_type: PersonType,
     pub name: String,
     pub trade_name: Option<String>,
-    pub document_number: String,
+    pub document_type: DocumentType,
+    pub document_number: Option<String>,
     pub state_registration: Option<String>,
     pub municipal_registration: Option<String>,
     pub notes: Option<String>,
+    pub active: bool,
     pub search_text: String,
     pub name_sort: String,
     pub created_at: String,
@@ -51,6 +54,7 @@ pub struct Customer {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CustomerContact {
     pub id: String,
+    pub tenant_id: String,
     pub customer_id: String,
     pub name: String,
     pub email: Option<String>,
@@ -60,11 +64,13 @@ pub struct CustomerContact {
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
+    pub created_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CustomerAddress {
     pub id: String,
+    pub tenant_id: String,
     pub customer_id: String,
     pub label: String,
     pub street: String,
@@ -74,10 +80,12 @@ pub struct CustomerAddress {
     pub city: String,
     pub state: String,
     pub postal_code: String,
+    pub country: String,
     pub is_primary: bool,
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
+    pub created_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -106,6 +114,8 @@ pub struct CreateAddressInput {
     pub city: String,
     pub state: String,
     pub postal_code: String,
+    #[serde(default)]
+    pub country: Option<String>,
     pub is_primary: bool,
 }
 
@@ -117,7 +127,9 @@ pub struct CreateCustomerInput {
     pub person_type: PersonType,
     pub name: String,
     pub trade_name: Option<String>,
-    pub document_number: String,
+    #[serde(default)]
+    pub document_type: DocumentType,
+    pub document_number: Option<String>,
     pub state_registration: Option<String>,
     pub municipal_registration: Option<String>,
     pub notes: Option<String>,
@@ -132,7 +144,9 @@ pub struct UpdateCustomerInput {
     pub person_type: PersonType,
     pub name: String,
     pub trade_name: Option<String>,
-    pub document_number: String,
+    #[serde(default)]
+    pub document_type: DocumentType,
+    pub document_number: Option<String>,
     pub state_registration: Option<String>,
     pub municipal_registration: Option<String>,
     pub notes: Option<String>,

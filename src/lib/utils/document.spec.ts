@@ -100,6 +100,7 @@ describe("Utilitários de Documentos Brasileiros e Máscaras", () => {
       person_type: "legal",
       name: "Locadora Alpha Eventos Ltda",
       trade_name: "Alpha Som",
+      document_type: "cnpj",
       document_number: maskCnpj(alphaCnpj),
       contacts: [
         {
@@ -125,10 +126,56 @@ describe("Utilitários de Documentos Brasileiros e Máscaras", () => {
     });
     expect(validLegal.success).toBe(true);
 
+    // Pré-cadastro sem documento (none) e cliente estrangeiro (foreign)
+    const noDoc = customerFormSchema.safeParse({
+      person_type: "individual",
+      name: "Pré Cadastro",
+      document_type: "none",
+      document_number: null,
+      contacts: [{ name: "Contato", is_primary: true }],
+      addresses: [
+        {
+          label: "Casa",
+          street: "Rua A",
+          number: "10",
+          neighborhood: "Centro",
+          city: "Curitiba",
+          state: "PR",
+          postal_code: "80010-000",
+          country: "BR",
+          is_primary: true,
+        },
+      ],
+    });
+    expect(noDoc.success).toBe(true);
+
+    const foreignDoc = customerFormSchema.safeParse({
+      person_type: "individual",
+      name: "Foreign Client",
+      document_type: "foreign",
+      document_number: "USPASS998877",
+      contacts: [{ name: "John", is_primary: true }],
+      addresses: [
+        {
+          label: "Hotel",
+          street: "Av. Atlântica",
+          number: "200",
+          neighborhood: "Copacabana",
+          city: "Rio de Janeiro",
+          state: "RJ",
+          postal_code: "22021-001",
+          country: "US",
+          is_primary: true,
+        },
+      ],
+    });
+    expect(foreignDoc.success).toBe(true);
+
     // Rejeita sem contatos ou sem endereço
     const missingContact = customerFormSchema.safeParse({
       person_type: "individual",
       name: "Carlos Silva",
+      document_type: "cpf",
       document_number: "529.982.247-25",
       contacts: [],
       addresses: [

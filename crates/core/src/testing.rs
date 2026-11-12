@@ -1,7 +1,7 @@
 use crate::domain::{
     CreateAddressInput, CreateContactInput, CreateCustomerInput, CreateUserInput, CustomerFilter,
-    InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode, PersonType,
-    RecoverPasswordInput, ResetPasswordInput, SessionInfo, UpdateBrandingInput,
+    DocumentType, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
+    PersonType, RecoverPasswordInput, ResetPasswordInput, SessionInfo, UpdateBrandingInput,
     UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole, ROLE_SLUG_COMMERCIAL,
     ROLE_SLUG_OWNER,
 };
@@ -626,7 +626,8 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         person_type: PersonType::Individual,
         name: "Carlos Eduardo da Silva".to_string(),
         trade_name: None,
-        document_number: "529.982.247-25".to_string(),
+        document_type: DocumentType::Cpf,
+        document_number: Some("529.982.247-25".to_string()),
         state_registration: None,
         municipal_registration: None,
         notes: Some("Cliente VIP de eventos corporativos".to_string()),
@@ -646,6 +647,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             city: "São Paulo".to_string(),
             state: "SP".to_string(),
             postal_code: "01310-100".to_string(),
+            country: Some("BR".to_string()),
             is_primary: true,
         }],
     };
@@ -655,7 +657,12 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         .await
         .expect("Falha ao criar cliente PF com CPF válido");
     assert_eq!(created_pf.customer.name, "Carlos Eduardo da Silva");
-    assert_eq!(created_pf.customer.document_number, "52998224725");
+    assert_eq!(created_pf.customer.document_type, DocumentType::Cpf);
+    assert_eq!(
+        created_pf.customer.document_number.as_deref(),
+        Some("52998224725")
+    );
+    assert!(created_pf.customer.active);
     assert_eq!(created_pf.contacts.len(), 1);
     assert_eq!(created_pf.addresses.len(), 1);
 
@@ -664,7 +671,8 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         person_type: PersonType::Legal,
         name: "Prime Audiovisual & Iluminação Ltda.".to_string(),
         trade_name: Some("Prime Eventos".to_string()),
-        document_number: "12.ABC.345/0001-88".to_string(),
+        document_type: DocumentType::Cnpj,
+        document_number: Some("12.ABC.345/01DE-35".to_string()),
         state_registration: Some("123.456.789.000".to_string()),
         municipal_registration: Some("987654".to_string()),
         notes: None,
@@ -684,6 +692,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             city: "São Paulo".to_string(),
             state: "SP".to_string(),
             postal_code: "05311-000".to_string(),
+            country: None,
             is_primary: true,
         }],
     };
@@ -692,7 +701,40 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         .create_customer(session, &pj_input)
         .await
         .expect("Falha ao criar cliente PJ com CNPJ alfanumérico");
-    assert_eq!(created_pj.customer.document_number, "12ABC345000188");
+    assert_eq!(
+        created_pj.customer.document_number.as_deref(),
+        Some("12ABC34501DE35")
+    );
+    assert_eq!(created_pj.addresses[0].country, "BR");
+
+    // 2.1 Cria cliente sem documento (pré-cadastro: document_type = none) e cliente estrangeiro (foreign)
+    let mut no_doc_input = pf_input.clone();
+    no_doc_input.name = "Pré Cadastro Evento".to_string();
+    no_doc_input.document_type = DocumentType::None;
+    no_doc_input.document_number = None;
+    let created_no_doc = services
+        .create_customer(session, &no_doc_input)
+        .await
+        .expect("Pré-cadastro sem documento deve ser permitido");
+    assert_eq!(created_no_doc.customer.document_type, DocumentType::None);
+    assert!(created_no_doc.customer.document_number.is_none());
+
+    let mut foreign_input = pf_input.clone();
+    foreign_input.name = "John Doe International".to_string();
+    foreign_input.document_type = DocumentType::Foreign;
+    foreign_input.document_number = Some("us-pass-998877".to_string());
+    let created_foreign = services
+        .create_customer(session, &foreign_input)
+        .await
+        .expect("Cliente estrangeiro com passaporte alfanumérico deve ser aceito");
+    assert_eq!(
+        created_foreign.customer.document_type,
+        DocumentType::Foreign
+    );
+    assert_eq!(
+        created_foreign.customer.document_number.as_deref(),
+        Some("USPASS998877")
+    );
 
     // 3. Unicidade ativa: tentativa de criar cliente duplicado com mesmo CPF deve falhar com CoreError::Conflict
     let dup_pf = services.create_customer(session, &pf_input).await;
@@ -701,14 +743,16 @@ pub async fn contract_customer_crud_and_lgpd_audit(
 
     // 4. Incompatibilidade: PF com CNPJ e PJ com CPF
     let mut invalid_pair1 = pf_input.clone();
-    invalid_pair1.document_number = "12.ABC.345/0001-88".to_string();
+    invalid_pair1.document_type = DocumentType::Cnpj;
+    invalid_pair1.document_number = Some("12.ABC.345/01DE-35".to_string());
     assert!(services
         .create_customer(session, &invalid_pair1)
         .await
         .is_err());
 
     let mut invalid_pair2 = pj_input.clone();
-    invalid_pair2.document_number = "529.982.247-25".to_string();
+    invalid_pair2.document_type = DocumentType::Cpf;
+    invalid_pair2.document_number = Some("529.982.247-25".to_string());
     assert!(services
         .create_customer(session, &invalid_pair2)
         .await
@@ -752,7 +796,8 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         person_type: PersonType::Individual,
         name: "Carlos Eduardo da Silva Atualizado".to_string(),
         trade_name: Some("Carlos VIP".to_string()),
-        document_number: "529.982.247-25".to_string(),
+        document_type: DocumentType::Cpf,
+        document_number: Some("529.982.247-25".to_string()),
         state_registration: None,
         municipal_registration: None,
         notes: Some("Notas atualizadas".to_string()),
@@ -779,6 +824,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
                 city: a.city,
                 state: a.state,
                 postal_code: a.postal_code,
+                country: Some(a.country),
                 is_primary: a.is_primary,
             })
             .collect(),

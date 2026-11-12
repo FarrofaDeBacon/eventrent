@@ -1,7 +1,7 @@
 use crate::domain::{
     AuditLogEntry, Customer, CustomerAddress, CustomerContact, CustomerFilter, CustomerPage,
-    CustomerWithDetails, Role, RoleWithPermissions, Tenant, TenantBranding, UpdateBrandingInput,
-    UserRecord, UserWithRole,
+    CustomerWithDetails, DocumentType, Role, RoleWithPermissions, Tenant, TenantBranding,
+    UpdateBrandingInput, UserRecord, UserWithRole,
 };
 use crate::error::{CoreError, Result};
 use async_trait::async_trait;
@@ -135,6 +135,7 @@ pub trait CustomerStore: Send + Sync {
     async fn find_by_document(
         &self,
         tenant_id: &str,
+        document_type: DocumentType,
         document_number: &str,
     ) -> Result<Option<Customer>>;
     async fn list(&self, tenant_id: &str, filter: &CustomerFilter) -> Result<CustomerPage>;

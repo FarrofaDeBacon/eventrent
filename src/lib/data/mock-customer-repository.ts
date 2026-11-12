@@ -9,6 +9,7 @@ import {
   type CustomerFilter,
   type CustomerPage,
   type CustomerWithDetails,
+  type DocumentType,
   type UpdateCustomerInput,
 } from "./types";
 import {
@@ -17,6 +18,7 @@ import {
   normalizeForSearch,
   validateCnpj,
   validateCpf,
+  validateForeignDocument,
 } from "$lib/utils/document";
 
 interface MockCustomerStore {
@@ -108,15 +110,22 @@ function createSeedCustomers(tenantId: string): CustomerWithDetails[] {
   ];
 
   return seedSpecs.map(({ id, input }) => {
-    const cleanDoc = normalizeDocument(input.document_number);
-    const formattedDoc = formatDocument(cleanDoc, input.person_type);
+    const docType: DocumentType =
+      input.document_type ??
+      (input.person_type === "individual" ? "cpf" : "cnpj");
+    const cleanDoc = input.document_number
+      ? normalizeDocument(input.document_number)
+      : null;
+    const formattedDoc = cleanDoc
+      ? formatDocument(cleanDoc, input.person_type)
+      : "";
     const contactTerms = input.contacts
       .flatMap((c) => [c.name, c.email ?? "", c.phone ?? ""])
       .filter(Boolean);
     const searchText = [
       normalizeForSearch(input.name),
       input.trade_name ? normalizeForSearch(input.trade_name) : "",
-      cleanDoc.toLowerCase(),
+      cleanDoc ? cleanDoc.toLowerCase() : "",
       formattedDoc.toLowerCase(),
       ...contactTerms.map((t) => normalizeForSearch(t)),
     ]
@@ -129,10 +138,12 @@ function createSeedCustomers(tenantId: string): CustomerWithDetails[] {
       person_type: input.person_type,
       name: input.name,
       trade_name: input.trade_name ?? null,
+      document_type: docType,
       document_number: cleanDoc,
       state_registration: input.state_registration ?? null,
       municipal_registration: input.municipal_registration ?? null,
       notes: input.notes ?? null,
+      active: true,
       search_text: searchText,
       name_sort: normalizeForSearch(input.name),
       created_at: now,
@@ -143,6 +154,7 @@ function createSeedCustomers(tenantId: string): CustomerWithDetails[] {
 
     const contacts: CustomerContact[] = input.contacts.map((c, idx) => ({
       id: `${id}-ct-${idx + 1}`,
+      tenant_id: tenantId,
       customer_id: id,
       name: c.name,
       email: c.email ?? null,
@@ -152,10 +164,12 @@ function createSeedCustomers(tenantId: string): CustomerWithDetails[] {
       created_at: now,
       updated_at: now,
       deleted_at: null,
+      created_by: "system",
     }));
 
     const addresses: CustomerAddress[] = input.addresses.map((a, idx) => ({
       id: `${id}-ad-${idx + 1}`,
+      tenant_id: tenantId,
       customer_id: id,
       label: a.label,
       street: a.street,
@@ -165,10 +179,12 @@ function createSeedCustomers(tenantId: string): CustomerWithDetails[] {
       city: a.city,
       state: a.state,
       postal_code: a.postal_code,
+      country: a.country ?? "BR",
       is_primary: a.is_primary,
       created_at: now,
       updated_at: now,
       deleted_at: null,
+      created_by: "system",
     }));
 
     return { customer, contacts, addresses };
@@ -231,15 +247,20 @@ function requireMockCustomerPermission(permission: string) {
   return { state, session: state.session };
 }
 
-function buildSearchText(input: CreateCustomerInput, cleanDoc: string): string {
-  const formattedDoc = formatDocument(cleanDoc, input.person_type);
+function buildSearchText(
+  input: CreateCustomerInput,
+  cleanDoc: string | null,
+): string {
+  const formattedDoc = cleanDoc
+    ? formatDocument(cleanDoc, input.person_type)
+    : "";
   const contactTerms = input.contacts
     .flatMap((c) => [c.name, c.email ?? "", c.phone ?? ""])
     .filter(Boolean);
   return [
     normalizeForSearch(input.name),
     input.trade_name ? normalizeForSearch(input.trade_name) : "",
-    cleanDoc.toLowerCase(),
+    cleanDoc ? cleanDoc.toLowerCase() : "",
     formattedDoc.toLowerCase(),
     ...contactTerms.map((t) => normalizeForSearch(t)),
   ]
@@ -247,7 +268,10 @@ function buildSearchText(input: CreateCustomerInput, cleanDoc: string): string {
     .join(" ");
 }
 
-function validateInput(input: CreateCustomerInput): string {
+function validateInput(input: CreateCustomerInput): {
+  docType: DocumentType;
+  cleanDoc: string | null;
+} {
   const name = input.name.trim();
   if (name.length < 2) {
     throw new Error(
@@ -255,15 +279,41 @@ function validateInput(input: CreateCustomerInput): string {
     );
   }
 
-  const cleanDoc = normalizeDocument(input.document_number);
-  if (input.person_type === "individual") {
-    if (!validateCpf(cleanDoc)) {
+  const docType: DocumentType =
+    input.document_type ??
+    (input.document_number
+      ? input.person_type === "individual"
+        ? "cpf"
+        : "cnpj"
+      : "none");
+  const rawDoc = (input.document_number ?? "").trim();
+  let cleanDoc: string | null = null;
+
+  if (docType === "cpf") {
+    if (input.person_type !== "individual") {
+      throw new Error("Pessoa Jurídica não pode utilizar CPF.");
+    }
+    cleanDoc = normalizeDocument(rawDoc);
+    if (!validateCpf(rawDoc)) {
       throw new Error("CPF inválido.");
     }
-  } else {
-    if (!validateCnpj(cleanDoc)) {
+  } else if (docType === "cnpj") {
+    if (input.person_type !== "legal") {
+      throw new Error("Pessoa Física não pode utilizar CNPJ.");
+    }
+    cleanDoc = normalizeDocument(rawDoc);
+    if (!validateCnpj(rawDoc)) {
       throw new Error("CNPJ inválido.");
     }
+  } else if (docType === "foreign") {
+    cleanDoc = normalizeDocument(rawDoc);
+    if (!validateForeignDocument(rawDoc)) {
+      throw new Error("Documento estrangeiro inválido (5 a 30 caracteres).");
+    }
+  } else if (rawDoc.length > 0) {
+    throw new Error(
+      "Quando o tipo de documento é 'none', o número do documento deve ficar vazio.",
+    );
   }
 
   if (input.contacts.length === 0) {
@@ -284,7 +334,7 @@ function validateInput(input: CreateCustomerInput): string {
     throw new Error("Apenas um endereço pode ser marcado como principal.");
   }
 
-  return cleanDoc;
+  return { docType, cleanDoc };
 }
 
 export class MockCustomerRepository implements CustomerRepository {
@@ -373,18 +423,21 @@ export class MockCustomerRepository implements CustomerRepository {
       PERMISSIONS.CUSTOMER_MANAGE,
     );
     const store = loadStore(session.tenant_id);
-    const cleanDoc = validateInput(input);
+    const { docType, cleanDoc } = validateInput(input);
 
-    const duplicate = store.customers.some(
-      (entry) =>
-        entry.customer.tenant_id === session.tenant_id &&
-        !entry.customer.deleted_at &&
-        entry.customer.document_number === cleanDoc,
-    );
-    if (duplicate) {
-      throw new Error(
-        `Já existe um cliente ativo cadastrado com o documento '${formatDocument(cleanDoc, input.person_type)}'.`,
+    if (cleanDoc) {
+      const duplicate = store.customers.some(
+        (entry) =>
+          entry.customer.tenant_id === session.tenant_id &&
+          !entry.customer.deleted_at &&
+          entry.customer.document_type === docType &&
+          entry.customer.document_number === cleanDoc,
       );
+      if (duplicate) {
+        throw new Error(
+          `Já existe um cliente ativo cadastrado com o documento '${formatDocument(cleanDoc, input.person_type)}'.`,
+        );
+      }
     }
 
     const now = new Date().toISOString();
@@ -395,10 +448,12 @@ export class MockCustomerRepository implements CustomerRepository {
       person_type: input.person_type,
       name: input.name.trim(),
       trade_name: input.trade_name?.trim() || null,
+      document_type: docType,
       document_number: cleanDoc,
       state_registration: input.state_registration?.trim() || null,
       municipal_registration: input.municipal_registration?.trim() || null,
       notes: input.notes?.trim() || null,
+      active: true,
       search_text: buildSearchText(input, cleanDoc),
       name_sort: normalizeForSearch(input.name),
       created_at: now,
@@ -409,6 +464,7 @@ export class MockCustomerRepository implements CustomerRepository {
 
     const contacts: CustomerContact[] = input.contacts.map((c, idx) => ({
       id: `${id}-ct-${idx + 1}`,
+      tenant_id: session.tenant_id,
       customer_id: id,
       name: c.name.trim(),
       email: c.email?.trim() || null,
@@ -418,10 +474,12 @@ export class MockCustomerRepository implements CustomerRepository {
       created_at: now,
       updated_at: now,
       deleted_at: null,
+      created_by: session.user_id,
     }));
 
     const addresses: CustomerAddress[] = input.addresses.map((a, idx) => ({
       id: `${id}-ad-${idx + 1}`,
+      tenant_id: session.tenant_id,
       customer_id: id,
       label: a.label.trim(),
       street: a.street.trim(),
@@ -431,10 +489,12 @@ export class MockCustomerRepository implements CustomerRepository {
       city: a.city.trim(),
       state: a.state.trim().toUpperCase(),
       postal_code: a.postal_code.trim(),
+      country: a.country?.trim().toUpperCase() || "BR",
       is_primary: a.is_primary,
       created_at: now,
       updated_at: now,
       deleted_at: null,
+      created_by: session.user_id,
     }));
 
     const created = { customer, contacts, addresses };
@@ -451,7 +511,7 @@ export class MockCustomerRepository implements CustomerRepository {
       PERMISSIONS.CUSTOMER_MANAGE,
     );
     const store = loadStore(session.tenant_id);
-    const cleanDoc = validateInput(input);
+    const { docType, cleanDoc } = validateInput(input);
 
     const idx = store.customers.findIndex(
       (entry) =>
@@ -463,17 +523,20 @@ export class MockCustomerRepository implements CustomerRepository {
       throw new Error("Cliente não encontrado.");
     }
 
-    const duplicate = store.customers.some(
-      (entry) =>
-        entry.customer.id !== id &&
-        entry.customer.tenant_id === session.tenant_id &&
-        !entry.customer.deleted_at &&
-        entry.customer.document_number === cleanDoc,
-    );
-    if (duplicate) {
-      throw new Error(
-        `Já existe outro cliente ativo com o documento '${formatDocument(cleanDoc, input.person_type)}'.`,
+    if (cleanDoc) {
+      const duplicate = store.customers.some(
+        (entry) =>
+          entry.customer.id !== id &&
+          entry.customer.tenant_id === session.tenant_id &&
+          !entry.customer.deleted_at &&
+          entry.customer.document_type === docType &&
+          entry.customer.document_number === cleanDoc,
       );
+      if (duplicate) {
+        throw new Error(
+          `Já existe outro cliente ativo com o documento '${formatDocument(cleanDoc, input.person_type)}'.`,
+        );
+      }
     }
 
     const now = new Date().toISOString();
@@ -483,6 +546,7 @@ export class MockCustomerRepository implements CustomerRepository {
       person_type: input.person_type,
       name: input.name.trim(),
       trade_name: input.trade_name?.trim() || null,
+      document_type: docType,
       document_number: cleanDoc,
       state_registration: input.state_registration?.trim() || null,
       municipal_registration: input.municipal_registration?.trim() || null,
@@ -494,6 +558,7 @@ export class MockCustomerRepository implements CustomerRepository {
 
     const contacts: CustomerContact[] = input.contacts.map((c, cIdx) => ({
       id: `${id}-ct-${Date.now()}-${cIdx + 1}`,
+      tenant_id: session.tenant_id,
       customer_id: id,
       name: c.name.trim(),
       email: c.email?.trim() || null,
@@ -503,10 +568,12 @@ export class MockCustomerRepository implements CustomerRepository {
       created_at: now,
       updated_at: now,
       deleted_at: null,
+      created_by: session.user_id,
     }));
 
     const addresses: CustomerAddress[] = input.addresses.map((a, aIdx) => ({
       id: `${id}-ad-${Date.now()}-${aIdx + 1}`,
+      tenant_id: session.tenant_id,
       customer_id: id,
       label: a.label.trim(),
       street: a.street.trim(),
@@ -516,10 +583,12 @@ export class MockCustomerRepository implements CustomerRepository {
       city: a.city.trim(),
       state: a.state.trim().toUpperCase(),
       postal_code: a.postal_code.trim(),
+      country: a.country?.trim().toUpperCase() || "BR",
       is_primary: a.is_primary,
       created_at: now,
       updated_at: now,
       deleted_at: null,
+      created_by: session.user_id,
     }));
 
     const updated = { customer, contacts, addresses };

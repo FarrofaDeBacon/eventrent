@@ -3,8 +3,8 @@ use chrono::Utc;
 use eventrent_core::{
     normalize_for_search, run_in_tx, AuditLogEntry, AuditStore, BrandingStore, CoreError, Customer,
     CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter, CustomerPage, CustomerStore,
-    CustomerWithDetails, Result, Role, RoleStore, RoleWithPermissions, StoreBundle, Tenant,
-    TenantBranding, TenantStore, TransactionManager, TransactionPolicy, TxStoreBundle,
+    CustomerWithDetails, DocumentType, Result, Role, RoleStore, RoleWithPermissions, StoreBundle,
+    Tenant, TenantBranding, TenantStore, TransactionManager, TransactionPolicy, TxStoreBundle,
     UpdateBrandingInput, UserRecord, UserStore, UserWithRole,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
@@ -1405,6 +1405,33 @@ impl AuditStore for SqliteStore {
     }
 }
 
+fn row_to_customer(r: &sqlx::sqlite::SqliteRow) -> Result<Customer> {
+    let person_type_str: String = r.get("person_type");
+    let person_type = person_type_str.parse().map_err(CoreError::Database)?;
+    let doc_type_str: String = r.get("document_type");
+    let document_type = doc_type_str.parse().map_err(CoreError::Database)?;
+    let active_int: i64 = r.get("active");
+    Ok(Customer {
+        id: r.get("id"),
+        tenant_id: r.get("tenant_id"),
+        person_type,
+        name: r.get("name"),
+        trade_name: r.get("trade_name"),
+        document_type,
+        document_number: r.get("document_number"),
+        state_registration: r.get("state_registration"),
+        municipal_registration: r.get("municipal_registration"),
+        notes: r.get("notes"),
+        active: active_int != 0,
+        search_text: r.get("search_text"),
+        name_sort: r.get("name_sort"),
+        created_at: r.get("created_at"),
+        updated_at: r.get("updated_at"),
+        deleted_at: r.get("deleted_at"),
+        created_by: r.get("created_by"),
+    })
+}
+
 #[async_trait]
 impl CustomerStore for SqliteStore {
     async fn find_by_id(&self, tenant_id: &str, id: &str) -> Result<Option<CustomerWithDetails>> {
@@ -1412,9 +1439,9 @@ impl CustomerStore for SqliteStore {
             .fetch_optional(
                 sqlx::query(
                     r#"
-                    SELECT id, tenant_id, person_type, name, trade_name, document_number,
-                           state_registration, municipal_registration, notes, search_text,
-                           name_sort, created_at, updated_at, deleted_at, created_by
+                    SELECT id, tenant_id, person_type, name, trade_name, document_type,
+                           document_number, state_registration, municipal_registration, notes,
+                           active, search_text, name_sort, created_at, updated_at, deleted_at, created_by
                     FROM customer
                     WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
                     LIMIT 1
@@ -1426,29 +1453,7 @@ impl CustomerStore for SqliteStore {
             .await?;
 
         let customer = match row {
-            Some(r) => {
-                let person_type_str: String = r.get("person_type");
-                let person_type = person_type_str
-                    .parse()
-                    .map_err(|e: String| CoreError::Database(e))?;
-                Customer {
-                    id: r.get("id"),
-                    tenant_id: r.get("tenant_id"),
-                    person_type,
-                    name: r.get("name"),
-                    trade_name: r.get("trade_name"),
-                    document_number: r.get("document_number"),
-                    state_registration: r.get("state_registration"),
-                    municipal_registration: r.get("municipal_registration"),
-                    notes: r.get("notes"),
-                    search_text: r.get("search_text"),
-                    name_sort: r.get("name_sort"),
-                    created_at: r.get("created_at"),
-                    updated_at: r.get("updated_at"),
-                    deleted_at: r.get("deleted_at"),
-                    created_by: r.get("created_by"),
-                }
-            }
+            Some(ref r) => row_to_customer(r)?,
             None => return Ok(None),
         };
 
@@ -1456,13 +1461,14 @@ impl CustomerStore for SqliteStore {
             .fetch_all(
                 sqlx::query(
                     r#"
-                    SELECT id, customer_id, name, email, phone, role, is_primary,
-                           created_at, updated_at, deleted_at
+                    SELECT id, tenant_id, customer_id, name, email, phone, role, is_primary,
+                           created_at, updated_at, deleted_at, created_by
                     FROM customer_contact
-                    WHERE customer_id = ? AND deleted_at IS NULL
+                    WHERE tenant_id = ? AND customer_id = ? AND deleted_at IS NULL
                     ORDER BY is_primary DESC, name ASC
                     "#,
                 )
+                .bind(tenant_id)
                 .bind(id),
             )
             .await?;
@@ -1473,6 +1479,7 @@ impl CustomerStore for SqliteStore {
                 let is_primary_int: i64 = r.get("is_primary");
                 CustomerContact {
                     id: r.get("id"),
+                    tenant_id: r.get("tenant_id"),
                     customer_id: r.get("customer_id"),
                     name: r.get("name"),
                     email: r.get("email"),
@@ -1482,6 +1489,7 @@ impl CustomerStore for SqliteStore {
                     created_at: r.get("created_at"),
                     updated_at: r.get("updated_at"),
                     deleted_at: r.get("deleted_at"),
+                    created_by: r.get("created_by"),
                 }
             })
             .collect();
@@ -1490,14 +1498,15 @@ impl CustomerStore for SqliteStore {
             .fetch_all(
                 sqlx::query(
                     r#"
-                    SELECT id, customer_id, label, street, number, complement,
-                           neighborhood, city, state, postal_code, is_primary,
-                           created_at, updated_at, deleted_at
+                    SELECT id, tenant_id, customer_id, label, street, number, complement,
+                           neighborhood, city, state, postal_code, country, is_primary,
+                           created_at, updated_at, deleted_at, created_by
                     FROM customer_address
-                    WHERE customer_id = ? AND deleted_at IS NULL
+                    WHERE tenant_id = ? AND customer_id = ? AND deleted_at IS NULL
                     ORDER BY is_primary DESC, label ASC
                     "#,
                 )
+                .bind(tenant_id)
                 .bind(id),
             )
             .await?;
@@ -1508,6 +1517,7 @@ impl CustomerStore for SqliteStore {
                 let is_primary_int: i64 = r.get("is_primary");
                 CustomerAddress {
                     id: r.get("id"),
+                    tenant_id: r.get("tenant_id"),
                     customer_id: r.get("customer_id"),
                     label: r.get("label"),
                     street: r.get("street"),
@@ -1517,10 +1527,12 @@ impl CustomerStore for SqliteStore {
                     city: r.get("city"),
                     state: r.get("state"),
                     postal_code: r.get("postal_code"),
+                    country: r.get("country"),
                     is_primary: is_primary_int != 0,
                     created_at: r.get("created_at"),
                     updated_at: r.get("updated_at"),
                     deleted_at: r.get("deleted_at"),
+                    created_by: r.get("created_by"),
                 }
             })
             .collect();
@@ -1535,51 +1547,28 @@ impl CustomerStore for SqliteStore {
     async fn find_by_document(
         &self,
         tenant_id: &str,
+        document_type: DocumentType,
         document_number: &str,
     ) -> Result<Option<Customer>> {
         let row = self
             .fetch_optional(
                 sqlx::query(
                     r#"
-                    SELECT id, tenant_id, person_type, name, trade_name, document_number,
-                           state_registration, municipal_registration, notes, search_text,
-                           name_sort, created_at, updated_at, deleted_at, created_by
+                    SELECT id, tenant_id, person_type, name, trade_name, document_type,
+                           document_number, state_registration, municipal_registration, notes,
+                           active, search_text, name_sort, created_at, updated_at, deleted_at, created_by
                     FROM customer
-                    WHERE tenant_id = ? AND document_number = ? AND deleted_at IS NULL
+                    WHERE tenant_id = ? AND document_type = ? AND document_number = ? AND deleted_at IS NULL
                     LIMIT 1
                     "#,
                 )
                 .bind(tenant_id)
+                .bind(document_type.as_str())
                 .bind(document_number),
             )
             .await?;
 
-        match row {
-            Some(r) => {
-                let person_type_str: String = r.get("person_type");
-                let person_type = person_type_str
-                    .parse()
-                    .map_err(|e: String| CoreError::Database(e))?;
-                Ok(Some(Customer {
-                    id: r.get("id"),
-                    tenant_id: r.get("tenant_id"),
-                    person_type,
-                    name: r.get("name"),
-                    trade_name: r.get("trade_name"),
-                    document_number: r.get("document_number"),
-                    state_registration: r.get("state_registration"),
-                    municipal_registration: r.get("municipal_registration"),
-                    notes: r.get("notes"),
-                    search_text: r.get("search_text"),
-                    name_sort: r.get("name_sort"),
-                    created_at: r.get("created_at"),
-                    updated_at: r.get("updated_at"),
-                    deleted_at: r.get("deleted_at"),
-                    created_by: r.get("created_by"),
-                }))
-            }
-            None => Ok(None),
-        }
+        row.as_ref().map(row_to_customer).transpose()
     }
 
     async fn list(&self, tenant_id: &str, filter: &CustomerFilter) -> Result<CustomerPage> {
@@ -1590,9 +1579,9 @@ impl CustomerStore for SqliteStore {
 
         let mut sql = String::from(
             r#"
-            SELECT id, tenant_id, person_type, name, trade_name, document_number,
-                   state_registration, municipal_registration, notes, search_text,
-                   name_sort, created_at, updated_at, deleted_at, created_by
+            SELECT id, tenant_id, person_type, name, trade_name, document_type,
+                   document_number, state_registration, municipal_registration, notes,
+                   active, search_text, name_sort, created_at, updated_at, deleted_at, created_by
             FROM customer
             WHERE tenant_id = ? AND deleted_at IS NULL
             "#,
@@ -1640,28 +1629,8 @@ impl CustomerStore for SqliteStore {
         let rows = self.fetch_all(query).await?;
 
         let mut items = Vec::new();
-        for r in rows {
-            let person_type_str: String = r.get("person_type");
-            let person_type = person_type_str
-                .parse()
-                .map_err(|e: String| CoreError::Database(e))?;
-            items.push(Customer {
-                id: r.get("id"),
-                tenant_id: r.get("tenant_id"),
-                person_type,
-                name: r.get("name"),
-                trade_name: r.get("trade_name"),
-                document_number: r.get("document_number"),
-                state_registration: r.get("state_registration"),
-                municipal_registration: r.get("municipal_registration"),
-                notes: r.get("notes"),
-                search_text: r.get("search_text"),
-                name_sort: r.get("name_sort"),
-                created_at: r.get("created_at"),
-                updated_at: r.get("updated_at"),
-                deleted_at: r.get("deleted_at"),
-                created_by: r.get("created_by"),
-            });
+        for r in &rows {
+            items.push(row_to_customer(r)?);
         }
 
         let has_more = items.len() > limit as usize;
@@ -1695,10 +1664,10 @@ impl CustomerStore for SqliteStore {
             sqlx::query(
                 r#"
                 INSERT INTO customer (
-                    id, tenant_id, person_type, name, trade_name, document_number,
-                    state_registration, municipal_registration, notes, search_text,
-                    name_sort, created_at, updated_at, deleted_at, created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, tenant_id, person_type, name, trade_name, document_type,
+                    document_number, state_registration, municipal_registration, notes,
+                    active, search_text, name_sort, created_at, updated_at, deleted_at, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(&customer.id)
@@ -1706,10 +1675,12 @@ impl CustomerStore for SqliteStore {
             .bind(customer.person_type.to_string())
             .bind(&customer.name)
             .bind(&customer.trade_name)
+            .bind(customer.document_type.as_str())
             .bind(&customer.document_number)
             .bind(&customer.state_registration)
             .bind(&customer.municipal_registration)
             .bind(&customer.notes)
+            .bind(if customer.active { 1i64 } else { 0i64 })
             .bind(&customer.search_text)
             .bind(&customer.name_sort)
             .bind(&customer.created_at)
@@ -1724,12 +1695,13 @@ impl CustomerStore for SqliteStore {
                 sqlx::query(
                     r#"
                     INSERT INTO customer_contact (
-                        id, customer_id, name, email, phone, role, is_primary,
-                        created_at, updated_at, deleted_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        id, tenant_id, customer_id, name, email, phone, role, is_primary,
+                        created_at, updated_at, deleted_at, created_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                 )
                 .bind(&c.id)
+                .bind(&c.tenant_id)
                 .bind(&c.customer_id)
                 .bind(&c.name)
                 .bind(&c.email)
@@ -1738,7 +1710,8 @@ impl CustomerStore for SqliteStore {
                 .bind(if c.is_primary { 1i64 } else { 0i64 })
                 .bind(&c.created_at)
                 .bind(&c.updated_at)
-                .bind(&c.deleted_at),
+                .bind(&c.deleted_at)
+                .bind(&c.created_by),
             )
             .await?;
         }
@@ -1748,13 +1721,14 @@ impl CustomerStore for SqliteStore {
                 sqlx::query(
                     r#"
                     INSERT INTO customer_address (
-                        id, customer_id, label, street, number, complement,
-                        neighborhood, city, state, postal_code, is_primary,
-                        created_at, updated_at, deleted_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        id, tenant_id, customer_id, label, street, number, complement,
+                        neighborhood, city, state, postal_code, country, is_primary,
+                        created_at, updated_at, deleted_at, created_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                 )
                 .bind(&a.id)
+                .bind(&a.tenant_id)
                 .bind(&a.customer_id)
                 .bind(&a.label)
                 .bind(&a.street)
@@ -1764,10 +1738,12 @@ impl CustomerStore for SqliteStore {
                 .bind(&a.city)
                 .bind(&a.state)
                 .bind(&a.postal_code)
+                .bind(&a.country)
                 .bind(if a.is_primary { 1i64 } else { 0i64 })
                 .bind(&a.created_at)
                 .bind(&a.updated_at)
-                .bind(&a.deleted_at),
+                .bind(&a.deleted_at)
+                .bind(&a.created_by),
             )
             .await?;
         }
@@ -1785,19 +1761,21 @@ impl CustomerStore for SqliteStore {
             sqlx::query(
                 r#"
                 UPDATE customer
-                SET person_type = ?, name = ?, trade_name = ?, document_number = ?,
+                SET person_type = ?, name = ?, trade_name = ?, document_type = ?, document_number = ?,
                     state_registration = ?, municipal_registration = ?, notes = ?,
-                    search_text = ?, name_sort = ?, updated_at = ?
+                    active = ?, search_text = ?, name_sort = ?, updated_at = ?
                 WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL
                 "#,
             )
             .bind(customer.person_type.to_string())
             .bind(&customer.name)
             .bind(&customer.trade_name)
+            .bind(customer.document_type.as_str())
             .bind(&customer.document_number)
             .bind(&customer.state_registration)
             .bind(&customer.municipal_registration)
             .bind(&customer.notes)
+            .bind(if customer.active { 1i64 } else { 0i64 })
             .bind(&customer.search_text)
             .bind(&customer.name_sort)
             .bind(&customer.updated_at)
@@ -1808,7 +1786,9 @@ impl CustomerStore for SqliteStore {
 
         // Remove contatos e endereços antigos e regrava os novos
         self.execute(
-            sqlx::query("DELETE FROM customer_contact WHERE customer_id = ?").bind(&customer.id),
+            sqlx::query("DELETE FROM customer_contact WHERE tenant_id = ? AND customer_id = ?")
+                .bind(&customer.tenant_id)
+                .bind(&customer.id),
         )
         .await?;
 
@@ -1817,12 +1797,13 @@ impl CustomerStore for SqliteStore {
                 sqlx::query(
                     r#"
                     INSERT INTO customer_contact (
-                        id, customer_id, name, email, phone, role, is_primary,
-                        created_at, updated_at, deleted_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        id, tenant_id, customer_id, name, email, phone, role, is_primary,
+                        created_at, updated_at, deleted_at, created_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                 )
                 .bind(&c.id)
+                .bind(&c.tenant_id)
                 .bind(&c.customer_id)
                 .bind(&c.name)
                 .bind(&c.email)
@@ -1831,13 +1812,16 @@ impl CustomerStore for SqliteStore {
                 .bind(if c.is_primary { 1i64 } else { 0i64 })
                 .bind(&c.created_at)
                 .bind(&c.updated_at)
-                .bind(&c.deleted_at),
+                .bind(&c.deleted_at)
+                .bind(&c.created_by),
             )
             .await?;
         }
 
         self.execute(
-            sqlx::query("DELETE FROM customer_address WHERE customer_id = ?").bind(&customer.id),
+            sqlx::query("DELETE FROM customer_address WHERE tenant_id = ? AND customer_id = ?")
+                .bind(&customer.tenant_id)
+                .bind(&customer.id),
         )
         .await?;
 
@@ -1846,13 +1830,14 @@ impl CustomerStore for SqliteStore {
                 sqlx::query(
                     r#"
                     INSERT INTO customer_address (
-                        id, customer_id, label, street, number, complement,
-                        neighborhood, city, state, postal_code, is_primary,
-                        created_at, updated_at, deleted_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        id, tenant_id, customer_id, label, street, number, complement,
+                        neighborhood, city, state, postal_code, country, is_primary,
+                        created_at, updated_at, deleted_at, created_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                 )
                 .bind(&a.id)
+                .bind(&a.tenant_id)
                 .bind(&a.customer_id)
                 .bind(&a.label)
                 .bind(&a.street)
@@ -1862,10 +1847,12 @@ impl CustomerStore for SqliteStore {
                 .bind(&a.city)
                 .bind(&a.state)
                 .bind(&a.postal_code)
+                .bind(&a.country)
                 .bind(if a.is_primary { 1i64 } else { 0i64 })
                 .bind(&a.created_at)
                 .bind(&a.updated_at)
-                .bind(&a.deleted_at),
+                .bind(&a.deleted_at)
+                .bind(&a.created_by),
             )
             .await?;
         }
@@ -1887,20 +1874,22 @@ impl CustomerStore for SqliteStore {
 
         self.execute(
             sqlx::query(
-                "UPDATE customer_contact SET deleted_at = ?, updated_at = ? WHERE customer_id = ? AND deleted_at IS NULL",
+                "UPDATE customer_contact SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND customer_id = ? AND deleted_at IS NULL",
             )
             .bind(deleted_at)
             .bind(deleted_at)
+            .bind(tenant_id)
             .bind(id),
         )
         .await?;
 
         self.execute(
             sqlx::query(
-                "UPDATE customer_address SET deleted_at = ?, updated_at = ? WHERE customer_id = ? AND deleted_at IS NULL",
+                "UPDATE customer_address SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND customer_id = ? AND deleted_at IS NULL",
             )
             .bind(deleted_at)
             .bind(deleted_at)
+            .bind(tenant_id)
             .bind(id),
         )
         .await?;
@@ -3003,10 +2992,10 @@ mod tests {
             sqlx::query(
                 r#"
                 INSERT INTO customer (
-                    id, tenant_id, person_type, name, trade_name, document_number,
-                    state_registration, municipal_registration, notes, search_text,
-                    name_sort, created_at, updated_at, deleted_at, created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, NULL)
+                    id, tenant_id, person_type, name, trade_name, document_type,
+                    document_number, state_registration, municipal_registration, notes,
+                    active, search_text, name_sort, created_at, updated_at, deleted_at, created_by
+                ) VALUES (?, ?, ?, ?, ?, 'cnpj', ?, NULL, NULL, NULL, 1, ?, ?, ?, ?, NULL, NULL)
                 "#,
             )
             .bind(&id)
@@ -3102,5 +3091,92 @@ mod tests {
         println!(
             "[BENCHMARK 20K CLIENTES] insert={insert_ms}ms, page1={page1_ms}ms, page2_cursor={page2_ms}ms, search={search_ms}ms"
         );
+    }
+
+    #[tokio::test]
+    async fn test_migration_0005_rebuilds_and_preserves_existing_customer_data() {
+        let db_path = std::env::temp_dir().join(format!("eventrent_mig0005_{}.db", Uuid::now_v7()));
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.display());
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&db_url)
+            .await
+            .expect("connect sqlite");
+
+        sqlx::query("PRAGMA foreign_keys = ON;")
+            .execute(&pool)
+            .await
+            .expect("fk on");
+
+        // Aplica migrações 0001..0004 manualmente para simular banco existente antes da 0005
+        for mig in [
+            include_str!("../migrations/0001_init_tenant_and_branding.sql"),
+            include_str!("../migrations/0002_users_roles_and_audit.sql"),
+            include_str!("../migrations/0003_branding_dark_logo_and_icon.sql"),
+            include_str!("../migrations/0004_customers.sql"),
+        ] {
+            sqlx::raw_sql(mig)
+                .execute(&pool)
+                .await
+                .expect("apply 0001..0004");
+        }
+
+        let now = "2026-11-12T10:00:00Z";
+        sqlx::query("INSERT INTO tenant (id, tenant_id, name, slug, created_at, updated_at) VALUES ('t1', 't1', 'Locadora', 'locadora', ?, ?)")
+            .bind(now).bind(now).execute(&pool).await.expect("insert tenant");
+        sqlx::query("INSERT INTO customer (id, tenant_id, person_type, name, document_number, search_text, name_sort, created_at, updated_at) VALUES ('c1', 't1', 'individual', 'Maria Silva', '52998224725', 'maria silva', 'maria silva', ?, ?)")
+            .bind(now).bind(now).execute(&pool).await.expect("insert customer");
+        sqlx::query("INSERT INTO customer_contact (id, customer_id, name, email, is_primary, created_at, updated_at) VALUES ('cc1', 'c1', 'Maria', 'maria@ex.com', 1, ?, ?)")
+            .bind(now).bind(now).execute(&pool).await.expect("insert contact");
+        sqlx::query("INSERT INTO customer_address (id, customer_id, label, street, number, neighborhood, city, state, postal_code, is_primary, created_at, updated_at) VALUES ('ca1', 'c1', 'Sede', 'Rua A', '10', 'Centro', 'SP', 'SP', '01001000', 1, ?, ?)")
+            .bind(now).bind(now).execute(&pool).await.expect("insert address");
+
+        // Executa a 0005 preservando dados
+        sqlx::raw_sql(include_str!("../migrations/0005_customers_rev.sql"))
+            .execute(&pool)
+            .await
+            .expect("apply 0005");
+
+        let row = sqlx::query(
+            "SELECT document_type, document_number, active FROM customer WHERE id = 'c1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("fetch c1");
+        let doc_type: String = row.get("document_type");
+        let doc_num: Option<String> = row.get("document_number");
+        let active: i64 = row.get("active");
+        assert_eq!(doc_type, "cpf");
+        assert_eq!(doc_num.as_deref(), Some("52998224725"));
+        assert_eq!(active, 1);
+
+        let crow = sqlx::query("SELECT tenant_id FROM customer_contact WHERE id = 'cc1'")
+            .fetch_one(&pool)
+            .await
+            .expect("fetch cc1");
+        let c_tenant: String = crow.get("tenant_id");
+        assert_eq!(c_tenant, "t1");
+
+        let arow = sqlx::query("SELECT tenant_id, country FROM customer_address WHERE id = 'ca1'")
+            .fetch_one(&pool)
+            .await
+            .expect("fetch ca1");
+        let a_tenant: String = arow.get("tenant_id");
+        let a_country: String = arow.get("country");
+        assert_eq!(a_tenant, "t1");
+        assert_eq!(a_country, "BR");
+
+        // EXPLAIN QUERY PLAN da busca por trecho (sem idx_customer_tenant_search)
+        let plan_rows = sqlx::query(
+            "EXPLAIN QUERY PLAN SELECT id FROM customer WHERE tenant_id = 't1' AND deleted_at IS NULL AND search_text LIKE '%maria%' ORDER BY name_sort ASC, id ASC LIMIT 51",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("explain query plan");
+        for pr in &plan_rows {
+            let detail: String = pr.get("detail");
+            println!("[EXPLAIN QUERY PLAN] {detail}");
+            assert!(!detail.contains("idx_customer_tenant_search"));
+        }
     }
 }

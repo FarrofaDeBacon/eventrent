@@ -1,5 +1,5 @@
 use crate::domain::{
-    build_customer_search_text, build_name_sort, mask_document_for_audit, parse_document,
+    build_customer_search_text, build_name_sort, mask_document_for_audit, parse_document_with_type,
     AuditLogEntry, BrandingValidator, CreateCustomerInput, CreateUserInput, Customer,
     CustomerAddress, CustomerContact, CustomerFilter, CustomerPage, CustomerWithDetails,
     DocumentType, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
@@ -376,6 +376,29 @@ impl<'a> TxStoreBundle for PassthroughTxStoreBundle<'a> {
 #[derive(Clone)]
 pub struct CoreServices {
     pub stores: StoreBundle,
+}
+
+fn validate_customer_document_for_person_type(
+    person_type: PersonType,
+    doc_type: DocumentType,
+    doc_number: Option<&str>,
+) -> Result<(DocumentType, Option<String>, String)> {
+    let (parsed_type, parsed_raw, parsed_formatted) =
+        parse_document_with_type(doc_type, doc_number)?;
+    match (person_type, parsed_type) {
+        (PersonType::Individual, DocumentType::Cnpj) => {
+            return Err(CoreError::Validation(
+                "Pessoa Física não pode usar CNPJ; utilize CPF, documento estrangeiro ou sem documento.".to_string(),
+            ));
+        }
+        (PersonType::Legal, DocumentType::Cpf) => {
+            return Err(CoreError::Validation(
+                "Pessoa Jurídica não pode usar CPF; utilize CNPJ, documento estrangeiro ou sem documento.".to_string(),
+            ));
+        }
+        _ => {}
+    }
+    Ok((parsed_type, parsed_raw, parsed_formatted))
 }
 
 impl CoreServices {
@@ -1471,35 +1494,26 @@ impl CoreServices {
             ));
         }
 
-        // Validação estrita de CPF/CNPJ (suportando CNPJ alfanumérico conforme Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024)
-        let parsed_doc = parse_document(&input.document_number)?;
-        match (input.person_type, parsed_doc.doc_type) {
-            (PersonType::Individual, DocumentType::Cpf) => {}
-            (PersonType::Legal, DocumentType::Cnpj) => {}
-            (PersonType::Individual, DocumentType::Cnpj) => {
-                return Err(CoreError::Validation(
-                    "Pessoa Física requer um CPF válido de 11 dígitos, não um CNPJ.".to_string(),
-                ));
-            }
-            (PersonType::Legal, DocumentType::Cpf) => {
-                return Err(CoreError::Validation(
-                    "Pessoa Jurídica requer um CNPJ válido de 14 caracteres, não um CPF."
-                        .to_string(),
-                ));
-            }
-        }
+        // Validação estrita de documento conforme tipo (cpf, cnpj, foreign ou none)
+        let (doc_type, doc_raw_opt, doc_formatted) = validate_customer_document_for_person_type(
+            input.person_type,
+            input.document_type,
+            input.document_number.as_deref(),
+        )?;
 
-        // Verificação prévia de unicidade ativa no tenant
-        if self
-            .stores
-            .customers
-            .find_by_document(&session.tenant_id, &parsed_doc.raw)
-            .await?
-            .is_some()
-        {
-            return Err(CoreError::Conflict(
-                "Já existe um cliente ativo cadastrado com este CPF/CNPJ.".to_string(),
-            ));
+        // Verificação prévia de unicidade ativa no tenant quando há documento informado
+        if let Some(ref doc_raw) = doc_raw_opt {
+            if self
+                .stores
+                .customers
+                .find_by_document(&session.tenant_id, doc_type, doc_raw)
+                .await?
+                .is_some()
+            {
+                return Err(CoreError::Conflict(
+                    "Já existe um cliente ativo cadastrado com este documento.".to_string(),
+                ));
+            }
         }
 
         // Validação de contatos
@@ -1548,6 +1562,7 @@ impl CoreServices {
             .enumerate()
             .map(|(i, c)| CustomerContact {
                 id: Uuid::now_v7().to_string(),
+                tenant_id: session.tenant_id.clone(),
                 customer_id: customer_id.clone(),
                 name: c.name.trim().to_string(),
                 email: c.email.as_ref().map(|e| e.trim().to_string()),
@@ -1561,6 +1576,7 @@ impl CoreServices {
                 created_at: now.clone(),
                 updated_at: now.clone(),
                 deleted_at: None,
+                created_by: Some(session.user_id.clone()),
             })
             .collect();
 
@@ -1572,6 +1588,7 @@ impl CoreServices {
             .enumerate()
             .map(|(i, a)| CustomerAddress {
                 id: Uuid::now_v7().to_string(),
+                tenant_id: session.tenant_id.clone(),
                 customer_id: customer_id.clone(),
                 label: if a.label.trim().is_empty() {
                     "Principal".to_string()
@@ -1585,6 +1602,13 @@ impl CoreServices {
                 city: a.city.trim().to_string(),
                 state: a.state.trim().to_uppercase(),
                 postal_code: a.postal_code.trim().to_string(),
+                country: a
+                    .country
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|c| !c.is_empty())
+                    .map(str::to_uppercase)
+                    .unwrap_or_else(|| "BR".to_string()),
                 is_primary: if !has_primary_address && i == 0 {
                     true
                 } else {
@@ -1593,6 +1617,7 @@ impl CoreServices {
                 created_at: now.clone(),
                 updated_at: now.clone(),
                 deleted_at: None,
+                created_by: Some(session.user_id.clone()),
             })
             .collect();
 
@@ -1619,8 +1644,8 @@ impl CoreServices {
         let search_text = build_customer_search_text(
             name,
             trade_trimmed.as_deref(),
-            &parsed_doc.raw,
-            &parsed_doc.formatted,
+            doc_raw_opt.as_deref().unwrap_or(""),
+            &doc_formatted,
             &search_terms,
         );
         let name_sort = build_name_sort(name);
@@ -1631,7 +1656,8 @@ impl CoreServices {
             person_type: input.person_type,
             name: name.to_string(),
             trade_name: trade_trimmed,
-            document_number: parsed_doc.raw.clone(),
+            document_type: doc_type,
+            document_number: doc_raw_opt.clone(),
             state_registration: input
                 .state_registration
                 .as_ref()
@@ -1647,6 +1673,7 @@ impl CoreServices {
                 .as_ref()
                 .map(|n| n.trim().to_string())
                 .filter(|n| !n.is_empty()),
+            active: true,
             search_text,
             name_sort,
             created_at: now.clone(),
@@ -1659,7 +1686,10 @@ impl CoreServices {
         let customer_clone = customer.clone();
         let contacts_clone = contacts.clone();
         let addresses_clone = addresses.clone();
-        let masked_doc = mask_document_for_audit(&parsed_doc.raw);
+        let masked_doc = doc_raw_opt
+            .as_deref()
+            .map(mask_document_for_audit)
+            .unwrap_or_else(|| "sem-documento".to_string());
 
         self.run_transaction(|stores| {
             let session = session_clone.clone();
@@ -1727,35 +1757,29 @@ impl CoreServices {
             ));
         }
 
-        let parsed_doc = parse_document(&input.document_number)?;
-        match (input.person_type, parsed_doc.doc_type) {
-            (PersonType::Individual, DocumentType::Cpf) => {}
-            (PersonType::Legal, DocumentType::Cnpj) => {}
-            (PersonType::Individual, DocumentType::Cnpj) => {
-                return Err(CoreError::Validation(
-                    "Pessoa Física requer um CPF válido de 11 dígitos, não um CNPJ.".to_string(),
-                ));
-            }
-            (PersonType::Legal, DocumentType::Cpf) => {
-                return Err(CoreError::Validation(
-                    "Pessoa Jurídica requer um CNPJ válido de 14 caracteres, não um CPF."
-                        .to_string(),
-                ));
-            }
-        }
+        let (doc_type, doc_raw_opt, doc_formatted) = validate_customer_document_for_person_type(
+            input.person_type,
+            input.document_type,
+            input.document_number.as_deref(),
+        )?;
 
-        // Se o documento foi alterado, checa duplicidade com outro cliente ativo
-        if parsed_doc.raw != existing.customer.document_number {
-            if let Some(other) = self
-                .stores
-                .customers
-                .find_by_document(&session.tenant_id, &parsed_doc.raw)
-                .await?
+        // Se o documento foi alterado e não é nulo, checa duplicidade com outro cliente ativo
+        if let Some(ref doc_raw) = doc_raw_opt {
+            if Some(doc_raw.as_str()) != existing.customer.document_number.as_deref()
+                || doc_type != existing.customer.document_type
             {
-                if other.id != id {
-                    return Err(CoreError::Conflict(
-                        "Já existe outro cliente ativo cadastrado com este CPF/CNPJ.".to_string(),
-                    ));
+                if let Some(other) = self
+                    .stores
+                    .customers
+                    .find_by_document(&session.tenant_id, doc_type, doc_raw)
+                    .await?
+                {
+                    if other.id != id {
+                        return Err(CoreError::Conflict(
+                            "Já existe outro cliente ativo cadastrado com este documento."
+                                .to_string(),
+                        ));
+                    }
                 }
             }
         }
@@ -1802,6 +1826,7 @@ impl CoreServices {
             .enumerate()
             .map(|(i, c)| CustomerContact {
                 id: Uuid::now_v7().to_string(),
+                tenant_id: session.tenant_id.clone(),
                 customer_id: id.to_string(),
                 name: c.name.trim().to_string(),
                 email: c.email.as_ref().map(|e| e.trim().to_string()),
@@ -1815,6 +1840,7 @@ impl CoreServices {
                 created_at: now.clone(),
                 updated_at: now.clone(),
                 deleted_at: None,
+                created_by: Some(session.user_id.clone()),
             })
             .collect();
 
@@ -1825,6 +1851,7 @@ impl CoreServices {
             .enumerate()
             .map(|(i, a)| CustomerAddress {
                 id: Uuid::now_v7().to_string(),
+                tenant_id: session.tenant_id.clone(),
                 customer_id: id.to_string(),
                 label: if a.label.trim().is_empty() {
                     "Principal".to_string()
@@ -1838,6 +1865,13 @@ impl CoreServices {
                 city: a.city.trim().to_string(),
                 state: a.state.trim().to_uppercase(),
                 postal_code: a.postal_code.trim().to_string(),
+                country: a
+                    .country
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|c| !c.is_empty())
+                    .map(str::to_uppercase)
+                    .unwrap_or_else(|| "BR".to_string()),
                 is_primary: if !has_primary_address && i == 0 {
                     true
                 } else {
@@ -1846,6 +1880,7 @@ impl CoreServices {
                 created_at: now.clone(),
                 updated_at: now.clone(),
                 deleted_at: None,
+                created_by: Some(session.user_id.clone()),
             })
             .collect();
 
@@ -1871,8 +1906,8 @@ impl CoreServices {
         let search_text = build_customer_search_text(
             name,
             trade_trimmed.as_deref(),
-            &parsed_doc.raw,
-            &parsed_doc.formatted,
+            doc_raw_opt.as_deref().unwrap_or(""),
+            &doc_formatted,
             &search_terms,
         );
         let name_sort = build_name_sort(name);
@@ -1883,7 +1918,8 @@ impl CoreServices {
             person_type: input.person_type,
             name: name.to_string(),
             trade_name: trade_trimmed,
-            document_number: parsed_doc.raw.clone(),
+            document_type: doc_type,
+            document_number: doc_raw_opt.clone(),
             state_registration: input
                 .state_registration
                 .as_ref()
@@ -1899,6 +1935,7 @@ impl CoreServices {
                 .as_ref()
                 .map(|n| n.trim().to_string())
                 .filter(|n| !n.is_empty()),
+            active: existing.customer.active,
             search_text,
             name_sort,
             created_at: existing.customer.created_at,
@@ -1911,7 +1948,10 @@ impl CoreServices {
         let customer_clone = updated_customer.clone();
         let contacts_clone = contacts.clone();
         let addresses_clone = addresses.clone();
-        let masked_doc = mask_document_for_audit(&parsed_doc.raw);
+        let masked_doc = doc_raw_opt
+            .as_deref()
+            .map(mask_document_for_audit)
+            .unwrap_or_else(|| "sem-documento".to_string());
 
         self.run_transaction(|stores| {
             let session = session_clone.clone();
@@ -1970,7 +2010,12 @@ impl CoreServices {
         let now = Utc::now().to_rfc3339();
         let session_clone = session.clone();
         let id_str = id.to_string();
-        let masked_doc = mask_document_for_audit(&existing.customer.document_number);
+        let masked_doc = existing
+            .customer
+            .document_number
+            .as_deref()
+            .map(mask_document_for_audit)
+            .unwrap_or_else(|| "sem-documento".to_string());
         let name_str = existing.customer.name.clone();
 
         self.run_transaction(|stores| {

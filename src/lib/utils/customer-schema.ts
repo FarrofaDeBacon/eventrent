@@ -4,6 +4,7 @@ import {
   digitsOnly,
   validateCnpj,
   validateCpf,
+  validateForeignDocument,
 } from "./document";
 
 export const contactSchema = z.object({
@@ -58,6 +59,7 @@ export const addressSchema = z.object({
     .refine((cep) => digitsOnly(cep).length === 8, {
       message: "O CEP deve conter 8 dígitos.",
     }),
+  country: z.string().trim().min(2).max(4).default("BR"),
   is_primary: z.boolean().default(false),
 });
 
@@ -69,7 +71,8 @@ export const customerFormSchema = z
       .trim()
       .min(2, "O nome / razão social deve ter pelo menos 2 caracteres."),
     trade_name: z.string().trim().max(160).optional().nullable(),
-    document_number: z.string().trim().min(1, "O CPF ou CNPJ é obrigatório."),
+    document_type: z.enum(["cpf", "cnpj", "foreign", "none"]),
+    document_number: z.string().trim().optional().nullable(),
     state_registration: z.string().trim().max(40).optional().nullable(),
     municipal_registration: z.string().trim().max(40).optional().nullable(),
     notes: z.string().trim().max(2000).optional().nullable(),
@@ -81,21 +84,44 @@ export const customerFormSchema = z
       .min(1, "Cliente deve possuir pelo menos um endereço cadastrado."),
   })
   .superRefine((data, ctx) => {
-    if (data.person_type === "individual") {
-      if (!validateCpf(data.document_number)) {
+    const doc = (data.document_number ?? "").trim();
+
+    if (data.document_type === "cpf") {
+      if (data.person_type !== "individual") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["document_type"],
+          message: "Pessoa Jurídica não pode utilizar CPF.",
+        });
+      } else if (!validateCpf(doc)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["document_number"],
           message: "CPF inválido. Verifique os 11 dígitos informados.",
         });
       }
-    } else {
-      if (!validateCnpj(data.document_number)) {
+    } else if (data.document_type === "cnpj") {
+      if (data.person_type !== "legal") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["document_type"],
+          message: "Pessoa Física não pode utilizar CNPJ.",
+        });
+      } else if (!validateCnpj(doc)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["document_number"],
           message:
             "CNPJ inválido. Verifique os 14 caracteres (numérico ou alfanumérico conforme Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024).",
+        });
+      }
+    } else if (data.document_type === "foreign") {
+      if (!validateForeignDocument(doc)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["document_number"],
+          message:
+            "Documento estrangeiro deve conter entre 5 e 30 caracteres alfanuméricos.",
         });
       }
     }
