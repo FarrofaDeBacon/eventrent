@@ -2072,4 +2072,48 @@ mod unit_tests {
             Err(CoreError::Validation(_))
         ));
     }
+
+    #[test]
+    fn test_system_roles_fixture_is_up_to_date() {
+        use crate::domain::permission::SYSTEM_ROLES;
+        use std::path::Path;
+
+        #[derive(serde::Serialize)]
+        struct RoleFixture<'a> {
+            slug: &'a str,
+            name: &'a str,
+            description: &'a str,
+            permissions: &'a [&'a str],
+        }
+
+        let expected: Vec<RoleFixture<'_>> = SYSTEM_ROLES
+            .iter()
+            .map(|r| RoleFixture {
+                slug: r.slug,
+                name: r.name,
+                description: r.description,
+                permissions: r.permissions,
+            })
+            .collect();
+        let expected_json =
+            serde_json::to_value(&expected).expect("serialize SYSTEM_ROLES fixture");
+
+        let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src/lib/data/fixtures/system-roles.json");
+        let raw = std::fs::read_to_string(&fixture_path).unwrap_or_else(|e| {
+            panic!(
+                "Fixture {:?} ausente ({}). Gere-o com SYSTEM_ROLES.",
+                fixture_path, e
+            )
+        });
+        let actual_json: serde_json::Value =
+            serde_json::from_str(&raw).expect("system-roles.json inválido");
+
+        assert_eq!(
+            actual_json,
+            expected_json,
+            "src/lib/data/fixtures/system-roles.json está desatualizado em relação a SYSTEM_ROLES do core! Esperado:\n{}",
+            serde_json::to_string_pretty(&expected_json).unwrap_or_default()
+        );
+    }
 }
