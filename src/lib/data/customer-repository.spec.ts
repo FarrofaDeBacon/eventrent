@@ -135,6 +135,18 @@ describe("CustomerRepository (CRUD, Busca, Paginação por Cursor e RBAC)", () =
     const loaded = await customerRepo.getCustomer(created.customer.id);
     expect(loaded.addresses[0].number).toBe("501");
 
+    // Desativa e reativa (setCustomerActive)
+    const deactivated = await customerRepo.setCustomerActive(
+      created.customer.id,
+      false,
+    );
+    expect(deactivated.customer.active).toBe(false);
+    const reactivated = await customerRepo.setCustomerActive(
+      created.customer.id,
+      true,
+    );
+    expect(reactivated.customer.active).toBe(true);
+
     // Exclui (soft delete) e valida que não aparece mais nem permite consulta
     await customerRepo.deleteCustomer(created.customer.id);
     await expect(customerRepo.getCustomer(created.customer.id)).rejects.toThrow(

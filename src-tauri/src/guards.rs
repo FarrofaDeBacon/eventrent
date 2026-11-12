@@ -90,6 +90,10 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
         is_public: false,
     },
     CommandDefinition {
+        name: "set_customer_active",
+        is_public: false,
+    },
+    CommandDefinition {
         name: "delete_customer",
         is_public: false,
     },

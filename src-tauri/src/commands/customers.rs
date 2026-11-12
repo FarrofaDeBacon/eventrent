@@ -59,6 +59,20 @@ pub async fn update_customer(
 }
 
 #[tauri::command]
+pub async fn set_customer_active(
+    state: State<'_, AppState>,
+    id: String,
+    active: bool,
+) -> Result<CustomerWithDetails, String> {
+    let session = require_session(&state)?;
+    state
+        .services
+        .set_customer_active(&session, &id, active)
+        .await
+        .map_err(crate::map_core_err)
+}
+
+#[tauri::command]
 pub async fn delete_customer(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let session = require_session(&state)?;
     state

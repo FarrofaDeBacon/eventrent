@@ -111,3 +111,6 @@ O tratamento de dados pessoais e fiscais de clientes (CPF, CNPJ, contatos e ende
    - Os 5 comandos de clientes (`list_customers`, `get_customer`, `create_customer`, `update_customer`, `delete_customer`) passam obrigatoriamente por `require_session(&state)` no backend Rust, validam expiração por inatividade e delegam integralmente às permissões `customer:read` / `customer:manage` em `CoreServices`, sem acesso direto das interfaces aos repositórios de banco.
 3. **Ocultação de Erros Cru de Banco (`map_sqlx_err`)**:
    - Conflitos de unicidade de documento (código SQLite `2067` / `1555`) são convertidos em mensagens de domínio amigáveis (`CoreError::Conflict`) sem vazar consultas SQL ou estrutura interna de índices ao usuário.
+4. **Pendência de Anonimização LGPD e `search_text`**:
+   - A coluna derivada `customer.search_text` armazena cópia normalizada de dados pessoais (nome, documento, e-mail e telefone) para viabilizar busca textual rápida.
+   - Fica registrada como requisito obrigatório de conformidade LGPD a futura operação de **anonimização de titular** (ex.: mediante solicitação de exclusão definitiva quando houver retenção fiscal/contratual), a qual deverá ofuscar `name`, `trade_name`, `document_number`, contatos, endereços e **limpar integralmente `search_text`**, preservando apenas os vínculos financeiros/fiscais anônimos.

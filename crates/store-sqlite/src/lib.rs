@@ -1923,6 +1923,26 @@ impl CustomerStore for SqliteStore {
         Ok(())
     }
 
+    async fn set_active(
+        &self,
+        tenant_id: &str,
+        id: &str,
+        active: bool,
+        updated_at: &str,
+    ) -> Result<()> {
+        self.execute(
+            sqlx::query(
+                "UPDATE customer SET active = ?, updated_at = ? WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL",
+            )
+            .bind(if active { 1i64 } else { 0i64 })
+            .bind(updated_at)
+            .bind(tenant_id)
+            .bind(id),
+        )
+        .await?;
+        Ok(())
+    }
+
     async fn soft_delete(&self, tenant_id: &str, id: &str, deleted_at: &str) -> Result<()> {
         self.execute(
             sqlx::query(

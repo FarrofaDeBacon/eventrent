@@ -151,6 +151,13 @@ pub trait CustomerStore: Send + Sync {
         contacts: &[CustomerContact],
         addresses: &[CustomerAddress],
     ) -> Result<()>;
+    async fn set_active(
+        &self,
+        tenant_id: &str,
+        id: &str,
+        active: bool,
+        updated_at: &str,
+    ) -> Result<()>;
     async fn soft_delete(&self, tenant_id: &str, id: &str, deleted_at: &str) -> Result<()>;
     async fn count_active(&self, tenant_id: &str) -> Result<u64>;
 }

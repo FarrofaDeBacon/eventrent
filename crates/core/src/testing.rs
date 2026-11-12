@@ -864,6 +864,18 @@ pub async fn contract_customer_crud_and_lgpd_audit(
     assert_eq!(updated.contacts.len(), 2);
     assert_eq!(updated.addresses[0].id, original_address_id);
 
+    // 6.1 Ativação e desativação (set_customer_active)
+    let deactivated = services
+        .set_customer_active(session, &created_pf.customer.id, false)
+        .await
+        .expect("Falha ao desativar cliente");
+    assert!(!deactivated.customer.active);
+    let reactivated = services
+        .set_customer_active(session, &created_pf.customer.id, true)
+        .await
+        .expect("Falha ao reativar cliente");
+    assert!(reactivated.customer.active);
+
     // 7. Soft delete e reativação de documento
     services
         .delete_customer(session, &created_pf.customer.id)

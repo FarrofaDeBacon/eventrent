@@ -2027,6 +2027,81 @@ impl CoreServices {
         })
     }
 
+    /// Ativa ou desativa um cliente existente sem removê-lo do histórico.
+    /// Requer permissão `customer:manage`.
+    pub async fn set_customer_active(
+        &self,
+        session: &SessionInfo,
+        id: &str,
+        active: bool,
+    ) -> Result<CustomerWithDetails> {
+        self.check_session_and_permission(session, PERM_CUSTOMER_MANAGE)?;
+
+        let mut existing = self
+            .stores
+            .customers
+            .find_by_id(&session.tenant_id, id)
+            .await?
+            .ok_or_else(|| CoreError::NotFound("Cliente não encontrado.".to_string()))?;
+
+        let now = Utc::now().to_rfc3339();
+        let session_clone = session.clone();
+        let id_str = id.to_string();
+        let now_clone = now.clone();
+        let masked_doc = existing
+            .customer
+            .document_number
+            .as_deref()
+            .map(mask_document_for_audit)
+            .unwrap_or_else(|| "sem-documento".to_string());
+        let name_str = existing.customer.name.clone();
+
+        self.run_transaction(|stores| {
+            let session = session_clone.clone();
+            let id = id_str.clone();
+            let now = now_clone.clone();
+            let masked = masked_doc.clone();
+            let name = name_str.clone();
+
+            Box::pin(async move {
+                stores
+                    .customers()
+                    .set_active(&session.tenant_id, &id, active, &now)
+                    .await?;
+
+                let action = if active {
+                    "customer.activated"
+                } else {
+                    "customer.deactivated"
+                };
+                let status_label = if active { "ativado" } else { "desativado" };
+                let audit_detail = format!(
+                    "Cliente '{}' {} com sucesso (documento: {})",
+                    name, status_label, masked
+                );
+
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &session.tenant_id,
+                        Some(&session.user_id),
+                        action,
+                        "customer",
+                        &id,
+                        &audit_detail,
+                    ))
+                    .await?;
+
+                Ok(())
+            })
+        })
+        .await?;
+
+        existing.customer.active = active;
+        existing.customer.updated_at = now;
+        Ok(existing)
+    }
+
     /// Realiza exclusão lógica (soft delete) do cliente e seus contatos/endereços.
     /// Requer permissão `customer:manage`.
     pub async fn delete_customer(&self, session: &SessionInfo, id: &str) -> Result<()> {

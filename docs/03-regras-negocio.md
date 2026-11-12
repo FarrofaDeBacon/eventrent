@@ -128,6 +128,10 @@ Criados de forma idempotente por `ensure_system_roles` para cada tenant:
   - Todo cliente deve possuir no mínimo **1 contato** e **1 endereço** cadastrados, mantendo ao menos um registro sinalizado como principal (`is_primary`).
 - **Busca Desacentuada e Paginação Determinística**:
   - Os campos normalizados `search_text` e `name_sort` removem acentuação e padronizam caixa baixa para busca instantânea em SQLite e paginação por cursor composto `(name_sort, id)` sem duplicações ou lacunas entre páginas.
+- **Exclusão Lógica (`delete_customer`) e Ativação (`set_active`)**:
+  - `delete_customer` executa **exclusão lógica** (`soft delete`), preenchendo `deleted_at` em `customer`, `customer_contact` e `customer_address` na mesma transação e gravando evento `customer.deleted` em `audit_log`, liberando o documento no índice único parcial para eventual recadastro.
+  - `set_active` (permissão `customer:manage`) alterna a flag `active` (`true`/`false`) preservando integralmente o cadastro e gravando `customer.activated` / `customer.deactivated` no `audit_log`.
+  - **Regra Obrigatória da Fase 4 (Orçamentos e Contratos)**: Quando existirem orçamentos, reservas ou contratos vinculados ao cliente, a exclusão (`delete_customer`) **deverá ser bloqueada** pelo domínio, orientando o usuário a utilizar a desativação (`set_active(false)`).
 - **Autorização (RBAC)**:
   - Consulta permitida com `customer:read` (**Proprietário**, **Comercial**, **Financeiro**).
   - Criação, edição e exclusão lógica exigem `customer:manage` (**Proprietário**, **Comercial**).

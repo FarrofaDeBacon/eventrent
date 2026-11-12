@@ -435,7 +435,7 @@ export class MockCustomerRepository implements CustomerRepository {
       );
       if (duplicate) {
         throw new Error(
-          `Já existe um cliente ativo cadastrado com o documento '${formatDocument(cleanDoc, input.person_type)}'.`,
+          "Já existe um cliente ativo cadastrado com este documento.",
         );
       }
     }
@@ -534,7 +534,7 @@ export class MockCustomerRepository implements CustomerRepository {
       );
       if (duplicate) {
         throw new Error(
-          `Já existe outro cliente ativo com o documento '${formatDocument(cleanDoc, input.person_type)}'.`,
+          "Já existe outro cliente ativo cadastrado com este documento.",
         );
       }
     }
@@ -607,6 +607,29 @@ export class MockCustomerRepository implements CustomerRepository {
     store.customers[idx] = updated;
     persistStore();
     return structuredClone(updated);
+  }
+
+  async setCustomerActive(
+    id: string,
+    active: boolean,
+  ): Promise<CustomerWithDetails> {
+    const { session } = requireMockCustomerPermission(
+      PERMISSIONS.CUSTOMER_MANAGE,
+    );
+    const store = loadStore(session.tenant_id);
+    const target = store.customers.find(
+      (entry) =>
+        entry.customer.id === id &&
+        entry.customer.tenant_id === session.tenant_id &&
+        !entry.customer.deleted_at,
+    );
+    if (!target) {
+      throw new Error("Cliente não encontrado.");
+    }
+    target.customer.active = active;
+    target.customer.updated_at = new Date().toISOString();
+    persistStore();
+    return structuredClone(target);
   }
 
   async deleteCustomer(id: string): Promise<void> {
