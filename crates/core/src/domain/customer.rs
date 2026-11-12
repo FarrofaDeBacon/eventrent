@@ -1,4 +1,5 @@
 use crate::domain::document::DocumentType;
+use crate::error::{CoreError, Result as CoreResult};
 use base64::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -192,12 +193,27 @@ impl CustomerCursor {
 
     pub fn encode(&self) -> String {
         let json = serde_json::to_string(self).unwrap_or_default();
-        BASE64_STANDARD.encode(json.as_bytes())
+        BASE64_URL_SAFE_NO_PAD.encode(json.as_bytes())
     }
 
-    pub fn decode(cursor_str: &str) -> Option<Self> {
-        let bytes = BASE64_STANDARD.decode(cursor_str.trim()).ok()?;
-        serde_json::from_slice(&bytes).ok()
+    pub fn decode(cursor_str: &str) -> CoreResult<Self> {
+        let trimmed = cursor_str.trim();
+        if trimmed.is_empty() {
+            return Err(CoreError::Validation(
+                "Cursor de paginação inválido ou vazio.".to_string(),
+            ));
+        }
+        let bytes = BASE64_URL_SAFE_NO_PAD.decode(trimmed).map_err(|_| {
+            CoreError::Validation("Cursor de paginação inválido ou adulterado.".to_string())
+        })?;
+        let decoded: Self = serde_json::from_slice(&bytes)
+            .map_err(|_| CoreError::Validation("Cursor de paginação malformado.".to_string()))?;
+        if decoded.id.trim().is_empty() {
+            return Err(CoreError::Validation(
+                "Cursor de paginação inválido: identificador ausente.".to_string(),
+            ));
+        }
+        Ok(decoded)
     }
 }
 

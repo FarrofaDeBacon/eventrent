@@ -795,6 +795,20 @@ pub async fn contract_customer_crud_and_lgpd_audit(
     assert_eq!(list_cnpj.items.len(), 1);
     assert_eq!(list_cnpj.items[0].id, created_pj.customer.id);
 
+    // 5.3 Cursor inválido ou adulterado deve retornar erro de validação limpo
+    let bad_cursor_res = services
+        .list_customers(
+            session,
+            &CustomerFilter {
+                query: None,
+                person_type: None,
+                cursor: Some("cursor-adulterado-!@#".to_string()),
+                limit: None,
+            },
+        )
+        .await;
+    assert!(matches!(bad_cursor_res, Err(CoreError::Validation(_))));
+
     // 6. Atualização de cliente preservando IDs estáveis de contato e endereço
     let original_contact_id = created_pf.contacts[0].id.clone();
     let original_address_id = created_pf.addresses[0].id.clone();
@@ -1966,6 +1980,7 @@ mod unit_tests {
             build_customer_search_text, build_name_sort, normalize_for_search, remove_diacritics,
             CustomerCursor,
         };
+        use crate::error::CoreError;
 
         // 1. Remoção de acentos em português (NFC e NFD com combinantes U+0300..U+036F)
         let accented = "José da Conceição & Filhos — Produções Audiovisuais Ltda.";
@@ -2005,17 +2020,30 @@ mod unit_tests {
         assert!(search_text.contains("contato@spsom.com"));
         assert!(search_text.contains("(11) 98765-4321"));
 
-        // 5. CustomerCursor (encode / decode)
+        // 5. CustomerCursor (URL_SAFE_NO_PAD encode / decode)
         let cursor = CustomerCursor::new("carlos silva", "018f0000-0000-7000-8000-000000000042");
         let encoded = cursor.encode();
         assert!(!encoded.is_empty());
+        assert!(!encoded.contains('='));
+        assert!(!encoded.contains('+'));
+        assert!(!encoded.contains('/'));
 
         let decoded =
             CustomerCursor::decode(&encoded).expect("cursor deve decodificar com sucesso");
         assert_eq!(decoded, cursor);
 
-        // Cursor inválido deve retornar None de forma segura
-        assert!(CustomerCursor::decode("cursor-invalido-!@#").is_none());
-        assert!(CustomerCursor::decode("").is_none());
+        // Cursor inválido ou adulterado deve retornar CoreError::Validation
+        assert!(matches!(
+            CustomerCursor::decode("cursor-invalido-!@#"),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            CustomerCursor::decode(""),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            CustomerCursor::decode("e30"), // "{}" sem campos obrigatórios
+            Err(CoreError::Validation(_))
+        ));
     }
 }

@@ -1,13 +1,14 @@
 use crate::domain::{
     build_customer_search_text, build_name_sort, mask_document_for_audit, parse_document_with_type,
     AuditLogEntry, BrandingValidator, CreateCustomerInput, CreateUserInput, Customer,
-    CustomerAddress, CustomerContact, CustomerFilter, CustomerPage, CustomerWithDetails,
-    DocumentType, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
-    PersonType, PublicBranding, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput,
-    Role, RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput,
-    UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole, PERM_BRANDING_MANAGE,
-    PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_USER_MANAGE,
-    PERM_USER_READ, ROLE_SLUG_OWNER, SYSTEM_ROLES,
+    CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter, CustomerPage,
+    CustomerWithDetails, DocumentType, InitialSetupInput, InitialSetupResult, LoginInput,
+    LoginPolicy, OperationMode, PersonType, PublicBranding, RecoverPasswordInput,
+    RecoverPasswordResult, ResetPasswordInput, Role, RoleWithPermissions, SessionInfo, Tenant,
+    TenantBranding, UpdateBrandingInput, UpdateCustomerInput, UpdateUserInput, UserRecord,
+    UserWithRole, PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE,
+    PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_USER_MANAGE, PERM_USER_READ, ROLE_SLUG_OWNER,
+    SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
@@ -1460,7 +1461,22 @@ impl CoreServices {
         filter: &CustomerFilter,
     ) -> Result<CustomerPage> {
         self.check_session_and_permission(session, PERM_CUSTOMER_READ)?;
-        self.stores.customers.list(&session.tenant_id, filter).await
+
+        if let Some(ref cursor) = filter.cursor {
+            CustomerCursor::decode(cursor)?;
+        }
+
+        let sanitized_filter = CustomerFilter {
+            query: filter.query.clone(),
+            person_type: filter.person_type,
+            cursor: filter.cursor.clone(),
+            limit: Some(filter.limit.unwrap_or(50).clamp(1, 100)),
+        };
+
+        self.stores
+            .customers
+            .list(&session.tenant_id, &sanitized_filter)
+            .await
     }
 
     /// Obtém detalhes completos de um cliente (dados cadastrais, contatos e endereços).

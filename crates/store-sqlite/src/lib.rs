@@ -1572,10 +1572,14 @@ impl CustomerStore for SqliteStore {
     }
 
     async fn list(&self, tenant_id: &str, filter: &CustomerFilter) -> Result<CustomerPage> {
-        let limit = filter.limit.unwrap_or(20).clamp(1, 100);
+        let limit = filter.limit.unwrap_or(50).clamp(1, 100);
         let fetch_limit = (limit + 1) as i64;
 
-        let cursor_data = filter.cursor.as_deref().and_then(CustomerCursor::decode);
+        let cursor_data = filter
+            .cursor
+            .as_deref()
+            .map(CustomerCursor::decode)
+            .transpose()?;
 
         let mut sql = String::from(
             r#"
