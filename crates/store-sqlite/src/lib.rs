@@ -3265,5 +3265,24 @@ mod tests {
             println!("[EXPLAIN QUERY PLAN] {detail}");
             assert!(!detail.contains("idx_customer_tenant_search"));
         }
+
+        // Validação da FK composta (tenant_id, customer_id):
+        // Tentativa de inserir contato ou endereço com tenant diferente do cliente deve FALHAR
+        sqlx::query("INSERT INTO tenant (id, tenant_id, name, slug, created_at, updated_at) VALUES ('t2', 't2', 'Outra', 'outra', ?, ?)")
+            .bind(now).bind(now).execute(&pool).await.expect("insert tenant t2");
+
+        let err_contact = sqlx::query("INSERT INTO customer_contact (id, tenant_id, customer_id, name, email, is_primary, created_at, updated_at) VALUES ('cc_inv', 't2', 'c1', 'Invasor', 'inv@ex.com', 0, ?, ?)")
+            .bind(now).bind(now).execute(&pool).await;
+        assert!(
+            err_contact.is_err(),
+            "Inserir contato com tenant diferente do cliente deve falhar por FK composta"
+        );
+
+        let err_address = sqlx::query("INSERT INTO customer_address (id, tenant_id, customer_id, label, street, number, neighborhood, city, state, postal_code, is_primary, created_at, updated_at) VALUES ('ca_inv', 't2', 'c1', 'Invasor', 'Rua B', '20', 'Bairro', 'SP', 'SP', '01001000', 0, ?, ?)")
+            .bind(now).bind(now).execute(&pool).await;
+        assert!(
+            err_address.is_err(),
+            "Inserir endereço com tenant diferente do cliente deve falhar por FK composta"
+        );
     }
 }

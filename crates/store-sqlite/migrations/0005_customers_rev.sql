@@ -160,7 +160,8 @@ CREATE TABLE customer (
     deleted_at TEXT,
     created_by TEXT,
     FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE,
-    FOREIGN KEY (created_by) REFERENCES app_user(id) ON DELETE SET NULL
+    FOREIGN KEY (created_by) REFERENCES app_user(id) ON DELETE SET NULL,
+    UNIQUE (tenant_id, id)
 );
 
 CREATE TABLE customer_contact (
@@ -177,7 +178,7 @@ CREATE TABLE customer_contact (
     deleted_at TEXT,
     created_by TEXT,
     FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE,
-    FOREIGN KEY (customer_id) REFERENCES customer(id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant_id, customer_id) REFERENCES customer(tenant_id, id) ON DELETE CASCADE,
     FOREIGN KEY (created_by) REFERENCES app_user(id) ON DELETE SET NULL
 );
 
@@ -200,7 +201,7 @@ CREATE TABLE customer_address (
     deleted_at TEXT,
     created_by TEXT,
     FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE,
-    FOREIGN KEY (customer_id) REFERENCES customer(id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant_id, customer_id) REFERENCES customer(tenant_id, id) ON DELETE CASCADE,
     FOREIGN KEY (created_by) REFERENCES app_user(id) ON DELETE SET NULL
 );
 
