@@ -39,6 +39,11 @@ export function normalizeDocument(input: string): string {
   return input.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
 }
 
+/** Verifica se o documento contém somente separadores permitidos (., -, /, espaço) e ASCII alfanumérico. */
+export function hasOnlyAllowedDocumentChars(input: string): boolean {
+  return /^[0-9a-zA-Z.\-/\s]*$/.test(input);
+}
+
 /** Remove qualquer caractere não numérico. */
 export function digitsOnly(input: string): string {
   return input.replace(/\D/g, "");
@@ -60,8 +65,9 @@ export function normalizeForSearch(input: string): string {
  * Valida CPF (11 dígitos) com algoritmo Módulo 11 e rejeição de sequências repetidas.
  */
 export function validateCpf(input: string): boolean {
-  const clean = digitsOnly(input);
-  if (clean.length !== 11) return false;
+  if (!hasOnlyAllowedDocumentChars(input)) return false;
+  const clean = normalizeDocument(input);
+  if (clean.length !== 11 || !/^\d{11}$/.test(clean)) return false;
   if (/^(\d)\1{10}$/.test(clean)) return false;
 
   const digits = Array.from(clean, Number);
@@ -93,6 +99,7 @@ export function validateCpf(input: string): boolean {
  * - Valor do caractere: charCodeAt(0) - 48 ('0'..'9' -> 0..9, 'A'..'Z' -> 17..42)
  */
 export function validateCnpj(input: string): boolean {
+  if (!hasOnlyAllowedDocumentChars(input)) return false;
   const clean = normalizeDocument(input);
   if (clean.length !== 14) return false;
   if (!/^[0-9A-Z]{12}[0-9]{2}$/.test(clean)) return false;

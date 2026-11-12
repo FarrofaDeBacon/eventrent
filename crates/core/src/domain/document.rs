@@ -24,18 +24,27 @@ pub struct DocumentNumber {
     pub formatted: String,
 }
 
-/// Remove pontuação comum (pontos, traços, barras), espaços e converte para maiúsculas.
-pub fn normalize_document(input: &str) -> String {
-    input
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .collect::<String>()
-        .to_ascii_uppercase()
+/// Remove apenas '.', '-', '/' e espaços, convertendo letras ASCII para maiúsculas.
+/// Qualquer outro caractere (incluindo acentuados ou símbolos especiais) gera erro de validação.
+pub fn normalize_document(input: &str) -> Result<String> {
+    let mut clean = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '.' | '-' | '/' | ' ' => continue,
+            c if c.is_ascii_alphanumeric() => clean.push(c.to_ascii_uppercase()),
+            other => {
+                return Err(CoreError::Validation(format!(
+                    "Documento contém caractere inválido: '{other}'. Utilize apenas dígitos, letras ASCII [A-Z] e separadores (., -, /)."
+                )));
+            }
+        }
+    }
+    Ok(clean)
 }
 
 /// Valida um CPF (11 dígitos numéricos) aplicando o algoritmo Módulo 11 e rejeitando sequências repetidas.
 pub fn validate_cpf(input: &str) -> Result<String> {
-    let clean = normalize_document(input);
+    let clean = normalize_document(input)?;
 
     if clean.len() != 11 {
         return Err(CoreError::Validation(format!(
@@ -111,7 +120,7 @@ pub fn validate_cpf(input: &str) -> Result<String> {
 /// - Pesos DV2: 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2 sobre os 12 primeiros caracteres + DV1.
 /// - Resto < 2 -> DV = 0; senão DV = 11 - Resto.
 pub fn validate_cnpj(input: &str) -> Result<String> {
-    let clean = normalize_document(input);
+    let clean = normalize_document(input)?;
 
     if clean.len() != 14 {
         return Err(CoreError::Validation(format!(
@@ -191,7 +200,7 @@ pub fn validate_cnpj(input: &str) -> Result<String> {
 
 /// Identifica automaticamente o tipo de documento (CPF ou CNPJ), valida suas regras e formata.
 pub fn parse_document(input: &str) -> Result<DocumentNumber> {
-    let clean = normalize_document(input);
+    let clean = normalize_document(input)?;
 
     match clean.len() {
         11 => {
@@ -251,7 +260,13 @@ pub fn format_cnpj(clean: &str) -> String {
 /// - CPF: `***.***.***-25` (preserva apenas os dígitos verificadores).
 /// - CNPJ: `**.***.***/0001-**` (preserva apenas o número de ordem/filial).
 pub fn mask_document_for_audit(document: &str) -> String {
-    let clean = normalize_document(document);
+    let clean = normalize_document(document).unwrap_or_else(|_| {
+        document
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .collect::<String>()
+            .to_ascii_uppercase()
+    });
     if clean.len() == 11 {
         format!("***.***.***-{}", &clean[9..11])
     } else if clean.len() == 14 {

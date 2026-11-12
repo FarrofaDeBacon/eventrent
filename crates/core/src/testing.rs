@@ -1674,18 +1674,27 @@ mod unit_tests {
     #[test]
     fn test_document_validation_cpf_and_cnpj_alphanumeric() {
         use crate::domain::document::{
-            format_cnpj, format_cpf, normalize_document, parse_document,
+            format_cnpj, format_cpf, mask_document_for_audit, normalize_document, parse_document,
             testing_utils::{generate_valid_cnpj_from_base, generate_valid_cpf_from_base},
             validate_cnpj, validate_cpf, DocumentType,
         };
 
-        // 1. Normalização de documentos
-        assert_eq!(normalize_document(" 12.ABC.345/0001-88 "), "12ABC345000188");
-        assert_eq!(normalize_document("529.982.247-25"), "52998224725");
+        // 1. Normalização de documentos (remove somente '.', '-', '/' e espaço; rejeita o resto)
         assert_eq!(
-            normalize_document("12abc345000188"),
-            "12ABC345000188" // converte para uppercase
+            normalize_document(" 12.ABC.345/01DE-35 ").expect("normaliza CNPJ"),
+            "12ABC34501DE35"
         );
+        assert_eq!(
+            normalize_document("529.982.247-25").expect("normaliza CPF"),
+            "52998224725"
+        );
+        assert_eq!(
+            normalize_document("12abc34501de35").expect("normaliza minusculas"),
+            "12ABC34501DE35"
+        );
+        assert!(normalize_document("12.ÁBC.345/01DE-35").is_err());
+        assert!(normalize_document("12_ABC_345_01DE_35").is_err());
+        assert!(normalize_document("529.982.247-25!").is_err());
 
         // 2. Validação de CPF
         // 2.1 CPFs válidos conhecidos
@@ -1750,23 +1759,55 @@ mod unit_tests {
             .contains("segundo dígito verificador"));
 
         // 4. Validação de CNPJ Alfanumérico (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024)
-        // 4.1 Exemplo calculado matematicamente: 12.ABC.345/0001-88
-        let alpha_cnpj_1 = "12.ABC.345/0001-88";
-        let valid_alpha_1 = validate_cnpj(alpha_cnpj_1).expect("CNPJ alfanumérico válido");
-        assert_eq!(valid_alpha_1, "12ABC345000188");
-        assert_eq!(format_cnpj(&valid_alpha_1), "12.ABC.345/0001-88");
+        // Fonte oficial: Nota Técnica Conjunta Cocad/Suara/RFB nº 49/2024 e Simulador Oficial da Receita Federal
+        // 4.1 Exemplo oficial da documentação RFB/ENCAT: 12.ABC.345/01DE-35
+        let official_alpha_1 = "12.ABC.345/01DE-35";
+        let valid_official_1 =
+            validate_cnpj(official_alpha_1).expect("CNPJ alfanumérico oficial válido");
+        assert_eq!(valid_official_1, "12ABC34501DE35");
+        assert_eq!(format_cnpj(&valid_official_1), "12.ABC.345/01DE-35");
 
-        // 4.2 Minusculas devem ser normalizadas para maiúsculas
+        // 4.2 Outros exemplos validados pela especificação ASCII - 48 (Simulador RFB)
+        assert_eq!(
+            validate_cnpj("12.ABC.345/0001-88").expect("exemplo RFB #2"),
+            "12ABC345000188"
+        );
+        assert_eq!(
+            validate_cnpj("AB.CDE.123/0001-00").expect("exemplo RFB #3"),
+            "ABCDE123000100"
+        );
+        assert_eq!(
+            validate_cnpj("A0.B1C.2D3/0001-79").expect("exemplo RFB #4"),
+            "A0B1C2D3000179"
+        );
+
+        // 4.3 Minúsculas devem ser normalizadas para maiúsculas
         let valid_alpha_lower =
-            validate_cnpj("12.abc.345/0001-88").expect("normaliza minusculas para maiusculas");
-        assert_eq!(valid_alpha_lower, "12ABC345000188");
+            validate_cnpj("12.abc.345/01de-35").expect("normaliza minusculas para maiusculas");
+        assert_eq!(valid_alpha_lower, "12ABC34501DE35");
 
-        // 4.3 DVs devem ser estritamente numéricos
-        let invalid_dv_letter = "12ABC34500018A";
-        assert!(validate_cnpj(invalid_dv_letter)
+        // 4.4 DVs devem ser estritamente numéricos (letra nos dígitos verificadores rejeitada)
+        assert!(validate_cnpj("12ABC34501DE3A")
             .unwrap_err()
             .to_string()
             .contains("dígitos verificadores) devem ser numéricos"));
+        assert!(validate_cnpj("12ABC34501DEA5").is_err());
+
+        // 4.5 Caracteres fora de A-Z, acentuados e tamanho errado rejeitados
+        assert!(validate_cnpj("12.ÁBC.345/01DE-35").is_err());
+        assert!(validate_cnpj("12.ABC.345/01DE-350").is_err()); // 15 caracteres
+        assert!(validate_cnpj("12.ABC.345/01DE-3").is_err()); // 13 caracteres
+
+        // 4.6 Máscara LGPD nos dois formatos (CPF e CNPJ numérico/alfanumérico)
+        assert_eq!(mask_document_for_audit("529.982.247-25"), "***.***.***-25");
+        assert_eq!(
+            mask_document_for_audit("00.000.000/0001-91"),
+            "**.***.***/0001-**"
+        );
+        assert_eq!(
+            mask_document_for_audit("12.ABC.345/01DE-35"),
+            "**.***.***/01DE-**"
+        );
 
         // 4.4 DVs matematicamente incorretos em CNPJ alfanumérico
         let wrong_alpha_dv1 = "12ABC345000178"; // DV1 esperado 8, fornecido 7

@@ -50,6 +50,14 @@ describe("Utilitários de Documentos Brasileiros e Máscaras", () => {
     expect(validateCnpj("00000000000000")).toBe(false);
 
     // CNPJ alfanumérico (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024: ASCII - 48)
+    // Exemplo oficial RFB/ENCAT: 12.ABC.345/01DE-35
+    expect(validateCnpj("12.ABC.345/01DE-35")).toBe(true);
+    expect(validateCnpj("12.abc.345/01de-35")).toBe(true);
+    expect(validateCnpj("12.ABC.345/0001-88")).toBe(true);
+    expect(validateCnpj("AB.CDE.123/0001-00")).toBe(true);
+    expect(validateCnpj("12.ÁBC.345/01DE-35")).toBe(false);
+    expect(validateCnpj("12.ABC.345/01DE-35$")).toBe(false);
+
     const alphaCnpj = generateValidAlphaCnpj("12ABC34501DE");
     expect(validateCnpj(alphaCnpj)).toBe(true);
     expect(validateCnpj(alphaCnpj.toLowerCase())).toBe(true);
