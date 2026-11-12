@@ -12,10 +12,13 @@ pub use audit::AuditLogEntry;
 pub use branding::{BrandingValidator, PublicBranding, TenantBranding, UpdateBrandingInput};
 pub use config::{AppConfig, InitialSetupInput, InitialSetupResult, OperationMode};
 pub use customer::{
-    build_customer_search_text, build_name_sort, normalize_for_search, remove_diacritics,
-    CreateAddressInput, CreateContactInput, CreateCustomerInput, Customer, CustomerAddress,
-    CustomerContact, CustomerCursor, CustomerFilter, CustomerPage, CustomerWithDetails, PersonType,
-    UpdateAddressInput, UpdateContactInput, UpdateCustomerInput,
+    build_customer_search_text, build_name_sort, normalize_and_validate_phone,
+    normalize_and_validate_postal_code, normalize_for_search, remove_diacritics,
+    validate_addresses, validate_brazilian_state, validate_contacts, validate_country_code,
+    validate_customer_common_fields, CreateAddressInput, CreateContactInput, CreateCustomerInput,
+    Customer, CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter, CustomerPage,
+    CustomerWithDetails, PersonType, UpdateAddressInput, UpdateContactInput, UpdateCustomerInput,
+    BRAZILIAN_STATES,
 };
 pub use document::{
     format_cnpj, format_cpf, mask_document_for_audit, mask_email_for_audit, mask_phone_for_audit,

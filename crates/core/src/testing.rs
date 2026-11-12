@@ -1252,6 +1252,196 @@ mod unit_tests {
         assert!(validate_email(&local_65).is_err());
         // TLD inválido terminando em hífen
         assert!(validate_email("usuario@dominio.com-").is_err());
+        // Rótulos de domínio inválidos e caracteres proibidos (ex: exclamação)
+        assert!(validate_email("usuario@exa!mple.com").is_err());
+        assert!(validate_email("usuario@sub.-empresa.com").is_err());
+        assert!(validate_email("usuario@empresa-.com").is_err());
+        // Parte local com caracteres proibidos
+        assert!(validate_email("usuá[rio]@dominio.com").is_err());
+    }
+
+    #[test]
+    fn test_customer_domain_validations_and_limits() {
+        use crate::domain::customer::*;
+
+        // 1. CEP: BR normaliza para 8 dígitos, rejeita formato inválido
+        assert_eq!(
+            normalize_and_validate_postal_code("01310-100", "BR").unwrap(),
+            "01310100"
+        );
+        assert_eq!(
+            normalize_and_validate_postal_code("01310100", "br").unwrap(),
+            "01310100"
+        );
+        assert_eq!(
+            normalize_and_validate_postal_code(" 01310.100 ", "BR").unwrap(),
+            "01310100"
+        );
+        assert!(normalize_and_validate_postal_code("01310-10", "BR").is_err());
+        assert!(normalize_and_validate_postal_code("01310-1000", "BR").is_err());
+        assert!(normalize_and_validate_postal_code("01310-abc", "BR").is_err());
+        // Não-BR aceita códigos postais internacionais até 20 caracteres
+        assert_eq!(
+            normalize_and_validate_postal_code("90210", "US").unwrap(),
+            "90210"
+        );
+        assert_eq!(
+            normalize_and_validate_postal_code("SW1A 1AA", "GB").unwrap(),
+            "SW1A 1AA"
+        );
+        assert!(normalize_and_validate_postal_code(&"A".repeat(21), "US").is_err());
+
+        // 2. UF: 27 siglas válidas e rejeição de inválidas
+        assert_eq!(validate_brazilian_state("SP").unwrap(), "SP");
+        assert_eq!(validate_brazilian_state("rj").unwrap(), "RJ");
+        assert_eq!(validate_brazilian_state(" mg ").unwrap(), "MG");
+        assert!(validate_brazilian_state("XX").is_err());
+        assert!(validate_brazilian_state("Sao Paulo").is_err());
+
+        // 3. País: 2 letras ISO
+        assert_eq!(validate_country_code("BR").unwrap(), "BR");
+        assert_eq!(validate_country_code("us").unwrap(), "US");
+        assert!(validate_country_code("BRA").is_err());
+        assert!(validate_country_code("B1").is_err());
+
+        // 4. Telefone: BR 10 ou 11 dígitos, remove +55 ou 55; Outros 8-15
+        assert_eq!(
+            normalize_and_validate_phone("(11) 98765-4321", Some("BR")).unwrap(),
+            "11987654321"
+        );
+        assert_eq!(
+            normalize_and_validate_phone("+55 11 98765-4321", Some("BR")).unwrap(),
+            "11987654321"
+        );
+        assert_eq!(
+            normalize_and_validate_phone("5511987654321", Some("BR")).unwrap(),
+            "11987654321"
+        );
+        assert_eq!(
+            normalize_and_validate_phone("(11) 2345-6789", Some("BR")).unwrap(),
+            "1123456789"
+        );
+        assert!(normalize_and_validate_phone("119876", Some("BR")).is_err());
+        assert!(normalize_and_validate_phone("1198765432100", Some("BR")).is_err());
+        assert!(normalize_and_validate_phone("1198765abc", Some("BR")).is_err());
+        // Internacional
+        assert_eq!(
+            normalize_and_validate_phone("+1 202 555 0123", Some("US")).unwrap(),
+            "12025550123"
+        );
+        assert!(normalize_and_validate_phone("12345", Some("US")).is_err());
+
+        // 5. Contatos: telefone OU e-mail, exatamente 1 principal, IDs repetidos
+        let mut contacts = vec![
+            CreateContactInput {
+                id: Some("c1".to_string()),
+                name: "Contato 1".to_string(),
+                email: Some("c1@ex.com".to_string()),
+                phone: None,
+                role: Some("Gerente".to_string()),
+                is_primary: false,
+            },
+            CreateContactInput {
+                id: Some("c2".to_string()),
+                name: "Contato 2".to_string(),
+                email: None,
+                phone: Some("(11) 98765-4321".to_string()),
+                role: None,
+                is_primary: false,
+            },
+        ];
+        assert!(validate_contacts(&mut contacts).is_ok());
+        // Primeiro virou principal automaticamente
+        assert!(contacts[0].is_primary);
+        assert!(!contacts[1].is_primary);
+        assert_eq!(contacts[1].phone.as_deref(), Some("11987654321"));
+
+        // Dois principais = erro
+        let mut two_primaries = contacts.clone();
+        two_primaries[1].is_primary = true;
+        assert!(validate_contacts(&mut two_primaries).is_err());
+
+        // Sem telefone e sem email = erro
+        let mut no_contact_info = vec![CreateContactInput {
+            id: None,
+            name: "Sem Nada".to_string(),
+            email: None,
+            phone: None,
+            role: None,
+            is_primary: true,
+        }];
+        assert!(validate_contacts(&mut no_contact_info).is_err());
+
+        // IDs repetidos na entrada = erro
+        let mut dup_ids = vec![
+            CreateContactInput {
+                id: Some("rep".to_string()),
+                name: "A".to_string(),
+                email: Some("a@ex.com".to_string()),
+                phone: None,
+                role: None,
+                is_primary: true,
+            },
+            CreateContactInput {
+                id: Some("rep".to_string()),
+                name: "B".to_string(),
+                email: Some("b@ex.com".to_string()),
+                phone: None,
+                role: None,
+                is_primary: false,
+            },
+        ];
+        assert!(validate_contacts(&mut dup_ids).is_err());
+
+        // Limite de 20 contatos
+        let mut over_20 = (0..21)
+            .map(|i| CreateContactInput {
+                id: Some(format!("c{i}")),
+                name: format!("Nome {i}"),
+                email: Some(format!("c{i}@ex.com")),
+                phone: None,
+                role: None,
+                is_primary: i == 0,
+            })
+            .collect::<Vec<_>>();
+        assert!(validate_contacts(&mut over_20).is_err());
+
+        // 6. Endereços: limites e principal
+        let mut addresses = vec![CreateAddressInput {
+            id: Some("a1".to_string()),
+            label: "Sede".to_string(),
+            street: "Av Paulista".to_string(),
+            number: "1000".to_string(),
+            complement: Some("Andar 10".to_string()),
+            neighborhood: "Bela Vista".to_string(),
+            city: "São Paulo".to_string(),
+            state: "sp".to_string(),
+            postal_code: "01310-100".to_string(),
+            country: Some("BR".to_string()),
+            is_primary: false,
+        }];
+        assert!(validate_addresses(&mut addresses).is_ok());
+        assert!(addresses[0].is_primary);
+        assert_eq!(addresses[0].state, "SP");
+        assert_eq!(addresses[0].postal_code, "01310100");
+
+        // 7. Limites gerais
+        assert!(validate_customer_common_fields("Cliente OK", None, None, None, None).is_ok());
+        assert!(validate_customer_common_fields(&"A".repeat(151), None, None, None, None).is_err());
+        assert!(
+            validate_customer_common_fields("OK", Some(&"T".repeat(151)), None, None, None)
+                .is_err()
+        );
+        assert!(
+            validate_customer_common_fields("OK", None, Some(&"N".repeat(2001)), None, None)
+                .is_err()
+        );
+        assert!(
+            validate_customer_common_fields("OK", None, None, Some(&"S".repeat(31)), None).is_err()
+        );
+        assert!(
+            validate_customer_common_fields("OK", None, None, None, Some(&"M".repeat(31))).is_err()
+        );
     }
 
     #[tokio::test]

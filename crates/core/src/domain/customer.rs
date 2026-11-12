@@ -292,6 +292,323 @@ pub fn build_customer_search_text(
     parts.join(" ")
 }
 
+pub const BRAZILIAN_STATES: [&str; 27] = [
+    "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR",
+    "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO",
+];
+
+pub fn validate_brazilian_state(state: &str) -> CoreResult<String> {
+    let upper = state.trim().to_uppercase();
+    if BRAZILIAN_STATES.contains(&upper.as_str()) {
+        Ok(upper)
+    } else {
+        Err(CoreError::Validation(format!(
+            "UF inválida: '{state}'. Informe uma das 27 unidades federativas brasileiras (ex: SP, RJ, MG)."
+        )))
+    }
+}
+
+pub fn validate_country_code(country: &str) -> CoreResult<String> {
+    let trimmed = country.trim().to_uppercase();
+    if trimmed.len() == 2 && trimmed.chars().all(|c| c.is_ascii_alphabetic()) {
+        Ok(trimmed)
+    } else {
+        Err(CoreError::Validation(
+            "Código do país inválido: deve conter 2 letras ISO (ex: BR).".to_string(),
+        ))
+    }
+}
+
+pub fn normalize_and_validate_postal_code(postal_code: &str, country: &str) -> CoreResult<String> {
+    let trimmed = postal_code.trim();
+    if trimmed.is_empty() {
+        return Err(CoreError::Validation(
+            "CEP/Código postal é obrigatório.".to_string(),
+        ));
+    }
+    if country.eq_ignore_ascii_case("BR") {
+        if !trimmed
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '.' || c == '-' || c == ' ')
+        {
+            return Err(CoreError::Validation(
+                "CEP inválido: deve conter apenas dígitos e separadores usuais (traço ou ponto)."
+                    .to_string(),
+            ));
+        }
+        let digits: String = trimmed.chars().filter(|c| c.is_ascii_digit()).collect();
+        if digits.len() != 8 {
+            return Err(CoreError::Validation(
+                "CEP inválido: deve conter exatamente 8 dígitos numéricos.".to_string(),
+            ));
+        }
+        Ok(digits)
+    } else {
+        if trimmed.len() > 20 {
+            return Err(CoreError::Validation(
+                "Código postal excede o limite máximo de 20 caracteres.".to_string(),
+            ));
+        }
+        Ok(trimmed.to_string())
+    }
+}
+
+pub fn normalize_and_validate_phone(phone: &str, country: Option<&str>) -> CoreResult<String> {
+    let trimmed = phone.trim();
+    if trimmed.is_empty() {
+        return Err(CoreError::Validation(
+            "Telefone não pode ser vazio.".to_string(),
+        ));
+    }
+
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_digit() || matches!(c, '+' | '(' | ')' | '-' | '.' | ' '))
+    {
+        return Err(CoreError::Validation(
+            "Telefone contém caracteres inválidos. Utilize apenas números, espaços e os símbolos +, -, (, ), .".to_string(),
+        ));
+    }
+
+    let mut digits: String = trimmed.chars().filter(|c| c.is_ascii_digit()).collect();
+    let is_br = country
+        .map(|c| c.eq_ignore_ascii_case("BR"))
+        .unwrap_or(true);
+
+    if is_br {
+        if digits.starts_with("55") && (digits.len() == 12 || digits.len() == 13) {
+            digits = digits[2..].to_string();
+        }
+        if digits.len() == 10 || digits.len() == 11 {
+            Ok(digits)
+        } else {
+            Err(CoreError::Validation(
+                "Telefone inválido: para o Brasil deve conter 10 ou 11 dígitos com DDD (ex: 11987654321).".to_string(),
+            ))
+        }
+    } else {
+        if digits.len() >= 8 && digits.len() <= 15 {
+            Ok(digits)
+        } else {
+            Err(CoreError::Validation(
+                "Telefone inválido: para outros países deve conter entre 8 e 15 dígitos."
+                    .to_string(),
+            ))
+        }
+    }
+}
+
+pub fn validate_customer_common_fields(
+    name: &str,
+    trade_name: Option<&str>,
+    notes: Option<&str>,
+    state_registration: Option<&str>,
+    municipal_registration: Option<&str>,
+) -> CoreResult<()> {
+    let name_trimmed = name.trim();
+    if name_trimmed.is_empty() || name_trimmed.len() > 150 {
+        return Err(CoreError::Validation(
+            "Nome ou Razão Social deve conter entre 1 e 150 caracteres.".to_string(),
+        ));
+    }
+    if let Some(trade) = trade_name {
+        if trade.trim().len() > 150 {
+            return Err(CoreError::Validation(
+                "Nome Fantasia excede o limite máximo de 150 caracteres.".to_string(),
+            ));
+        }
+    }
+    if let Some(n) = notes {
+        if n.trim().len() > 2000 {
+            return Err(CoreError::Validation(
+                "Notas do cliente excedem o limite máximo de 2000 caracteres.".to_string(),
+            ));
+        }
+    }
+    if let Some(sr) = state_registration {
+        if sr.trim().len() > 30 {
+            return Err(CoreError::Validation(
+                "Inscrição Estadual excede o limite máximo de 30 caracteres.".to_string(),
+            ));
+        }
+    }
+    if let Some(mr) = municipal_registration {
+        if mr.trim().len() > 30 {
+            return Err(CoreError::Validation(
+                "Inscrição Municipal excede o limite máximo de 30 caracteres.".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_contacts(contacts: &mut [CreateContactInput]) -> CoreResult<()> {
+    if contacts.len() > 20 {
+        return Err(CoreError::Validation(
+            "Número máximo de contatos excedido (limite de 20 contatos).".to_string(),
+        ));
+    }
+
+    let mut seen_ids = std::collections::HashSet::new();
+    for c in contacts.iter() {
+        if let Some(ref id) = c.id {
+            let trimmed = id.trim();
+            if !trimmed.is_empty() && !seen_ids.insert(trimmed.to_string()) {
+                return Err(CoreError::Validation(
+                    "Identificador de contato duplicado na requisição.".to_string(),
+                ));
+            }
+        }
+    }
+
+    let mut primary_count = 0;
+    for (idx, c) in contacts.iter_mut().enumerate() {
+        let name_trimmed = c.name.trim();
+        if name_trimmed.is_empty() || name_trimmed.len() > 100 {
+            return Err(CoreError::Validation(format!(
+                "Nome do contato #{} é obrigatório e deve ter até 100 caracteres.",
+                idx + 1
+            )));
+        }
+        if let Some(ref role) = c.role {
+            if role.trim().len() > 60 {
+                return Err(CoreError::Validation(format!(
+                    "Função do contato #{} excede o limite máximo de 60 caracteres.",
+                    idx + 1
+                )));
+            }
+        }
+
+        let email_val = c.email.as_deref().map(str::trim).filter(|e| !e.is_empty());
+        let phone_val = c.phone.as_deref().map(str::trim).filter(|p| !p.is_empty());
+
+        if email_val.is_none() && phone_val.is_none() {
+            return Err(CoreError::Validation(format!(
+                "Contato #{} deve possuir pelo menos um telefone ou e-mail preenchido.",
+                idx + 1
+            )));
+        }
+
+        if let Some(email) = email_val {
+            crate::services::validate_email(email)?;
+        }
+        if let Some(phone) = phone_val {
+            let normalized = normalize_and_validate_phone(phone, None)?;
+            c.phone = Some(normalized);
+        }
+
+        if c.is_primary {
+            primary_count += 1;
+        }
+    }
+
+    if primary_count > 1 {
+        return Err(CoreError::Validation(
+            "Apenas um contato pode ser marcado como principal.".to_string(),
+        ));
+    }
+    if primary_count == 0 && !contacts.is_empty() {
+        contacts[0].is_primary = true;
+    }
+
+    Ok(())
+}
+
+pub fn validate_addresses(addresses: &mut [CreateAddressInput]) -> CoreResult<()> {
+    if addresses.len() > 20 {
+        return Err(CoreError::Validation(
+            "Número máximo de endereços excedido (limite de 20 endereços).".to_string(),
+        ));
+    }
+
+    let mut seen_ids = std::collections::HashSet::new();
+    for a in addresses.iter() {
+        if let Some(ref id) = a.id {
+            let trimmed = id.trim();
+            if !trimmed.is_empty() && !seen_ids.insert(trimmed.to_string()) {
+                return Err(CoreError::Validation(
+                    "Identificador de endereço duplicado na requisição.".to_string(),
+                ));
+            }
+        }
+    }
+
+    let mut primary_count = 0;
+    for (idx, a) in addresses.iter_mut().enumerate() {
+        let label = a.label.trim();
+        if !label.is_empty() && label.len() > 40 {
+            return Err(CoreError::Validation(format!(
+                "Rótulo do endereço #{} excede o limite máximo de 40 caracteres.",
+                idx + 1
+            )));
+        }
+        let street = a.street.trim();
+        if street.is_empty() || street.len() > 150 {
+            return Err(CoreError::Validation(format!(
+                "Logradouro do endereço #{} é obrigatório e deve ter até 150 caracteres.",
+                idx + 1
+            )));
+        }
+        let number = a.number.trim();
+        if number.is_empty() || number.len() > 20 {
+            return Err(CoreError::Validation(format!(
+                "Número do endereço #{} é obrigatório e deve ter até 20 caracteres.",
+                idx + 1
+            )));
+        }
+        if let Some(ref comp) = a.complement {
+            if comp.trim().len() > 60 {
+                return Err(CoreError::Validation(format!(
+                    "Complemento do endereço #{} excede o limite máximo de 60 caracteres.",
+                    idx + 1
+                )));
+            }
+        }
+        let neigh = a.neighborhood.trim();
+        if neigh.is_empty() || neigh.len() > 80 {
+            return Err(CoreError::Validation(format!(
+                "Bairro do endereço #{} é obrigatório e deve ter até 80 caracteres.",
+                idx + 1
+            )));
+        }
+        let city = a.city.trim();
+        if city.is_empty() || city.len() > 80 {
+            return Err(CoreError::Validation(format!(
+                "Cidade do endereço #{} é obrigatória e deve ter até 80 caracteres.",
+                idx + 1
+            )));
+        }
+
+        let country = a.country.as_deref().unwrap_or("BR");
+        let validated_country = validate_country_code(country)?;
+        a.country = Some(validated_country.clone());
+
+        if validated_country == "BR" {
+            let validated_state = validate_brazilian_state(&a.state)?;
+            a.state = validated_state;
+        }
+
+        let normalized_postal =
+            normalize_and_validate_postal_code(&a.postal_code, &validated_country)?;
+        a.postal_code = normalized_postal;
+
+        if a.is_primary {
+            primary_count += 1;
+        }
+    }
+
+    if primary_count > 1 {
+        return Err(CoreError::Validation(
+            "Apenas um endereço pode ser marcado como principal.".to_string(),
+        ));
+    }
+    if primary_count == 0 && !addresses.is_empty() {
+        addresses[0].is_primary = true;
+    }
+
+    Ok(())
+}
+
 impl fmt::Debug for Customer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Customer")
