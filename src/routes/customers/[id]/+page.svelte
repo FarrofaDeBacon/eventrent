@@ -31,6 +31,7 @@
 
   let deleteOpen = $state(false);
   let isDeleting = $state(false);
+  let isTogglingActive = $state(false);
 
   let canManage = $derived(
     hasPermission(appSession.session, PERMISSIONS.CUSTOMER_MANAGE),
@@ -58,11 +59,13 @@
       person_type: data.customer.person_type,
       name: data.customer.name,
       trade_name: data.customer.trade_name ?? "",
-      document_number: data.customer.document_number,
+      document_type: data.customer.document_type,
+      document_number: data.customer.document_number ?? "",
       state_registration: data.customer.state_registration ?? "",
       municipal_registration: data.customer.municipal_registration ?? "",
       notes: data.customer.notes ?? "",
       contacts: data.contacts.map((c) => ({
+        id: c.id,
         name: c.name,
         email: c.email ?? "",
         phone: c.phone ?? "",
@@ -70,6 +73,7 @@
         is_primary: c.is_primary,
       })),
       addresses: data.addresses.map((a) => ({
+        id: a.id,
         label: a.label,
         street: a.street,
         number: a.number,
@@ -100,6 +104,27 @@
       toast.error(submitError);
     } finally {
       submitting = false;
+    }
+  }
+
+  async function handleToggleActive() {
+    if (!details) return;
+    isTogglingActive = true;
+    try {
+      const updated = await getCustomerRepository().setCustomerActive(
+        details.customer.id,
+        !details.customer.active,
+      );
+      details = updated;
+      toast.success(
+        updated.customer.active
+          ? "Cliente reativado com sucesso!"
+          : "Cliente desativado com sucesso!",
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      isTogglingActive = false;
     }
   }
 
@@ -149,6 +174,15 @@
           </Button>
         {/if}
         <Button
+          variant="outline"
+          size="sm"
+          onclick={handleToggleActive}
+          disabled={isTogglingActive}
+          data-testid="toggle-active-customer-btn"
+        >
+          {details.customer.active ? "Desativar" : "Reativar"}
+        </Button>
+        <Button
           variant="destructive"
           size="sm"
           onclick={() => (deleteOpen = true)}
@@ -175,6 +209,9 @@
           {details.customer.person_type === "legal"
             ? $_("customers.personTypeLegalFull")
             : $_("customers.personTypeIndividualFull")}
+        </Badge>
+        <Badge variant={details.customer.active ? "default" : "outline"}>
+          {details.customer.active ? "Ativo" : "Inativo"}
         </Badge>
       </div>
       <p class="text-sm text-muted-foreground">

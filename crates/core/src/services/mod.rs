@@ -1,13 +1,15 @@
 use crate::domain::{
-    build_customer_search_text, build_name_sort, mask_document_for_audit, parse_document,
-    AuditLogEntry, BrandingValidator, CreateCustomerInput, CreateUserInput, Customer,
-    CustomerAddress, CustomerContact, CustomerFilter, CustomerPage, CustomerWithDetails,
-    DocumentType, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
-    PersonType, PublicBranding, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput,
-    Role, RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput,
-    UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole, PERM_BRANDING_MANAGE,
-    PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_USER_MANAGE,
-    PERM_USER_READ, ROLE_SLUG_OWNER, SYSTEM_ROLES,
+    build_customer_search_text, build_name_sort, mask_document_for_audit, mask_email_for_audit,
+    mask_phone_for_audit, parse_document_with_type, validate_addresses, validate_contacts,
+    validate_customer_common_fields, AuditLogEntry, BrandingValidator, CreateCustomerInput,
+    CreateUserInput, Customer, CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter,
+    CustomerPage, CustomerWithDetails, DocumentType, InitialSetupInput, InitialSetupResult,
+    LoginInput, LoginPolicy, OperationMode, PersonType, PublicBranding, RecoverPasswordInput,
+    RecoverPasswordResult, ResetPasswordInput, Role, RoleWithPermissions, SessionInfo, Tenant,
+    TenantBranding, UpdateBrandingInput, UpdateCustomerInput, UpdateUserInput, UserRecord,
+    UserWithRole, PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE,
+    PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_USER_MANAGE, PERM_USER_READ, ROLE_SLUG_OWNER,
+    SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
@@ -87,6 +89,16 @@ pub fn validate_email(email: &str) -> Result<String> {
         ));
     }
 
+    // Endurecimento: parte local aceita apenas letras, números e . _ % + - (ASCII)
+    if !local
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '%' | '+' | '-'))
+    {
+        return Err(CoreError::Validation(
+            "Parte local do e-mail contém caracteres inválidos (permitidos apenas letras ASCII, dígitos e . _ % + -).".to_string(),
+        ));
+    }
+
     if domain.is_empty()
         || domain.starts_with('.')
         || domain.ends_with('.')
@@ -104,6 +116,19 @@ pub fn validate_email(email: &str) -> Result<String> {
         return Err(CoreError::Validation(
             "Domínio do e-mail deve conter pelo menos uma extensão (ex: .com).".to_string(),
         ));
+    }
+
+    // Endurecimento: cada rótulo do domínio aceita apenas a-z, 0-9 e hífen (sem hífen nas pontas)
+    for label in &domain_labels {
+        if label.is_empty()
+            || label.starts_with('-')
+            || label.ends_with('-')
+            || !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            return Err(CoreError::Validation(
+                "Rótulo de domínio do e-mail inválido (use apenas letras ASCII, dígitos ou hífen sem hífen nas extremidades).".to_string(),
+            ));
+        }
     }
 
     let Some(tld) = domain_labels.last() else {
@@ -376,6 +401,52 @@ impl<'a> TxStoreBundle for PassthroughTxStoreBundle<'a> {
 #[derive(Clone)]
 pub struct CoreServices {
     pub stores: StoreBundle,
+}
+
+fn format_primary_contact_for_audit(contacts: &[CustomerContact]) -> String {
+    let primary = contacts
+        .iter()
+        .find(|c| c.is_primary)
+        .or_else(|| contacts.first());
+    let Some(c) = primary else {
+        return "sem contato".to_string();
+    };
+    let email = c
+        .email
+        .as_deref()
+        .filter(|e| !e.trim().is_empty())
+        .map(mask_email_for_audit)
+        .unwrap_or_else(|| "-".to_string());
+    let phone = c
+        .phone
+        .as_deref()
+        .filter(|p| !p.trim().is_empty())
+        .map(mask_phone_for_audit)
+        .unwrap_or_else(|| "-".to_string());
+    format!("email: {email}, tel: {phone}")
+}
+
+fn validate_customer_document_for_person_type(
+    person_type: PersonType,
+    doc_type: DocumentType,
+    doc_number: Option<&str>,
+) -> Result<(DocumentType, Option<String>, String)> {
+    let (parsed_type, parsed_raw, parsed_formatted) =
+        parse_document_with_type(doc_type, doc_number)?;
+    match (person_type, parsed_type) {
+        (PersonType::Individual, DocumentType::Cnpj) => {
+            return Err(CoreError::Validation(
+                "Pessoa Física não pode usar CNPJ; utilize CPF, documento estrangeiro ou sem documento.".to_string(),
+            ));
+        }
+        (PersonType::Legal, DocumentType::Cpf) => {
+            return Err(CoreError::Validation(
+                "Pessoa Jurídica não pode usar CPF; utilize CNPJ, documento estrangeiro ou sem documento.".to_string(),
+            ));
+        }
+        _ => {}
+    }
+    Ok((parsed_type, parsed_raw, parsed_formatted))
 }
 
 impl CoreServices {
@@ -1437,7 +1508,22 @@ impl CoreServices {
         filter: &CustomerFilter,
     ) -> Result<CustomerPage> {
         self.check_session_and_permission(session, PERM_CUSTOMER_READ)?;
-        self.stores.customers.list(&session.tenant_id, filter).await
+
+        if let Some(ref cursor) = filter.cursor {
+            CustomerCursor::decode(cursor)?;
+        }
+
+        let sanitized_filter = CustomerFilter {
+            query: filter.query.clone(),
+            person_type: filter.person_type,
+            cursor: filter.cursor.clone(),
+            limit: Some(filter.limit.unwrap_or(50).clamp(1, 100)),
+        };
+
+        self.stores
+            .customers
+            .list(&session.tenant_id, &sanitized_filter)
+            .await
     }
 
     /// Obtém detalhes completos de um cliente (dados cadastrais, contatos e endereços).
@@ -1465,113 +1551,75 @@ impl CoreServices {
         self.check_session_and_permission(session, PERM_CUSTOMER_MANAGE)?;
 
         let name = input.name.trim();
-        if name.is_empty() {
-            return Err(CoreError::Validation(
-                "Nome ou Razão Social do cliente é obrigatório.".to_string(),
-            ));
-        }
+        validate_customer_common_fields(
+            name,
+            input.trade_name.as_deref(),
+            input.notes.as_deref(),
+            input.state_registration.as_deref(),
+            input.municipal_registration.as_deref(),
+        )?;
 
-        // Validação estrita de CPF/CNPJ (suportando CNPJ alfanumérico IN RFB 2.229/2025)
-        let parsed_doc = parse_document(&input.document_number)?;
-        match (input.person_type, parsed_doc.doc_type) {
-            (PersonType::Individual, DocumentType::Cpf) => {}
-            (PersonType::Legal, DocumentType::Cnpj) => {}
-            (PersonType::Individual, DocumentType::Cnpj) => {
-                return Err(CoreError::Validation(
-                    "Pessoa Física requer um CPF válido de 11 dígitos, não um CNPJ.".to_string(),
-                ));
-            }
-            (PersonType::Legal, DocumentType::Cpf) => {
-                return Err(CoreError::Validation(
-                    "Pessoa Jurídica requer um CNPJ válido de 14 caracteres, não um CPF."
+        // Validação estrita de documento conforme tipo (cpf, cnpj, foreign ou none)
+        let (doc_type, doc_raw_opt, doc_formatted) = validate_customer_document_for_person_type(
+            input.person_type,
+            input.document_type,
+            input.document_number.as_deref(),
+        )?;
+
+        // Verificação prévia de unicidade ativa no tenant quando há documento informado
+        if let Some(ref doc_raw) = doc_raw_opt {
+            if self
+                .stores
+                .customers
+                .find_by_document(&session.tenant_id, doc_type, doc_raw)
+                .await?
+                .is_some()
+            {
+                return Err(CoreError::Conflict(
+                    "Já existe um cliente cadastrado com este documento (ativo ou inativo)."
                         .to_string(),
                 ));
             }
         }
 
-        // Verificação prévia de unicidade ativa no tenant
-        if self
-            .stores
-            .customers
-            .find_by_document(&session.tenant_id, &parsed_doc.raw)
-            .await?
-            .is_some()
-        {
-            return Err(CoreError::Conflict(
-                "Já existe um cliente ativo cadastrado com este CPF/CNPJ.".to_string(),
-            ));
-        }
-
-        // Validação de contatos
-        if input.contacts.is_empty() {
+        // Validação no core de contatos e endereços (contato obrigatório >= 1, endereço opcional >= 0)
+        let mut contacts_input = input.contacts.clone();
+        if contacts_input.is_empty() {
             return Err(CoreError::Validation(
                 "Cliente deve possuir pelo menos um contato.".to_string(),
             ));
         }
-        for (idx, c) in input.contacts.iter().enumerate() {
-            if c.name.trim().is_empty() {
-                return Err(CoreError::Validation(format!(
-                    "Nome do contato #{} é obrigatório.",
-                    idx + 1
-                )));
-            }
-        }
+        validate_contacts(&mut contacts_input)?;
 
-        // Validação de endereços
-        if input.addresses.is_empty() {
-            return Err(CoreError::Validation(
-                "Cliente deve possuir pelo menos um endereço cadastrado.".to_string(),
-            ));
-        }
-        for (idx, a) in input.addresses.iter().enumerate() {
-            if a.street.trim().is_empty()
-                || a.number.trim().is_empty()
-                || a.city.trim().is_empty()
-                || a.state.trim().is_empty()
-                || a.postal_code.trim().is_empty()
-            {
-                return Err(CoreError::Validation(format!(
-                    "Endereço #{} possui campos obrigatórios em branco (logradouro, número, cidade, UF ou CEP).",
-                    idx + 1
-                )));
-            }
-        }
+        let mut addresses_input = input.addresses.clone();
+        validate_addresses(&mut addresses_input)?;
 
         let customer_id = Uuid::now_v7().to_string();
         let now = Utc::now().to_rfc3339();
 
-        // Garante que haja pelo menos 1 contato primário
-        let has_primary_contact = input.contacts.iter().any(|c| c.is_primary);
-        let contacts: Vec<CustomerContact> = input
-            .contacts
-            .iter()
-            .enumerate()
-            .map(|(i, c)| CustomerContact {
-                id: Uuid::now_v7().to_string(),
+        let contacts: Vec<CustomerContact> = contacts_input
+            .into_iter()
+            .map(|c| CustomerContact {
+                id: c.id.unwrap_or_else(|| Uuid::now_v7().to_string()),
+                tenant_id: session.tenant_id.clone(),
                 customer_id: customer_id.clone(),
                 name: c.name.trim().to_string(),
                 email: c.email.as_ref().map(|e| e.trim().to_string()),
                 phone: c.phone.as_ref().map(|p| p.trim().to_string()),
                 role: c.role.as_ref().map(|r| r.trim().to_string()),
-                is_primary: if !has_primary_contact && i == 0 {
-                    true
-                } else {
-                    c.is_primary
-                },
+                is_primary: c.is_primary,
                 created_at: now.clone(),
                 updated_at: now.clone(),
                 deleted_at: None,
+                created_by: Some(session.user_id.clone()),
             })
             .collect();
 
-        // Garante que haja pelo menos 1 endereço primário
-        let has_primary_address = input.addresses.iter().any(|a| a.is_primary);
-        let addresses: Vec<CustomerAddress> = input
-            .addresses
-            .iter()
-            .enumerate()
-            .map(|(i, a)| CustomerAddress {
-                id: Uuid::now_v7().to_string(),
+        let addresses: Vec<CustomerAddress> = addresses_input
+            .into_iter()
+            .map(|a| CustomerAddress {
+                id: a.id.unwrap_or_else(|| Uuid::now_v7().to_string()),
+                tenant_id: session.tenant_id.clone(),
                 customer_id: customer_id.clone(),
                 label: if a.label.trim().is_empty() {
                     "Principal".to_string()
@@ -1585,14 +1633,12 @@ impl CoreServices {
                 city: a.city.trim().to_string(),
                 state: a.state.trim().to_uppercase(),
                 postal_code: a.postal_code.trim().to_string(),
-                is_primary: if !has_primary_address && i == 0 {
-                    true
-                } else {
-                    a.is_primary
-                },
+                country: a.country.unwrap_or_else(|| "BR".to_string()),
+                is_primary: a.is_primary,
                 created_at: now.clone(),
                 updated_at: now.clone(),
                 deleted_at: None,
+                created_by: Some(session.user_id.clone()),
             })
             .collect();
 
@@ -1619,8 +1665,8 @@ impl CoreServices {
         let search_text = build_customer_search_text(
             name,
             trade_trimmed.as_deref(),
-            &parsed_doc.raw,
-            &parsed_doc.formatted,
+            doc_raw_opt.as_deref().unwrap_or(""),
+            &doc_formatted,
             &search_terms,
         );
         let name_sort = build_name_sort(name);
@@ -1631,7 +1677,8 @@ impl CoreServices {
             person_type: input.person_type,
             name: name.to_string(),
             trade_name: trade_trimmed,
-            document_number: parsed_doc.raw.clone(),
+            document_type: doc_type,
+            document_number: doc_raw_opt.clone(),
             state_registration: input
                 .state_registration
                 .as_ref()
@@ -1647,6 +1694,7 @@ impl CoreServices {
                 .as_ref()
                 .map(|n| n.trim().to_string())
                 .filter(|n| !n.is_empty()),
+            active: true,
             search_text,
             name_sort,
             created_at: now.clone(),
@@ -1659,7 +1707,10 @@ impl CoreServices {
         let customer_clone = customer.clone();
         let contacts_clone = contacts.clone();
         let addresses_clone = addresses.clone();
-        let masked_doc = mask_document_for_audit(&parsed_doc.raw);
+        let masked_doc = doc_raw_opt
+            .as_deref()
+            .map(mask_document_for_audit)
+            .unwrap_or_else(|| "sem-documento".to_string());
 
         self.run_transaction(|stores| {
             let session = session_clone.clone();
@@ -1674,9 +1725,10 @@ impl CoreServices {
                     .create(&customer, &contacts, &addresses)
                     .await?;
 
+                let masked_contact = format_primary_contact_for_audit(&contacts);
                 let audit_detail = format!(
-                    "Cliente '{}' criado com sucesso (documento: {}, tipo: {})",
-                    customer.name, masked, customer.person_type
+                    "Cliente '{}' criado com sucesso (documento: {}, tipo: {}, {})",
+                    customer.name, masked, customer.person_type, masked_contact
                 );
 
                 stores
@@ -1721,131 +1773,128 @@ impl CoreServices {
             .ok_or_else(|| CoreError::NotFound("Cliente não encontrado.".to_string()))?;
 
         let name = input.name.trim();
-        if name.is_empty() {
-            return Err(CoreError::Validation(
-                "Nome ou Razão Social do cliente é obrigatório.".to_string(),
-            ));
-        }
+        validate_customer_common_fields(
+            name,
+            input.trade_name.as_deref(),
+            input.notes.as_deref(),
+            input.state_registration.as_deref(),
+            input.municipal_registration.as_deref(),
+        )?;
 
-        let parsed_doc = parse_document(&input.document_number)?;
-        match (input.person_type, parsed_doc.doc_type) {
-            (PersonType::Individual, DocumentType::Cpf) => {}
-            (PersonType::Legal, DocumentType::Cnpj) => {}
-            (PersonType::Individual, DocumentType::Cnpj) => {
-                return Err(CoreError::Validation(
-                    "Pessoa Física requer um CPF válido de 11 dígitos, não um CNPJ.".to_string(),
-                ));
-            }
-            (PersonType::Legal, DocumentType::Cpf) => {
-                return Err(CoreError::Validation(
-                    "Pessoa Jurídica requer um CNPJ válido de 14 caracteres, não um CPF."
-                        .to_string(),
-                ));
-            }
-        }
+        let (doc_type, doc_raw_opt, doc_formatted) = validate_customer_document_for_person_type(
+            input.person_type,
+            input.document_type,
+            input.document_number.as_deref(),
+        )?;
 
-        // Se o documento foi alterado, checa duplicidade com outro cliente ativo
-        if parsed_doc.raw != existing.customer.document_number {
-            if let Some(other) = self
-                .stores
-                .customers
-                .find_by_document(&session.tenant_id, &parsed_doc.raw)
-                .await?
+        // Se o documento foi alterado e não é nulo, checa duplicidade com outro cliente ativo
+        if let Some(ref doc_raw) = doc_raw_opt {
+            if Some(doc_raw.as_str()) != existing.customer.document_number.as_deref()
+                || doc_type != existing.customer.document_type
             {
-                if other.id != id {
-                    return Err(CoreError::Conflict(
-                        "Já existe outro cliente ativo cadastrado com este CPF/CNPJ.".to_string(),
-                    ));
+                if let Some(other) = self
+                    .stores
+                    .customers
+                    .find_by_document(&session.tenant_id, doc_type, doc_raw)
+                    .await?
+                {
+                    if other.id != id {
+                        return Err(CoreError::Conflict(
+                            "Já existe um cliente cadastrado com este documento (ativo ou inativo)."
+                                .to_string(),
+                        ));
+                    }
                 }
             }
         }
 
-        if input.contacts.is_empty() {
+        let mut contacts_input = input.contacts.clone();
+        if contacts_input.is_empty() {
             return Err(CoreError::Validation(
                 "Cliente deve possuir pelo menos um contato.".to_string(),
             ));
         }
-        for (idx, c) in input.contacts.iter().enumerate() {
-            if c.name.trim().is_empty() {
-                return Err(CoreError::Validation(format!(
-                    "Nome do contato #{} é obrigatório.",
-                    idx + 1
-                )));
-            }
-        }
+        validate_contacts(&mut contacts_input)?;
 
-        if input.addresses.is_empty() {
-            return Err(CoreError::Validation(
-                "Cliente deve possuir pelo menos um endereço cadastrado.".to_string(),
-            ));
-        }
-        for (idx, a) in input.addresses.iter().enumerate() {
-            if a.street.trim().is_empty()
-                || a.number.trim().is_empty()
-                || a.city.trim().is_empty()
-                || a.state.trim().is_empty()
-                || a.postal_code.trim().is_empty()
-            {
-                return Err(CoreError::Validation(format!(
-                    "Endereço #{} possui campos obrigatórios em branco (logradouro, número, cidade, UF ou CEP).",
-                    idx + 1
-                )));
-            }
-        }
+        let mut addresses_input = input.addresses.clone();
+        validate_addresses(&mut addresses_input)?;
 
         let now = Utc::now().to_rfc3339();
 
-        let has_primary_contact = input.contacts.iter().any(|c| c.is_primary);
-        let contacts: Vec<CustomerContact> = input
+        let existing_contacts: std::collections::HashMap<&str, &CustomerContact> = existing
             .contacts
             .iter()
-            .enumerate()
-            .map(|(i, c)| CustomerContact {
-                id: Uuid::now_v7().to_string(),
-                customer_id: id.to_string(),
-                name: c.name.trim().to_string(),
-                email: c.email.as_ref().map(|e| e.trim().to_string()),
-                phone: c.phone.as_ref().map(|p| p.trim().to_string()),
-                role: c.role.as_ref().map(|r| r.trim().to_string()),
-                is_primary: if !has_primary_contact && i == 0 {
-                    true
-                } else {
-                    c.is_primary
-                },
-                created_at: now.clone(),
-                updated_at: now.clone(),
-                deleted_at: None,
+            .map(|c| (c.id.as_str(), c))
+            .collect();
+        let contacts: Vec<CustomerContact> = contacts_input
+            .into_iter()
+            .map(|c| {
+                let prev =
+                    c.id.as_deref()
+                        .and_then(|cid| existing_contacts.get(cid).copied());
+                CustomerContact {
+                    id: prev
+                        .map(|p| p.id.clone())
+                        .unwrap_or_else(|| Uuid::now_v7().to_string()),
+                    tenant_id: session.tenant_id.clone(),
+                    customer_id: id.to_string(),
+                    name: c.name.trim().to_string(),
+                    email: c.email.as_ref().map(|e| e.trim().to_string()),
+                    phone: c.phone.as_ref().map(|p| p.trim().to_string()),
+                    role: c.role.as_ref().map(|r| r.trim().to_string()),
+                    is_primary: c.is_primary,
+                    created_at: prev
+                        .map(|p| p.created_at.clone())
+                        .unwrap_or_else(|| now.clone()),
+                    updated_at: now.clone(),
+                    deleted_at: None,
+                    created_by: prev
+                        .and_then(|p| p.created_by.clone())
+                        .or_else(|| Some(session.user_id.clone())),
+                }
             })
             .collect();
 
-        let has_primary_address = input.addresses.iter().any(|a| a.is_primary);
-        let addresses: Vec<CustomerAddress> = input
+        let existing_addresses: std::collections::HashMap<&str, &CustomerAddress> = existing
             .addresses
             .iter()
-            .enumerate()
-            .map(|(i, a)| CustomerAddress {
-                id: Uuid::now_v7().to_string(),
-                customer_id: id.to_string(),
-                label: if a.label.trim().is_empty() {
-                    "Principal".to_string()
-                } else {
-                    a.label.trim().to_string()
-                },
-                street: a.street.trim().to_string(),
-                number: a.number.trim().to_string(),
-                complement: a.complement.as_ref().map(|c| c.trim().to_string()),
-                neighborhood: a.neighborhood.trim().to_string(),
-                city: a.city.trim().to_string(),
-                state: a.state.trim().to_uppercase(),
-                postal_code: a.postal_code.trim().to_string(),
-                is_primary: if !has_primary_address && i == 0 {
-                    true
-                } else {
-                    a.is_primary
-                },
-                created_at: now.clone(),
-                updated_at: now.clone(),
-                deleted_at: None,
+            .map(|a| (a.id.as_str(), a))
+            .collect();
+        let addresses: Vec<CustomerAddress> = addresses_input
+            .into_iter()
+            .map(|a| {
+                let prev =
+                    a.id.as_deref()
+                        .and_then(|aid| existing_addresses.get(aid).copied());
+                CustomerAddress {
+                    id: prev
+                        .map(|p| p.id.clone())
+                        .unwrap_or_else(|| Uuid::now_v7().to_string()),
+                    tenant_id: session.tenant_id.clone(),
+                    customer_id: id.to_string(),
+                    label: if a.label.trim().is_empty() {
+                        "Principal".to_string()
+                    } else {
+                        a.label.trim().to_string()
+                    },
+                    street: a.street.trim().to_string(),
+                    number: a.number.trim().to_string(),
+                    complement: a.complement.as_ref().map(|c| c.trim().to_string()),
+                    neighborhood: a.neighborhood.trim().to_string(),
+                    city: a.city.trim().to_string(),
+                    state: a.state.trim().to_uppercase(),
+                    postal_code: a.postal_code.trim().to_string(),
+                    country: a.country.unwrap_or_else(|| "BR".to_string()),
+                    is_primary: a.is_primary,
+                    created_at: prev
+                        .map(|p| p.created_at.clone())
+                        .unwrap_or_else(|| now.clone()),
+                    updated_at: now.clone(),
+                    deleted_at: None,
+                    created_by: prev
+                        .and_then(|p| p.created_by.clone())
+                        .or_else(|| Some(session.user_id.clone())),
+                }
             })
             .collect();
 
@@ -1871,8 +1920,8 @@ impl CoreServices {
         let search_text = build_customer_search_text(
             name,
             trade_trimmed.as_deref(),
-            &parsed_doc.raw,
-            &parsed_doc.formatted,
+            doc_raw_opt.as_deref().unwrap_or(""),
+            &doc_formatted,
             &search_terms,
         );
         let name_sort = build_name_sort(name);
@@ -1883,7 +1932,8 @@ impl CoreServices {
             person_type: input.person_type,
             name: name.to_string(),
             trade_name: trade_trimmed,
-            document_number: parsed_doc.raw.clone(),
+            document_type: doc_type,
+            document_number: doc_raw_opt.clone(),
             state_registration: input
                 .state_registration
                 .as_ref()
@@ -1899,6 +1949,7 @@ impl CoreServices {
                 .as_ref()
                 .map(|n| n.trim().to_string())
                 .filter(|n| !n.is_empty()),
+            active: existing.customer.active,
             search_text,
             name_sort,
             created_at: existing.customer.created_at,
@@ -1911,7 +1962,10 @@ impl CoreServices {
         let customer_clone = updated_customer.clone();
         let contacts_clone = contacts.clone();
         let addresses_clone = addresses.clone();
-        let masked_doc = mask_document_for_audit(&parsed_doc.raw);
+        let masked_doc = doc_raw_opt
+            .as_deref()
+            .map(mask_document_for_audit)
+            .unwrap_or_else(|| "sem-documento".to_string());
 
         self.run_transaction(|stores| {
             let session = session_clone.clone();
@@ -1926,9 +1980,10 @@ impl CoreServices {
                     .update(&customer, &contacts, &addresses)
                     .await?;
 
+                let masked_contact = format_primary_contact_for_audit(&contacts);
                 let audit_detail = format!(
-                    "Cliente '{}' atualizado com sucesso (documento: {})",
-                    customer.name, masked
+                    "Cliente '{}' atualizado com sucesso (documento: {}, {})",
+                    customer.name, masked, masked_contact
                 );
 
                 stores
@@ -1955,6 +2010,81 @@ impl CoreServices {
         })
     }
 
+    /// Ativa ou desativa um cliente existente sem removê-lo do histórico.
+    /// Requer permissão `customer:manage`.
+    pub async fn set_customer_active(
+        &self,
+        session: &SessionInfo,
+        id: &str,
+        active: bool,
+    ) -> Result<CustomerWithDetails> {
+        self.check_session_and_permission(session, PERM_CUSTOMER_MANAGE)?;
+
+        let mut existing = self
+            .stores
+            .customers
+            .find_by_id(&session.tenant_id, id)
+            .await?
+            .ok_or_else(|| CoreError::NotFound("Cliente não encontrado.".to_string()))?;
+
+        let now = Utc::now().to_rfc3339();
+        let session_clone = session.clone();
+        let id_str = id.to_string();
+        let now_clone = now.clone();
+        let masked_doc = existing
+            .customer
+            .document_number
+            .as_deref()
+            .map(mask_document_for_audit)
+            .unwrap_or_else(|| "sem-documento".to_string());
+        let name_str = existing.customer.name.clone();
+
+        self.run_transaction(|stores| {
+            let session = session_clone.clone();
+            let id = id_str.clone();
+            let now = now_clone.clone();
+            let masked = masked_doc.clone();
+            let name = name_str.clone();
+
+            Box::pin(async move {
+                stores
+                    .customers()
+                    .set_active(&session.tenant_id, &id, active, &now)
+                    .await?;
+
+                let action = if active {
+                    "customer.activated"
+                } else {
+                    "customer.deactivated"
+                };
+                let status_label = if active { "ativado" } else { "desativado" };
+                let audit_detail = format!(
+                    "Cliente '{}' {} com sucesso (documento: {})",
+                    name, status_label, masked
+                );
+
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &session.tenant_id,
+                        Some(&session.user_id),
+                        action,
+                        "customer",
+                        &id,
+                        &audit_detail,
+                    ))
+                    .await?;
+
+                Ok(())
+            })
+        })
+        .await?;
+
+        existing.customer.active = active;
+        existing.customer.updated_at = now;
+        Ok(existing)
+    }
+
     /// Realiza exclusão lógica (soft delete) do cliente e seus contatos/endereços.
     /// Requer permissão `customer:manage`.
     pub async fn delete_customer(&self, session: &SessionInfo, id: &str) -> Result<()> {
@@ -1970,7 +2100,12 @@ impl CoreServices {
         let now = Utc::now().to_rfc3339();
         let session_clone = session.clone();
         let id_str = id.to_string();
-        let masked_doc = mask_document_for_audit(&existing.customer.document_number);
+        let masked_doc = existing
+            .customer
+            .document_number
+            .as_deref()
+            .map(mask_document_for_audit)
+            .unwrap_or_else(|| "sem-documento".to_string());
         let name_str = existing.customer.name.clone();
 
         self.run_transaction(|stores| {

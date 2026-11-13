@@ -42,14 +42,22 @@ describe("Utilitários de Documentos Brasileiros e Máscaras", () => {
     expect(validateCpf("12345")).toBe(false);
   });
 
-  it("deve validar CNPJs numéricos e alfanuméricos conforme IN RFB nº 2.229/2025", () => {
+  it("deve validar CNPJs numéricos e alfanuméricos conforme Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024", () => {
     // CNPJ numérico tradicional
     expect(validateCnpj("11222333000181")).toBe(true);
     expect(validateCnpj("11.222.333/0001-81")).toBe(true);
     expect(validateCnpj("11222333000182")).toBe(false);
     expect(validateCnpj("00000000000000")).toBe(false);
 
-    // CNPJ alfanumérico (IN RFB nº 2.229/2025: ASCII - 48)
+    // CNPJ alfanumérico (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024: ASCII - 48)
+    // Exemplo oficial RFB/ENCAT: 12.ABC.345/01DE-35
+    expect(validateCnpj("12.ABC.345/01DE-35")).toBe(true);
+    expect(validateCnpj("12.abc.345/01de-35")).toBe(true);
+    expect(validateCnpj("12.ABC.345/0001-88")).toBe(true);
+    expect(validateCnpj("AB.CDE.123/0001-00")).toBe(true);
+    expect(validateCnpj("12.ÁBC.345/01DE-35")).toBe(false);
+    expect(validateCnpj("12.ABC.345/01DE-35$")).toBe(false);
+
     const alphaCnpj = generateValidAlphaCnpj("12ABC34501DE");
     expect(validateCnpj(alphaCnpj)).toBe(true);
     expect(validateCnpj(alphaCnpj.toLowerCase())).toBe(true);
@@ -92,6 +100,7 @@ describe("Utilitários de Documentos Brasileiros e Máscaras", () => {
       person_type: "legal",
       name: "Locadora Alpha Eventos Ltda",
       trade_name: "Alpha Som",
+      document_type: "cnpj",
       document_number: maskCnpj(alphaCnpj),
       contacts: [
         {
@@ -117,24 +126,59 @@ describe("Utilitários de Documentos Brasileiros e Máscaras", () => {
     });
     expect(validLegal.success).toBe(true);
 
-    // Rejeita sem contatos ou sem endereço
-    const missingContact = customerFormSchema.safeParse({
+    // Pré-cadastro sem documento (none), cliente estrangeiro (foreign) e cadastro sem endereço (opcional)
+    const noDoc = customerFormSchema.safeParse({
       person_type: "individual",
-      name: "Carlos Silva",
-      document_number: "529.982.247-25",
-      contacts: [],
-      addresses: [
+      name: "Pré Cadastro",
+      document_type: "none",
+      document_number: null,
+      contacts: [
         {
-          label: "Casa",
-          street: "Rua A",
-          number: "10",
-          neighborhood: "Centro",
-          city: "Curitiba",
-          state: "PR",
-          postal_code: "80010-000",
+          name: "Contato",
+          email: "contato@ex.com",
           is_primary: true,
         },
       ],
+      addresses: [],
+    });
+    expect(noDoc.success).toBe(true);
+
+    const foreignDoc = customerFormSchema.safeParse({
+      person_type: "individual",
+      name: "Foreign Client",
+      document_type: "foreign",
+      document_number: "USPASS998877",
+      contacts: [
+        {
+          name: "John",
+          phone: "11987654321",
+          is_primary: true,
+        },
+      ],
+      addresses: [
+        {
+          label: "Hotel",
+          street: "Av. Atlântica",
+          number: "200",
+          neighborhood: "Copacabana",
+          city: "Rio de Janeiro",
+          state: "RJ",
+          postal_code: "22021-001",
+          country: "BR",
+          is_primary: true,
+        },
+      ],
+    });
+    expect(foreignDoc.success).toBe(true);
+
+    // Rejeita sem contatos (contato é obrigatório)
+    const missingContact = customerFormSchema.safeParse({
+      person_type: "individual",
+      name: "Carlos Silva",
+      document_type: "cpf",
+      document_number: "529.982.247-25",
+      contacts: [],
+      addresses: [],
     });
     expect(missingContact.success).toBe(false);
   });

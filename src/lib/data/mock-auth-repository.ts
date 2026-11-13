@@ -67,7 +67,7 @@ function createSystemRoles(tenantId: string): RoleWithPermissions[] {
         PERMISSIONS.QUOTE_READ,
         PERMISSIONS.QUOTE_MANAGE,
         PERMISSIONS.RESERVATION_READ,
-        PERMISSIONS.FINANCE_READ,
+        PERMISSIONS.RESERVATION_MANAGE,
       ],
       created_at: now,
       updated_at: now,

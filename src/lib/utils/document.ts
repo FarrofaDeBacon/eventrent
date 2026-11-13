@@ -33,10 +33,15 @@ export const BRAZILIAN_UFS = [
 
 /**
  * Remove pontuação, espaços e converte letras para maiúsculas.
- * Mantém dígitos e letras ASCII [0-9A-Z] para suportar CNPJ Alfanumérico (IN RFB nº 2.229/2025).
+ * Mantém dígitos e letras ASCII [0-9A-Z] para suportar CNPJ Alfanumérico (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024).
  */
 export function normalizeDocument(input: string): string {
   return input.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+}
+
+/** Verifica se o documento contém somente separadores permitidos (., -, /, espaço) e ASCII alfanumérico. */
+export function hasOnlyAllowedDocumentChars(input: string): boolean {
+  return /^[0-9a-zA-Z.\-/\s]*$/.test(input);
 }
 
 /** Remove qualquer caractere não numérico. */
@@ -60,8 +65,9 @@ export function normalizeForSearch(input: string): string {
  * Valida CPF (11 dígitos) com algoritmo Módulo 11 e rejeição de sequências repetidas.
  */
 export function validateCpf(input: string): boolean {
-  const clean = digitsOnly(input);
-  if (clean.length !== 11) return false;
+  if (!hasOnlyAllowedDocumentChars(input)) return false;
+  const clean = normalizeDocument(input);
+  if (clean.length !== 11 || !/^\d{11}$/.test(clean)) return false;
   if (/^(\d)\1{10}$/.test(clean)) return false;
 
   const digits = Array.from(clean, Number);
@@ -85,14 +91,15 @@ export function validateCpf(input: string): boolean {
 
 /**
  * Valida CNPJ (14 caracteres), suportando tanto o padrão numérico quanto o
- * CNPJ ALFANUMÉRICO regulamentado pela IN RFB nº 2.229/2025.
+ * CNPJ ALFANUMÉRICO regulamentado pela Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024.
  *
- * Regras IN RFB nº 2.229/2025:
+ * Regras (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024):
  * - Posições 1..12: alfanuméricas [0-9A-Z]
  * - Posições 13..14 (dígitos verificadores): estritamente numéricas [0-9]
  * - Valor do caractere: charCodeAt(0) - 48 ('0'..'9' -> 0..9, 'A'..'Z' -> 17..42)
  */
 export function validateCnpj(input: string): boolean {
+  if (!hasOnlyAllowedDocumentChars(input)) return false;
   const clean = normalizeDocument(input);
   if (clean.length !== 14) return false;
   if (!/^[0-9A-Z]{12}[0-9]{2}$/.test(clean)) return false;
@@ -158,18 +165,28 @@ export function maskCnpj(input: string): string {
   return `${sanitized.slice(0, 2)}.${sanitized.slice(2, 5)}.${sanitized.slice(5, 8)}/${sanitized.slice(8, 12)}-${sanitized.slice(12, 14)}`;
 }
 
-/** Formata documento conforme tipo (`individual` -> CPF, `legal` -> CNPJ) ou tamanho. */
+/** Valida documento estrangeiro (5 a 30 caracteres alfanuméricos, sem dígito verificador). */
+export function validateForeignDocument(input: string): boolean {
+  if (!hasOnlyAllowedDocumentChars(input)) return false;
+  const clean = normalizeDocument(input);
+  return /^[0-9A-Z]{5,30}$/.test(clean);
+}
+
+/** Formata documento conforme tipo (`individual`/`legal` ou `documentType`) ou tamanho. */
 export function formatDocument(
-  input: string,
+  input: string | null | undefined,
   personType?: "individual" | "legal",
 ): string {
+  if (!input) return "Sem documento";
   const clean = normalizeDocument(input);
-  if (personType === "individual" || (!personType && clean.length === 11)) {
-    return clean.length === 11 ? maskCpf(clean) : input;
+  if (personType === "individual" && clean.length === 11) {
+    return maskCpf(clean);
   }
-  if (personType === "legal" || (!personType && clean.length === 14)) {
-    return clean.length === 14 ? maskCnpj(clean) : input;
+  if (personType === "legal" && clean.length === 14) {
+    return maskCnpj(clean);
   }
+  if (!personType && clean.length === 11) return maskCpf(clean);
+  if (!personType && clean.length === 14) return maskCnpj(clean);
   return input;
 }
 

@@ -1,7 +1,11 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { Plus, Trash2, CheckCircle2, AlertCircle } from "lucide-svelte";
-  import type { CreateCustomerInput, PersonType } from "$lib/data";
+  import type {
+    CreateCustomerInput,
+    DocumentType,
+    PersonType,
+  } from "$lib/data";
   import { _ } from "$lib/i18n";
   import {
     BRAZILIAN_UFS,
@@ -12,6 +16,7 @@
     normalizeDocument,
     validateCnpj,
     validateCpf,
+    validateForeignDocument,
   } from "$lib/utils/document";
   import { customerFormSchema } from "$lib/utils/customer-schema";
   import { Badge } from "$lib/ui/badge";
@@ -44,6 +49,7 @@
   }: Props = $props();
 
   interface ContactFormItem {
+    id?: string | null;
     name: string;
     email: string;
     phone: string;
@@ -52,6 +58,7 @@
   }
 
   interface AddressFormItem {
+    id?: string | null;
     label: string;
     street: string;
     number: string;
@@ -60,6 +67,7 @@
     city: string;
     state: string;
     postal_code: string;
+    country: string;
     is_primary: boolean;
   }
 
@@ -67,6 +75,7 @@
     person_type: PersonType;
     name: string;
     trade_name: string;
+    document_type: DocumentType;
     document_number: string;
     state_registration: string;
     municipal_registration: string;
@@ -81,6 +90,7 @@
         person_type: "legal",
         name: "",
         trade_name: "",
+        document_type: "cnpj",
         document_number: "",
         state_registration: "",
         municipal_registration: "",
@@ -94,33 +104,33 @@
             is_primary: true,
           },
         ],
-        addresses: [
-          {
-            label: "Principal",
-            street: "",
-            number: "",
-            complement: "",
-            neighborhood: "",
-            city: "",
-            state: "SP",
-            postal_code: "",
-            is_primary: true,
-          },
-        ],
+        addresses: [],
       };
     }
+    const docType: DocumentType =
+      src.document_type ??
+      (src.document_number
+        ? src.person_type === "individual"
+          ? "cpf"
+          : "cnpj"
+        : "none");
+    const rawDoc = src.document_number ?? "";
     return {
       person_type: src.person_type,
       name: src.name,
       trade_name: src.trade_name ?? "",
+      document_type: docType,
       document_number:
-        src.person_type === "individual"
-          ? maskCpf(src.document_number)
-          : maskCnpj(src.document_number),
+        docType === "cpf"
+          ? maskCpf(rawDoc)
+          : docType === "cnpj"
+            ? maskCnpj(rawDoc)
+            : rawDoc,
       state_registration: src.state_registration ?? "",
       municipal_registration: src.municipal_registration ?? "",
       notes: src.notes ?? "",
       contacts: src.contacts.map((c) => ({
+        id: c.id ?? null,
         name: c.name,
         email: c.email ?? "",
         phone: c.phone ? maskPhone(c.phone) : "",
@@ -128,6 +138,7 @@
         is_primary: c.is_primary,
       })),
       addresses: src.addresses.map((a) => ({
+        id: a.id ?? null,
         label: a.label,
         street: a.street,
         number: a.number,
@@ -136,6 +147,7 @@
         city: a.city,
         state: a.state,
         postal_code: maskCep(a.postal_code),
+        country: a.country ?? "BR",
         is_primary: a.is_primary,
       })),
     };
@@ -148,23 +160,34 @@
 
   let cleanDoc = $derived(normalizeDocument(form.document_number));
   let isDocComplete = $derived(
-    form.person_type === "individual"
+    form.document_type === "cpf"
       ? cleanDoc.length === 11
-      : cleanDoc.length === 14,
+      : form.document_type === "cnpj"
+        ? cleanDoc.length === 14
+        : form.document_type === "foreign"
+          ? cleanDoc.length >= 5
+          : false,
   );
   let isDocValid = $derived(
-    form.person_type === "individual"
+    form.document_type === "cpf"
       ? validateCpf(cleanDoc)
-      : validateCnpj(cleanDoc),
+      : form.document_type === "cnpj"
+        ? validateCnpj(cleanDoc)
+        : form.document_type === "foreign"
+          ? validateForeignDocument(cleanDoc)
+          : true,
   );
 
   function setPersonType(type: PersonType) {
     if (readonly || form.person_type === type) return;
     form.person_type = type;
-    form.document_number =
-      type === "individual"
-        ? maskCpf(form.document_number)
-        : maskCnpj(form.document_number);
+    if (form.document_type === "cpf" && type === "legal") {
+      form.document_type = "cnpj";
+      form.document_number = maskCnpj(form.document_number);
+    } else if (form.document_type === "cnpj" && type === "individual") {
+      form.document_type = "cpf";
+      form.document_number = maskCpf(form.document_number);
+    }
     if (type === "individual") {
       form.trade_name = "";
       form.state_registration = "";
@@ -172,12 +195,29 @@
     }
   }
 
+  function handleDocumentTypeChange(event: Event) {
+    const nextType = (event.currentTarget as HTMLSelectElement)
+      .value as DocumentType;
+    form.document_type = nextType;
+    if (nextType === "none") {
+      form.document_number = "";
+    } else if (nextType === "cpf") {
+      form.document_number = maskCpf(form.document_number);
+    } else if (nextType === "cnpj") {
+      form.document_number = maskCnpj(form.document_number);
+    } else {
+      form.document_number = normalizeDocument(form.document_number);
+    }
+  }
+
   function handleDocumentInput(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
     const masked =
-      form.person_type === "individual"
+      form.document_type === "cpf"
         ? maskCpf(input.value)
-        : maskCnpj(input.value);
+        : form.document_type === "cnpj"
+          ? maskCnpj(input.value)
+          : normalizeDocument(input.value).slice(0, 30);
     form.document_number = masked;
     input.value = masked;
   }
@@ -239,6 +279,7 @@
       city: "",
       state: "SP",
       postal_code: "",
+      country: "BR",
       is_primary: !hasPrimary,
     };
     form.addresses = [...form.addresses, nextAddress];
@@ -289,7 +330,11 @@
         parsed.data.person_type === "legal" && parsed.data.trade_name
           ? parsed.data.trade_name
           : null,
-      document_number: normalizeDocument(parsed.data.document_number),
+      document_type: parsed.data.document_type,
+      document_number:
+        parsed.data.document_type === "none"
+          ? null
+          : normalizeDocument(parsed.data.document_number ?? ""),
       state_registration:
         parsed.data.person_type === "legal" && parsed.data.state_registration
           ? parsed.data.state_registration
@@ -301,6 +346,7 @@
           : null,
       notes: parsed.data.notes || null,
       contacts: parsed.data.contacts.map((c) => ({
+        id: c.id ?? null,
         name: c.name,
         email: c.email || null,
         phone: c.phone || null,
@@ -308,6 +354,7 @@
         is_primary: c.is_primary,
       })),
       addresses: parsed.data.addresses.map((a) => ({
+        id: a.id ?? null,
         label: a.label,
         street: a.street,
         number: a.number,
@@ -316,6 +363,7 @@
         city: a.city,
         state: a.state,
         postal_code: a.postal_code,
+        country: a.country || "BR",
         is_primary: a.is_primary,
       })),
     };
@@ -405,9 +453,13 @@
               for="customer-document"
               class="text-sm font-medium text-foreground"
             >
-              {form.person_type === "legal"
-                ? $_("customers.documentLabelCnpj")
-                : $_("customers.documentLabelCpf")}
+              {form.document_type === "cpf"
+                ? $_("customers.documentLabelCpf")
+                : form.document_type === "cnpj"
+                  ? $_("customers.documentLabelCnpj")
+                  : form.document_type === "foreign"
+                    ? "Documento Estrangeiro *"
+                    : "Documento (Opcional / Pré-cadastro)"}
             </label>
             {#if isDocComplete}
               {#if isDocValid}
@@ -427,16 +479,36 @@
               {/if}
             {/if}
           </div>
-          <Input
-            id="customer-document"
-            value={form.document_number}
-            oninput={handleDocumentInput}
-            disabled={readonly}
-            placeholder={form.person_type === "legal"
-              ? $_("customers.documentPlaceholderCnpj")
-              : $_("customers.documentPlaceholderCpf")}
-            required
-          />
+          <div class="flex gap-2">
+            <select
+              aria-label="Tipo de documento"
+              value={form.document_type}
+              onchange={handleDocumentTypeChange}
+              disabled={readonly}
+              class="h-10 rounded-[var(--radius)] border border-input bg-background px-2.5 text-xs text-foreground"
+            >
+              {#if form.person_type === "individual"}
+                <option value="cpf">CPF</option>
+              {:else}
+                <option value="cnpj">CNPJ</option>
+              {/if}
+              <option value="foreign">Estrangeiro</option>
+              <option value="none">Sem documento</option>
+            </select>
+            <Input
+              id="customer-document"
+              value={form.document_number}
+              oninput={handleDocumentInput}
+              disabled={readonly || form.document_type === "none"}
+              placeholder={form.document_type === "cnpj"
+                ? $_("customers.documentPlaceholderCnpj")
+                : form.document_type === "cpf"
+                  ? $_("customers.documentPlaceholderCpf")
+                  : form.document_type === "foreign"
+                    ? "Ex.: PASS123456"
+                    : "Pré-cadastro sem documento"}
+            />
+          </div>
           {#if fieldErrors["document_number"]}
             <p class="text-xs text-destructive">
               {fieldErrors["document_number"]}

@@ -1,9 +1,53 @@
-# Relatório de Execução — Fase 1B.2 (Correções de Revisão + Cadastro de Clientes)
+# Relatório de Execução — Fase 1B.2 e Revisão 1B.2-rev
 
-**Branch**: `fase-1b2-clientes`  
-**Base**: `main` (após merge do PR #5 — commit `dce1d62`, tag `v0.4.0-fase1b1`)  
-**Data**: 11/11/2026  
-**Status**: Concluída (pronta para abertura de PR, revisão, merge e tag pelo usuário)
+**Branch**: `fase-1b2-rev`  
+**Base**: `main` (após PR #6 `e64237f`)  
+**Data**: 12/11/2026  
+**Status**: Concluída (PR #7 aberto, aguardando checks do CI para revisão do usuário sem merge automático)
+
+---
+
+## 1. Itens da Revisão Técnica (Fase 1B.2-rev: R1 a R12)
+
+| Item    | Descrição                                                                                                                                                                                                       | Status    | Commit                | Arquivos Principais                                                                                                                                  |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **R1**  | Correção da citação da norma para Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024 em todo o repositório (0 ocorrências de `2.229/2025`)                                                              | CONCLUÍDO | `1ea8c9d`             | Código, testes, ADRs e especificações                                                                                                                |
+| **R2**  | Qualidade do core: `#![deny(clippy::unwrap_used, clippy::expect_used)]`, eliminação de `unwrap`/`expect` em produção e isolamento de `testing_utils` sob `#[cfg(any(test, feature = "test-utils"))]`            | CONCLUÍDO | `534bb07`             | `crates/core/src/lib.rs`, `crates/core/src/domain/document.rs`, `crates/core/Cargo.toml`                                                             |
+| **R3**  | Normalização estrita de documentos (rejeição de acentos e símbolos) e fixtures oficiais RFB/ENCAT (`12.ABC.345/01DE-35`) com máscara LGPD                                                                       | CONCLUÍDO | `a4ac48b`             | `crates/core/src/domain/document.rs`, `crates/core/src/testing.rs`, `src/lib/utils/document.ts`                                                      |
+| **R4**  | Migração `0005_customers_rev.sql` (ADR-0011): reconstrução de tabelas com `tenant_id`, `created_by`, `document_type`, `document_number` opcional, `active`, `country` e remoção de `idx_customer_tenant_search` | CONCLUÍDO | `e15d8f8`             | `crates/store-sqlite/migrations/0005_customers_rev.sql`, `docs/decisions/0011-reconstrucao-tabelas-clientes-migracao-0005.md`                        |
+| **R5**  | IDs estáveis: inputs com `id` opcional, upsert preservando IDs existentes e soft delete dos removidos na mesma transação                                                                                        | CONCLUÍDO | `74a2ca4`             | `crates/core/src/domain/customer.rs`, `crates/core/src/services/mod.rs`, `crates/store-sqlite/src/lib.rs`, `src/lib/components/customer-form.svelte` |
+| **R6**  | Operação `set_active` (`customer:manage`), documentação de `delete_customer` (soft delete + liberação de documento), regra de bloqueio da Fase 4 e pendência de anonimização LGPD                               | CONCLUÍDO | `3e50978`             | `crates/core/src/services/mod.rs`, `src-tauri/src/commands/customers.rs`, `docs/03-regras-negocio.md`, `docs/seguranca.md`                           |
+| **R7**  | Busca: remoção de marcas combinantes NFD `U+0300..U+036F` em `remove_diacritics` (testes com `"José"` em NFC/NFD) e documentação de limite de escala da busca por trecho e plano FTS5/`pg_trgm`                 | CONCLUÍDO | `ba6d93d`             | `crates/core/src/domain/customer.rs`, `crates/core/src/testing.rs`, `docs/03-regras-negocio.md`                                                      |
+| **R8**  | Paginação por cursor `URL_SAFE_NO_PAD` com erro limpo de validação (`CoreError::Validation`) em caso de cursor inválido/adulterado e limite padrão 50 / teto 100                                                | CONCLUÍDO | `6de1b5b`             | `crates/core/src/domain/customer.rs`, `crates/core/src/services/mod.rs`, `crates/store-sqlite/src/lib.rs`                                            |
+| **R9**  | LGPD: `mask_email_for_audit`, `mask_phone_for_audit`, `Debug` manual com redação de PII nos tipos de cliente e prova de auditoria sem dados completos                                                           | CONCLUÍDO | `27e5e27`             | `crates/core/src/domain/document.rs`, `crates/core/src/domain/customer.rs`, `crates/core/src/services/mod.rs`, `docs/seguranca.md`                   |
+| **R10** | Paridade mock x core: exportação de `SYSTEM_ROLES` para `src/lib/data/fixtures/system-roles.json`, teste Rust que falha se desatualizado e teste Vitest no mock                                                 | CONCLUÍDO | `4ba2081`             | `src/lib/data/fixtures/system-roles.json`, `crates/core/src/testing.rs`, `src/lib/data/auth-and-users.spec.ts`                                       |
+| **R11** | Ampliação de `check-migrations.js` cobrindo `crates/*/migrations`, validação de versão única estritamente crescente e prova nos 6 cenários de teste                                                             | CONCLUÍDO | `e721706` / `6f76204` | `scripts/check-migrations.js`, `scripts/test-check-migrations.js`                                                                                    |
+| **R12** | Relatório de entrega, PR #7 aberto e listagem das URLs diretas para revisão                                                                                                                                     | CONCLUÍDO | _Este commit_         | `docs/relatorios/fase-1b-2.md`                                                                                                                       |
+
+---
+
+## 2. EXPLAIN QUERY PLAN da Busca por Trecho
+
+Saída oficial do SQLite obtida no teste `test_migration_0005_rebuilds_and_preserves_existing_customer_data`:
+
+```text
+[EXPLAIN QUERY PLAN] SEARCH customer USING INDEX idx_customer_tenant_sort (tenant_id=?)
+```
+
+Comprovou-se que o índice `idx_customer_tenant_search` não é utilizado pelo SQLite em consultas `search_text LIKE '%termo%'` combinadas com ordenação por cursor. Sua remoção na migração `0005` economizou espaço em disco e eliminou overhead desnecessário de escrita em todas as operações de cadastro e atualização de clientes.
+
+---
+
+## 3. URLs Diretas para Revisão (Branch `fase-1b2-rev`)
+
+- Migração 0005: https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/fase-1b2-rev/crates/store-sqlite/migrations/0005_customers_rev.sql
+- Serviços do Core: https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/fase-1b2-rev/crates/core/src/services/mod.rs
+- Traits de Store: https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/fase-1b2-rev/crates/core/src/store/mod.rs
+- SQLite Store: https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/fase-1b2-rev/crates/store-sqlite/src/lib.rs
+- Comandos Tauri de Clientes: https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/fase-1b2-rev/src-tauri/src/commands/customers.rs
+- Componente VirtualList: https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/fase-1b2-rev/src/lib/components/virtual-list.svelte
+- Script de Verificação de Migrações: https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/fase-1b2-rev/scripts/check-migrations.js
+- ADR-0011 (Reconstrução na 0005): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/fase-1b2-rev/docs/decisions/0011-reconstrucao-tabelas-clientes-migracao-0005.md
 
 ---
 
@@ -78,17 +122,17 @@ Implementados em `test_branding_validator_images_magic_bytes_and_formats` e subm
 
 ## 4. Tarefa 1 — Cadastro de Clientes (Itens 1.1 a 1.9)
 
-| Item    | Descrição                                                                                                      | Status    | Commit        | Arquivos Principais                                                                                                                           |
-| ------- | -------------------------------------------------------------------------------------------------------------- | --------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1.1** | Validação de CPF e CNPJ numérico/alfanumérico (IN RFB nº 2.229/2025 `ASCII - 48`) + máscara LGPD               | CONCLUÍDO | `606ca36`     | `crates/core/src/domain/document.rs`, `crates/core/src/testing.rs`                                                                            |
-| **1.2** | Migração `0004_customers.sql` (`customer`, `customer_contact`, `customer_address` e índices parciais)          | CONCLUÍDO | `f01983e`     | `crates/store-sqlite/migrations/0004_customers.sql`                                                                                           |
-| **1.3** | Entidades de cliente, normalização sem acentos (`search_text`, `name_sort`) e cursor Base64                    | CONCLUÍDO | `b9f88d7`     | `crates/core/src/domain/customer.rs`, `crates/core/src/testing.rs`                                                                            |
-| **1.4** | Trait `CustomerStore`, serviços CRUD em `CoreServices`, auditoria LGPD e implementação SQLite                  | CONCLUÍDO | `785b62a`     | `crates/core/src/stores.rs`, `crates/core/src/services.rs`, `crates/store-sqlite/src/lib.rs`, `crates/core/src/testing.rs`                    |
-| **1.5** | Módulo Frontend de clientes (lista virtualizada 20k, formulário PF/PJ dinâmico, ficha e busca via `Ctrl+K`)    | CONCLUÍDO | `ede16fd`     | `src/lib/components/virtual-list.svelte`, `src/lib/components/customer-form.svelte`, `src/routes/customers/**`, `src/lib/utils/document.ts`   |
-| **1.6** | Comandos Tauri de clientes com guarda `require_session` e registro em `COMMAND_REGISTRY`                       | CONCLUÍDO | `7d3558d`     | `src-tauri/src/commands/customers.rs`, `src-tauri/src/guards.rs`, `src-tauri/src/lib.rs`                                                      |
-| **1.7** | Benchmark SQLite de 20.000 clientes e teste unitário de virtualização DOM (`VirtualList`)                      | CONCLUÍDO | `b4dac02`     | `crates/store-sqlite/src/lib.rs`, `src/lib/components/virtual-list.spec.ts`, `vite.config.ts`                                                 |
-| **1.8** | Testes unitários de documentos/RBAC e fluxo E2E completo Playwright (`Ctrl+K`, CNPJ alfanumérico, soft delete) | CONCLUÍDO | `4c84ab3`     | `src/lib/utils/document.spec.ts`, `src/lib/data/customer-repository.spec.ts`, `src/lib/data/mock-auth-repository.ts`, `e2e/customers.spec.ts` |
-| **1.9** | Atualização da documentação (`02-modelo-dados`, `03-regras-negocio`, `seguranca`) e relatório final            | CONCLUÍDO | _Este commit_ | `docs/02-modelo-dados.md`, `docs/03-regras-negocio.md`, `docs/seguranca.md`, `docs/relatorios/fase-1b-2.md`                                   |
+| Item    | Descrição                                                                                                                              | Status    | Commit        | Arquivos Principais                                                                                                                           |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1.1** | Validação de CPF e CNPJ numérico/alfanumérico (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024 `ASCII - 48`) + máscara LGPD | CONCLUÍDO | `606ca36`     | `crates/core/src/domain/document.rs`, `crates/core/src/testing.rs`                                                                            |
+| **1.2** | Migração `0004_customers.sql` (`customer`, `customer_contact`, `customer_address` e índices parciais)                                  | CONCLUÍDO | `f01983e`     | `crates/store-sqlite/migrations/0004_customers.sql`                                                                                           |
+| **1.3** | Entidades de cliente, normalização sem acentos (`search_text`, `name_sort`) e cursor Base64                                            | CONCLUÍDO | `b9f88d7`     | `crates/core/src/domain/customer.rs`, `crates/core/src/testing.rs`                                                                            |
+| **1.4** | Trait `CustomerStore`, serviços CRUD em `CoreServices`, auditoria LGPD e implementação SQLite                                          | CONCLUÍDO | `785b62a`     | `crates/core/src/stores.rs`, `crates/core/src/services.rs`, `crates/store-sqlite/src/lib.rs`, `crates/core/src/testing.rs`                    |
+| **1.5** | Módulo Frontend de clientes (lista virtualizada 20k, formulário PF/PJ dinâmico, ficha e busca via `Ctrl+K`)                            | CONCLUÍDO | `ede16fd`     | `src/lib/components/virtual-list.svelte`, `src/lib/components/customer-form.svelte`, `src/routes/customers/**`, `src/lib/utils/document.ts`   |
+| **1.6** | Comandos Tauri de clientes com guarda `require_session` e registro em `COMMAND_REGISTRY`                                               | CONCLUÍDO | `7d3558d`     | `src-tauri/src/commands/customers.rs`, `src-tauri/src/guards.rs`, `src-tauri/src/lib.rs`                                                      |
+| **1.7** | Benchmark SQLite de 20.000 clientes e teste unitário de virtualização DOM (`VirtualList`)                                              | CONCLUÍDO | `b4dac02`     | `crates/store-sqlite/src/lib.rs`, `src/lib/components/virtual-list.spec.ts`, `vite.config.ts`                                                 |
+| **1.8** | Testes unitários de documentos/RBAC e fluxo E2E completo Playwright (`Ctrl+K`, CNPJ alfanumérico, soft delete)                         | CONCLUÍDO | `4c84ab3`     | `src/lib/utils/document.spec.ts`, `src/lib/data/customer-repository.spec.ts`, `src/lib/data/mock-auth-repository.ts`, `e2e/customers.spec.ts` |
+| **1.9** | Atualização da documentação (`02-modelo-dados`, `03-regras-negocio`, `seguranca`) e relatório final                                    | CONCLUÍDO | _Este commit_ | `docs/02-modelo-dados.md`, `docs/03-regras-negocio.md`, `docs/seguranca.md`, `docs/relatorios/fase-1b-2.md`                                   |
 
 ---
 

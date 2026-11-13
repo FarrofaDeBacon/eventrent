@@ -186,6 +186,7 @@ export const DEFAULT_COMPANY_NAME = "Minha empresa";
 // =========================================================================
 
 export type PersonType = "individual" | "legal";
+export type DocumentType = "cpf" | "cnpj" | "foreign" | "none";
 
 export interface Customer {
   id: string;
@@ -193,10 +194,12 @@ export interface Customer {
   person_type: PersonType;
   name: string;
   trade_name?: string | null;
-  document_number: string;
+  document_type: DocumentType;
+  document_number?: string | null;
   state_registration?: string | null;
   municipal_registration?: string | null;
   notes?: string | null;
+  active: boolean;
   search_text: string;
   name_sort: string;
   created_at: string;
@@ -207,6 +210,7 @@ export interface Customer {
 
 export interface CustomerContact {
   id: string;
+  tenant_id: string;
   customer_id: string;
   name: string;
   email?: string | null;
@@ -216,10 +220,12 @@ export interface CustomerContact {
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
+  created_by?: string | null;
 }
 
 export interface CustomerAddress {
   id: string;
+  tenant_id: string;
   customer_id: string;
   label: string;
   street: string;
@@ -229,10 +235,12 @@ export interface CustomerAddress {
   city: string;
   state: string;
   postal_code: string;
+  country: string;
   is_primary: boolean;
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
+  created_by?: string | null;
 }
 
 export interface CustomerWithDetails {
@@ -242,6 +250,7 @@ export interface CustomerWithDetails {
 }
 
 export interface CreateContactInput {
+  id?: string | null;
   name: string;
   email?: string | null;
   phone?: string | null;
@@ -250,6 +259,7 @@ export interface CreateContactInput {
 }
 
 export interface CreateAddressInput {
+  id?: string | null;
   label: string;
   street: string;
   number: string;
@@ -258,6 +268,7 @@ export interface CreateAddressInput {
   city: string;
   state: string;
   postal_code: string;
+  country?: string | null;
   is_primary: boolean;
 }
 
@@ -265,7 +276,8 @@ export interface CreateCustomerInput {
   person_type: PersonType;
   name: string;
   trade_name?: string | null;
-  document_number: string;
+  document_type?: DocumentType;
+  document_number?: string | null;
   state_registration?: string | null;
   municipal_registration?: string | null;
   notes?: string | null;
