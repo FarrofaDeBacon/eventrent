@@ -125,7 +125,9 @@ Criados de forma idempotente por `ensure_system_roles` para cada tenant:
 - **Unicidade e Soft Delete**:
   - O documento normalizado é único entre clientes ativos do mesmo tenant via índice parcial (`idx_customer_tenant_document_active WHERE deleted_at IS NULL`). Ao excluir logicamente um cliente, o documento fica liberado para eventual recadastro futuro sem violar histórico.
 - **Integridade de Contatos e Endereços**:
-  - Todo cliente deve possuir no mínimo **1 contato** e **1 endereço** cadastrados, mantendo ao menos um registro sinalizado como principal (`is_primary`).
+  - **Contato Obrigatório (mínimo 1)**: Todo cliente deve possuir pelo menos 1 contato com telefone OU e-mail válidos, com exatamente 1 contato principal (`is_primary`). Limite máximo de 20 contatos.
+  - **Endereço Opcional (zero ou mais)**: O cadastro inicial não exige endereço (zero ou mais endereços cadastrados), viabilizando pré-cadastros rápidos e orçamentos ágeis de locação (onde o local de entrega é definido por evento na Fase 4). Se informados endereços, deve haver exatamente 1 principal (`is_primary`). Limite máximo de 20 endereços.
+  - **Exigência Fiscal (Fase 7)**: O endereço completo passa a ser estritamente **obrigatório no momento da emissão de notas fiscais (Fase 7)**.
 - **Busca Desacentuada e Paginação Determinística**:
   - Os campos normalizados `search_text` e `name_sort` removem acentuação (formas NFC e marcas combinantes NFD `U+0300..U+036F`) e padronizam caixa baixa para busca em SQLite e paginação por cursor composto `(name_sort, id)`.
   - **Limite de Escala da Busca por Trecho (`LIKE '%termo%'`)**: Na Fase 1B.2, a consulta `WHERE tenant_id = ? AND deleted_at IS NULL AND search_text LIKE ? ORDER BY name_sort ASC, id ASC` utiliza o índice `idx_customer_tenant_sort (tenant_id=?)` e realiza varredura linear sobre os registros ativos do tenant (~11 ms para 20.000 registros). Para volumes muito maiores de clientes por tenant, a evolução planejada para a **Fase 2.5** utilizará **FTS5** no SQLite local e **índices trigram (`pg_trgm` com GIN/GiST)** no PostgreSQL.

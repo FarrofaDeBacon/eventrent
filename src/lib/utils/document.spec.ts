@@ -126,26 +126,20 @@ describe("Utilitários de Documentos Brasileiros e Máscaras", () => {
     });
     expect(validLegal.success).toBe(true);
 
-    // Pré-cadastro sem documento (none) e cliente estrangeiro (foreign)
+    // Pré-cadastro sem documento (none), cliente estrangeiro (foreign) e cadastro sem endereço (opcional)
     const noDoc = customerFormSchema.safeParse({
       person_type: "individual",
       name: "Pré Cadastro",
       document_type: "none",
       document_number: null,
-      contacts: [{ name: "Contato", is_primary: true }],
-      addresses: [
+      contacts: [
         {
-          label: "Casa",
-          street: "Rua A",
-          number: "10",
-          neighborhood: "Centro",
-          city: "Curitiba",
-          state: "PR",
-          postal_code: "80010-000",
-          country: "BR",
+          name: "Contato",
+          email: "contato@ex.com",
           is_primary: true,
         },
       ],
+      addresses: [],
     });
     expect(noDoc.success).toBe(true);
 
@@ -154,7 +148,13 @@ describe("Utilitários de Documentos Brasileiros e Máscaras", () => {
       name: "Foreign Client",
       document_type: "foreign",
       document_number: "USPASS998877",
-      contacts: [{ name: "John", is_primary: true }],
+      contacts: [
+        {
+          name: "John",
+          phone: "11987654321",
+          is_primary: true,
+        },
+      ],
       addresses: [
         {
           label: "Hotel",
@@ -164,32 +164,21 @@ describe("Utilitários de Documentos Brasileiros e Máscaras", () => {
           city: "Rio de Janeiro",
           state: "RJ",
           postal_code: "22021-001",
-          country: "US",
+          country: "BR",
           is_primary: true,
         },
       ],
     });
     expect(foreignDoc.success).toBe(true);
 
-    // Rejeita sem contatos ou sem endereço
+    // Rejeita sem contatos (contato é obrigatório)
     const missingContact = customerFormSchema.safeParse({
       person_type: "individual",
       name: "Carlos Silva",
       document_type: "cpf",
       document_number: "529.982.247-25",
       contacts: [],
-      addresses: [
-        {
-          label: "Casa",
-          street: "Rua A",
-          number: "10",
-          neighborhood: "Centro",
-          city: "Curitiba",
-          state: "PR",
-          postal_code: "80010-000",
-          is_primary: true,
-        },
-      ],
+      addresses: [],
     });
     expect(missingContact.success).toBe(false);
   });

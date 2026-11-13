@@ -7,47 +7,88 @@ import {
   validateForeignDocument,
 } from "./document";
 
-export const contactSchema = z.object({
-  id: z.string().optional().nullable(),
-  name: z
-    .string()
-    .trim()
-    .min(2, "O nome do contato deve ter pelo menos 2 caracteres."),
-  email: z
-    .string()
-    .trim()
-    .email("Informe um e-mail válido para o contato.")
-    .or(z.literal(""))
-    .optional()
-    .nullable(),
-  phone: z
-    .string()
-    .trim()
-    .refine(
-      (val) => {
-        if (!val) return true;
-        const d = digitsOnly(val);
-        return d.length >= 10 && d.length <= 11;
-      },
-      { message: "Telefone deve ter DDD + 8 ou 9 dígitos." },
-    )
-    .optional()
-    .nullable(),
-  role: z.string().trim().max(80).optional().nullable(),
-  is_primary: z.boolean().default(false),
-});
+export const contactSchema = z
+  .object({
+    id: z.string().optional().nullable(),
+    name: z
+      .string()
+      .trim()
+      .min(1, "O nome do contato é obrigatório.")
+      .max(100, "Nome do contato excede o limite máximo de 100 caracteres."),
+    email: z
+      .string()
+      .trim()
+      .email("Informe um e-mail válido para o contato.")
+      .or(z.literal(""))
+      .optional()
+      .nullable(),
+    phone: z
+      .string()
+      .trim()
+      .refine(
+        (val) => {
+          if (!val) return true;
+          const d = digitsOnly(val);
+          return d.length >= 10 && d.length <= 11;
+        },
+        { message: "Telefone deve ter DDD + 8 ou 9 dígitos." },
+      )
+      .optional()
+      .nullable(),
+    role: z
+      .string()
+      .trim()
+      .max(60, "Função do contato excede o limite máximo de 60 caracteres.")
+      .optional()
+      .nullable(),
+    is_primary: z.boolean().default(false),
+  })
+  .refine(
+    (data) => {
+      const hasEmail = Boolean(data.email && data.email.trim().length > 0);
+      const hasPhone = Boolean(data.phone && digitsOnly(data.phone).length > 0);
+      return hasEmail || hasPhone;
+    },
+    {
+      message:
+        "Cada contato deve possuir pelo menos um telefone ou e-mail preenchido.",
+      path: ["email"],
+    },
+  );
 
 export const addressSchema = z.object({
   id: z.string().optional().nullable(),
   label: z
     .string()
     .trim()
-    .min(1, "Informe um rótulo para o endereço (ex.: Principal, Depósito)."),
-  street: z.string().trim().min(2, "Informe o logradouro."),
-  number: z.string().trim().min(1, "Informe o número (ou S/N)."),
-  complement: z.string().trim().max(120).optional().nullable(),
-  neighborhood: z.string().trim().min(1, "Informe o bairro."),
-  city: z.string().trim().min(2, "Informe a cidade."),
+    .max(40, "Rótulo excede o limite máximo de 40 caracteres.")
+    .default("Principal"),
+  street: z
+    .string()
+    .trim()
+    .min(1, "Informe o logradouro.")
+    .max(150, "Logradouro excede 150 caracteres."),
+  number: z
+    .string()
+    .trim()
+    .min(1, "Informe o número (ou S/N).")
+    .max(20, "Número excede 20 caracteres."),
+  complement: z
+    .string()
+    .trim()
+    .max(60, "Complemento excede 60 caracteres.")
+    .optional()
+    .nullable(),
+  neighborhood: z
+    .string()
+    .trim()
+    .min(1, "Informe o bairro.")
+    .max(80, "Bairro excede 80 caracteres."),
+  city: z
+    .string()
+    .trim()
+    .min(1, "Informe a cidade.")
+    .max(80, "Cidade excede 80 caracteres."),
   state: z
     .string()
     .trim()
@@ -61,7 +102,7 @@ export const addressSchema = z.object({
     .refine((cep) => digitsOnly(cep).length === 8, {
       message: "O CEP deve conter 8 dígitos.",
     }),
-  country: z.string().trim().min(2).max(4).default("BR"),
+  country: z.string().trim().min(2).max(2).default("BR"),
   is_primary: z.boolean().default(false),
 });
 
@@ -71,19 +112,42 @@ export const customerFormSchema = z
     name: z
       .string()
       .trim()
-      .min(2, "O nome / razão social deve ter pelo menos 2 caracteres."),
-    trade_name: z.string().trim().max(160).optional().nullable(),
+      .min(1, "O nome / razão social é obrigatório.")
+      .max(150, "Nome ou Razão Social excede 150 caracteres."),
+    trade_name: z
+      .string()
+      .trim()
+      .max(150, "Nome fantasia excede 150 caracteres.")
+      .optional()
+      .nullable(),
     document_type: z.enum(["cpf", "cnpj", "foreign", "none"]),
     document_number: z.string().trim().optional().nullable(),
-    state_registration: z.string().trim().max(40).optional().nullable(),
-    municipal_registration: z.string().trim().max(40).optional().nullable(),
-    notes: z.string().trim().max(2000).optional().nullable(),
+    state_registration: z
+      .string()
+      .trim()
+      .max(30, "Inscrição estadual excede 30 caracteres.")
+      .optional()
+      .nullable(),
+    municipal_registration: z
+      .string()
+      .trim()
+      .max(30, "Inscrição municipal excede 30 caracteres.")
+      .optional()
+      .nullable(),
+    notes: z
+      .string()
+      .trim()
+      .max(2000, "Notas excedem 2000 caracteres.")
+      .optional()
+      .nullable(),
     contacts: z
       .array(contactSchema)
-      .min(1, "Cliente deve possuir pelo menos um contato."),
+      .min(1, "Cliente deve possuir pelo menos um contato.")
+      .max(20, "Número máximo de 20 contatos excedido."),
     addresses: z
       .array(addressSchema)
-      .min(1, "Cliente deve possuir pelo menos um endereço cadastrado."),
+      .max(20, "Número máximo de 20 endereços excedido.")
+      .default([]),
   })
   .superRefine((data, ctx) => {
     const doc = (data.document_number ?? "").trim();

@@ -104,20 +104,7 @@
             is_primary: true,
           },
         ],
-        addresses: [
-          {
-            label: "Principal",
-            street: "",
-            number: "",
-            complement: "",
-            neighborhood: "",
-            city: "",
-            state: "SP",
-            postal_code: "",
-            country: "BR",
-            is_primary: true,
-          },
-        ],
+        addresses: [],
       };
     }
     const docType: DocumentType =
