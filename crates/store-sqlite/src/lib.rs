@@ -2002,7 +2002,7 @@ impl CustomerStore for SqliteStore {
 mod tests {
     use super::*;
     use eventrent_core::domain::{
-        CreateUserInput, InitialSetupInput, LoginInput, LoginPolicy, OperationMode,
+        CreateUserInput, InitialSetupInput, LoginInput, LoginPolicy, OperationMode, PersonType,
         RecoverPasswordInput,
     };
     use eventrent_core::services::{ensure_default_tenant, CoreServices};
@@ -3326,5 +3326,435 @@ mod tests {
             err_address.is_err(),
             "Inserir endereço com tenant diferente do cliente deve falhar por FK composta"
         );
+    }
+
+    #[tokio::test]
+    async fn test_store_atomic_swap_of_primary_contact_and_address() {
+        let pool = init_memory_db()
+            .await
+            .expect("Falha ao inicializar banco em memória");
+        let store = SqliteStore::new(pool.clone()).into_bundle();
+
+        let tenant_id = "tenant-swap-001";
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let tenant = Tenant {
+            id: tenant_id.to_string(),
+            tenant_id: tenant_id.to_string(),
+            name: "Empresa Swap".to_string(),
+            slug: "empresa-swap".to_string(),
+            document_number: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            deleted_at: None,
+            created_by: None,
+        };
+        store.tenants.create(&tenant).await.expect("create tenant");
+
+        let cust_id = "cust-swap-1";
+        let customer = Customer {
+            id: cust_id.to_string(),
+            tenant_id: tenant_id.to_string(),
+            person_type: PersonType::Individual,
+            name: "Cliente Swap".to_string(),
+            trade_name: None,
+            document_type: DocumentType::Cpf,
+            document_number: Some("52998224725".to_string()),
+            state_registration: None,
+            municipal_registration: None,
+            notes: None,
+            active: true,
+            search_text: "cliente swap".to_string(),
+            name_sort: "cliente swap".to_string(),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            deleted_at: None,
+            created_by: None,
+        };
+
+        let contact_a = CustomerContact {
+            id: "ct-swap-a".to_string(),
+            tenant_id: tenant_id.to_string(),
+            customer_id: cust_id.to_string(),
+            name: "Contato A".to_string(),
+            email: Some("a@swap.com".to_string()),
+            phone: None,
+            role: None,
+            is_primary: true,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            deleted_at: None,
+            created_by: None,
+        };
+        let contact_b = CustomerContact {
+            id: "ct-swap-b".to_string(),
+            tenant_id: tenant_id.to_string(),
+            customer_id: cust_id.to_string(),
+            name: "Contato B".to_string(),
+            email: Some("b@swap.com".to_string()),
+            phone: None,
+            role: None,
+            is_primary: false,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            deleted_at: None,
+            created_by: None,
+        };
+
+        let addr_a = CustomerAddress {
+            id: "ad-swap-a".to_string(),
+            tenant_id: tenant_id.to_string(),
+            customer_id: cust_id.to_string(),
+            label: "Endereço A".to_string(),
+            street: "Rua A".to_string(),
+            number: "10".to_string(),
+            complement: None,
+            neighborhood: "Centro".to_string(),
+            city: "SP".to_string(),
+            state: "SP".to_string(),
+            postal_code: "01001000".to_string(),
+            country: "BR".to_string(),
+            is_primary: true,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            deleted_at: None,
+            created_by: None,
+        };
+        let addr_b = CustomerAddress {
+            id: "ad-swap-b".to_string(),
+            tenant_id: tenant_id.to_string(),
+            customer_id: cust_id.to_string(),
+            label: "Endereço B".to_string(),
+            street: "Rua B".to_string(),
+            number: "20".to_string(),
+            complement: None,
+            neighborhood: "Centro".to_string(),
+            city: "SP".to_string(),
+            state: "SP".to_string(),
+            postal_code: "01001000".to_string(),
+            country: "BR".to_string(),
+            is_primary: false,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            deleted_at: None,
+            created_by: None,
+        };
+
+        store
+            .customers
+            .create(
+                &customer,
+                &[contact_a.clone(), contact_b.clone()],
+                &[addr_a.clone(), addr_b.clone()],
+            )
+            .await
+            .expect("create customer");
+
+        // Troca atômica de principal: Contact B vem ANTES de A no slice e é marcado como is_primary: true
+        // Address B vem ANTES de A e é marcado como is_primary: true
+        let mut new_contact_b = contact_b.clone();
+        new_contact_b.is_primary = true;
+        let mut new_contact_a = contact_a.clone();
+        new_contact_a.is_primary = false;
+
+        let mut new_addr_b = addr_b.clone();
+        new_addr_b.is_primary = true;
+        let mut new_addr_a = addr_a.clone();
+        new_addr_a.is_primary = false;
+
+        let swap_res = store
+            .customers
+            .update(
+                &customer,
+                &[new_contact_b, new_contact_a],
+                &[new_addr_b, new_addr_a],
+            )
+            .await;
+        assert!(
+            swap_res.is_ok(),
+            "Troca atômica de contatos e endereços principais na mesma transação deve funcionar sem violar índice parcial: {:?}",
+            swap_res
+        );
+
+        let details = store
+            .customers
+            .find_by_id(tenant_id, cust_id)
+            .await
+            .expect("find")
+            .expect("exists");
+        let found_a = details
+            .contacts
+            .iter()
+            .find(|c| c.id == "ct-swap-a")
+            .unwrap();
+        let found_b = details
+            .contacts
+            .iter()
+            .find(|c| c.id == "ct-swap-b")
+            .unwrap();
+        assert!(!found_a.is_primary);
+        assert!(found_b.is_primary);
+
+        let found_ad_a = details
+            .addresses
+            .iter()
+            .find(|a| a.id == "ad-swap-a")
+            .unwrap();
+        let found_ad_b = details
+            .addresses
+            .iter()
+            .find(|a| a.id == "ad-swap-b")
+            .unwrap();
+        assert!(!found_ad_a.is_primary);
+        assert!(found_ad_b.is_primary);
+    }
+
+    #[tokio::test]
+    async fn test_store_update_soft_deletes_contact_and_creates_new_primary() {
+        let pool = init_memory_db()
+            .await
+            .expect("Falha ao inicializar banco em memória");
+        let store = SqliteStore::new(pool.clone()).into_bundle();
+
+        let tenant_id = "tenant-soft-001";
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let tenant = Tenant {
+            id: tenant_id.to_string(),
+            tenant_id: tenant_id.to_string(),
+            name: "Empresa Soft".to_string(),
+            slug: "empresa-soft".to_string(),
+            document_number: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            deleted_at: None,
+            created_by: None,
+        };
+        store.tenants.create(&tenant).await.expect("create tenant");
+
+        let cust_id = "cust-soft-1";
+        let customer = Customer {
+            id: cust_id.to_string(),
+            tenant_id: tenant_id.to_string(),
+            person_type: PersonType::Individual,
+            name: "Cliente Soft".to_string(),
+            trade_name: None,
+            document_type: DocumentType::Cpf,
+            document_number: Some("52998224725".to_string()),
+            state_registration: None,
+            municipal_registration: None,
+            notes: None,
+            active: true,
+            search_text: "cliente soft".to_string(),
+            name_sort: "cliente soft".to_string(),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            deleted_at: None,
+            created_by: None,
+        };
+
+        let contact_old = CustomerContact {
+            id: "ct-old".to_string(),
+            tenant_id: tenant_id.to_string(),
+            customer_id: cust_id.to_string(),
+            name: "Antigo".to_string(),
+            email: Some("antigo@ex.com".to_string()),
+            phone: None,
+            role: None,
+            is_primary: true,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            deleted_at: None,
+            created_by: None,
+        };
+
+        store
+            .customers
+            .create(&customer, &[contact_old], &[])
+            .await
+            .expect("create");
+
+        // Atualização passando novo contato C (não inclui ct-old, provocando soft delete)
+        let contact_new = CustomerContact {
+            id: "ct-new".to_string(),
+            tenant_id: tenant_id.to_string(),
+            customer_id: cust_id.to_string(),
+            name: "Novo".to_string(),
+            email: Some("novo@ex.com".to_string()),
+            phone: None,
+            role: None,
+            is_primary: true,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            deleted_at: None,
+            created_by: None,
+        };
+
+        store
+            .customers
+            .update(&customer, &[contact_new], &[])
+            .await
+            .expect("update");
+
+        let details = store
+            .customers
+            .find_by_id(tenant_id, cust_id)
+            .await
+            .expect("find")
+            .expect("exists");
+        assert_eq!(details.contacts.len(), 1);
+        assert_eq!(details.contacts[0].id, "ct-new");
+        assert!(details.contacts[0].is_primary);
+
+        // Verifica no banco cru que ct-old teve soft delete executado
+        let row_old = sqlx::query("SELECT deleted_at FROM customer_contact WHERE id = 'ct-old'")
+            .fetch_one(&pool)
+            .await
+            .expect("fetch old");
+        let del: Option<String> = row_old.get("deleted_at");
+        assert!(
+            del.is_some(),
+            "Contato removido da lista deve ter deleted_at preenchido"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_store_customer_tenant_isolation() {
+        let pool = init_memory_db()
+            .await
+            .expect("Falha ao inicializar banco em memória");
+        let store = SqliteStore::new(pool.clone()).into_bundle();
+
+        let now = chrono::Utc::now().to_rfc3339();
+
+        for tid in ["tenant-iso-1", "tenant-iso-2"] {
+            store
+                .tenants
+                .create(&Tenant {
+                    id: tid.to_string(),
+                    tenant_id: tid.to_string(),
+                    name: format!("Empresa {tid}"),
+                    slug: tid.to_string(),
+                    document_number: None,
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                    deleted_at: None,
+                    created_by: None,
+                })
+                .await
+                .expect("create tenant");
+        }
+
+        let customer1 = Customer {
+            id: "cust-iso-1".to_string(),
+            tenant_id: "tenant-iso-1".to_string(),
+            person_type: PersonType::Individual,
+            name: "Cliente Tenant 1".to_string(),
+            trade_name: None,
+            document_type: DocumentType::Cpf,
+            document_number: Some("52998224725".to_string()),
+            state_registration: None,
+            municipal_registration: None,
+            notes: None,
+            active: true,
+            search_text: "cliente tenant 1".to_string(),
+            name_sort: "cliente tenant 1".to_string(),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            deleted_at: None,
+            created_by: None,
+        };
+
+        store
+            .customers
+            .create(&customer1, &[], &[])
+            .await
+            .expect("create cust1");
+
+        // 1. find_by_id isolado por tenant
+        assert!(store
+            .customers
+            .find_by_id("tenant-iso-2", "cust-iso-1")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(store
+            .customers
+            .find_by_id("tenant-iso-1", "cust-iso-1")
+            .await
+            .unwrap()
+            .is_some());
+
+        // 2. find_by_document isolado por tenant (Tenant 2 não enxerga documento de Tenant 1)
+        assert!(store
+            .customers
+            .find_by_document("tenant-iso-2", DocumentType::Cpf, "52998224725")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(store
+            .customers
+            .find_by_document("tenant-iso-1", DocumentType::Cpf, "52998224725")
+            .await
+            .unwrap()
+            .is_some());
+
+        // 3. list isolado por tenant
+        let list_t2 = store
+            .customers
+            .list(
+                "tenant-iso-2",
+                &CustomerFilter {
+                    query: None,
+                    person_type: None,
+                    cursor: None,
+                    limit: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(list_t2.items.len(), 0);
+
+        let list_t1 = store
+            .customers
+            .list(
+                "tenant-iso-1",
+                &CustomerFilter {
+                    query: None,
+                    person_type: None,
+                    cursor: None,
+                    limit: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(list_t1.items.len(), 1);
+
+        // 4. set_active em outro tenant não afeta tenant-iso-1
+        store
+            .customers
+            .set_active("tenant-iso-2", "cust-iso-1", false, &now)
+            .await
+            .unwrap();
+        let c1_still_active = store
+            .customers
+            .find_by_id("tenant-iso-1", "cust-iso-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(c1_still_active.customer.active);
+
+        // 5. soft_delete em outro tenant não afeta tenant-iso-1
+        store
+            .customers
+            .soft_delete("tenant-iso-2", "cust-iso-1", &now)
+            .await
+            .unwrap();
+        let c1_still_exists = store
+            .customers
+            .find_by_id("tenant-iso-1", "cust-iso-1")
+            .await
+            .unwrap();
+        assert!(c1_still_exists.is_some());
     }
 }
