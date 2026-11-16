@@ -285,4 +285,82 @@ mod tests {
             "Divergência detectada entre generate_handler! e COMMAND_REGISTRY!"
         );
     }
+
+    #[test]
+    fn test_public_commands_expose_only_public_branding_without_internal_ids() {
+        use crate::commands::setup::AppStatus;
+        use eventrent_core::{AppConfig, OperationMode, PublicBranding, TenantBranding};
+
+        let internal_branding = TenantBranding {
+            id: "internal-id-12345".to_string(),
+            tenant_id: "018f0000-0000-7000-8000-000000000001".to_string(),
+            company_name: "Locadora Áudio & Luz".to_string(),
+            primary_color: "#1e3a8a".to_string(),
+            secondary_color: "#3b82f6".to_string(),
+            accent_color: "#f59e0b".to_string(),
+            logo_url: Some("data:image/png;base64,AAA".to_string()),
+            logo_dark_url: None,
+            icon_url: None,
+            favicon_url: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+            deleted_at: None,
+            created_by: Some("user-admin-999".to_string()),
+        };
+
+        let public_branding = PublicBranding::from(internal_branding);
+        let app_status = AppStatus {
+            config: AppConfig {
+                mode: Some(OperationMode::Local),
+                setup_completed: true,
+                inactivity_timeout_minutes: 30,
+            },
+            default_tenant_id: "018f0000-0000-7000-8000-000000000001".to_string(),
+            has_owner: true,
+            session: None,
+            branding: Some(public_branding),
+        };
+
+        let json_val = serde_json::to_value(&app_status).expect("Serialização falhou");
+        let branding_obj = json_val
+            .get("branding")
+            .and_then(|b| b.as_object())
+            .expect("branding deve ser um objeto JSON");
+
+        // Campos permitidos na identidade visual pública
+        assert_eq!(
+            branding_obj.get("company_name").and_then(|v| v.as_str()),
+            Some("Locadora Áudio & Luz")
+        );
+        assert_eq!(
+            branding_obj.get("primary_color").and_then(|v| v.as_str()),
+            Some("#1e3a8a")
+        );
+
+        // Campos internos/banco NUNCA devem estar presentes no PublicBranding serializado
+        assert!(
+            !branding_obj.contains_key("id"),
+            "PublicBranding não pode expor id interno"
+        );
+        assert!(
+            !branding_obj.contains_key("tenant_id"),
+            "PublicBranding não pode expor tenant_id"
+        );
+        assert!(
+            !branding_obj.contains_key("created_by"),
+            "PublicBranding não pode expor created_by"
+        );
+        assert!(
+            !branding_obj.contains_key("created_at"),
+            "PublicBranding não pode expor created_at"
+        );
+        assert!(
+            !branding_obj.contains_key("updated_at"),
+            "PublicBranding não pode expor updated_at"
+        );
+        assert!(
+            !branding_obj.contains_key("deleted_at"),
+            "PublicBranding não pode expor deleted_at"
+        );
+    }
 }

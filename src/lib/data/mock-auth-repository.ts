@@ -226,7 +226,17 @@ export class MockAuthRepository implements AuthRepository {
       default_tenant_id: state.defaultTenantId,
       has_owner: state.users.length > 0,
       session: state.session ? { ...state.session } : null,
-      branding: { ...state.branding },
+      branding: state.branding
+        ? {
+            company_name: state.branding.company_name,
+            primary_color: state.branding.primary_color,
+            secondary_color: state.branding.secondary_color,
+            accent_color: state.branding.accent_color,
+            logo_url: state.branding.logo_url,
+            logo_dark_url: state.branding.logo_dark_url,
+            icon_url: state.branding.icon_url,
+          }
+        : null,
     };
   }
 
