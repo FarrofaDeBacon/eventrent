@@ -2414,6 +2414,7 @@ mod tests {
                     recovery_key: setup_ok.recovery_key.clone(),
                     new_password: new_password.to_string(),
                 },
+                &LoginPolicy::default(),
             )
             .await;
         assert!(
@@ -2602,6 +2603,10 @@ mod tests {
             .await
             .unwrap();
 
+        let policy = LoginPolicy {
+            reveal_account_locked: true,
+        };
+
         // Tentativa 1 com chave de recuperação inválida
         let err1 = services
             .recover_password(
@@ -2611,6 +2616,7 @@ mod tests {
                     recovery_key: "ER-CHAVE-INVALIDA-0001".to_string(),
                     new_password: "NovaSenha#2026".to_string(),
                 },
+                &policy,
             )
             .await;
         assert!(matches!(err1, Err(CoreError::InvalidCredentials)));
@@ -2637,6 +2643,7 @@ mod tests {
                         recovery_key: format!("ER-CHAVE-INVALIDA-000{i}"),
                         new_password: "NovaSenha#2026".to_string(),
                     },
+                    &policy,
                 )
                 .await;
             assert!(matches!(res, Err(CoreError::InvalidCredentials)));
@@ -2659,6 +2666,7 @@ mod tests {
                     recovery_key: "ER-CHAVE-INVALIDA-0005".to_string(),
                     new_password: "NovaSenha#2026".to_string(),
                 },
+                &policy,
             )
             .await;
         assert!(matches!(err5, Err(CoreError::AccountLocked { .. })));
@@ -2679,6 +2687,40 @@ mod tests {
         assert!(audits_locked
             .iter()
             .any(|a| a.action == "auth.recovery_locked"));
+
+        // Prova proteção anti-enumeração: com reveal_account_locked = false, retorna InvalidCredentials
+        let policy_masked = LoginPolicy {
+            reveal_account_locked: false,
+        };
+        let err_masked = services
+            .recover_password(
+                &tenant_id,
+                &RecoverPasswordInput {
+                    email: setup.session.email.clone(),
+                    recovery_key: "ER-CHAVE-QUALQUER-0000".to_string(),
+                    new_password: "NovaSenha#2026".to_string(),
+                },
+                &policy_masked,
+            )
+            .await;
+        assert!(matches!(err_masked, Err(CoreError::InvalidCredentials)));
+
+        // Prova proteção anti-enumeração com e-mail inexistente: retorna InvalidCredentials
+        let err_non_existent = services
+            .recover_password(
+                &tenant_id,
+                &RecoverPasswordInput {
+                    email: "naoexiste@luzesom.com.br".to_string(),
+                    recovery_key: "ER-CHAVE-QUALQUER-0000".to_string(),
+                    new_password: "NovaSenha#2026".to_string(),
+                },
+                &LoginPolicy::default(),
+            )
+            .await;
+        assert!(matches!(
+            err_non_existent,
+            Err(CoreError::InvalidCredentials)
+        ));
     }
 
     #[tokio::test]

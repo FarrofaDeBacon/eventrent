@@ -42,9 +42,12 @@ pub async fn recover_password(
     state: State<'_, AppState>,
     input: RecoverPasswordInput,
 ) -> Result<RecoverPasswordResult, String> {
+    let policy = eventrent_core::LoginPolicy {
+        reveal_account_locked: true,
+    };
     state
         .services
-        .recover_password(&state.default_tenant_id, &input)
+        .recover_password(&state.default_tenant_id, &input, &policy)
         .await
         .map_err(crate::map_core_err)
 }

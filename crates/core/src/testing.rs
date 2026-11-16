@@ -451,6 +451,7 @@ pub async fn contract_recovery_key_rotation_and_lockout(
                 recovery_key: "ER-CHAVE-INVALIDA-0000".to_string(),
                 new_password: "TentativaInvalida#2026".to_string(),
             },
+            &LoginPolicy::default(),
         )
         .await;
     assert!(matches!(fail_recovery, Err(CoreError::InvalidCredentials)));
@@ -464,6 +465,7 @@ pub async fn contract_recovery_key_rotation_and_lockout(
                 recovery_key: initial_recovery_key.to_string(),
                 new_password: "AnaRecuperada#2026".to_string(),
             },
+            &LoginPolicy::default(),
         )
         .await
         .expect("Recuperação via chave de recuperação deve funcionar");
@@ -494,6 +496,7 @@ pub async fn contract_recovery_key_rotation_and_lockout(
                 recovery_key: initial_recovery_key.to_string(),
                 new_password: "TentativaReusoChave#2026".to_string(),
             },
+            &LoginPolicy::default(),
         )
         .await;
     assert!(matches!(old_key_reuse, Err(CoreError::InvalidCredentials)));

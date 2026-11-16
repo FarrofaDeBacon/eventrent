@@ -1,15 +1,15 @@
 use crate::domain::{
-    build_customer_search_text, build_name_sort, mask_individual_name_for_audit,
-    parse_document_with_type, validate_addresses, validate_contacts,
-    validate_customer_common_fields, AuditLogEntry, BrandingValidator, CreateCustomerInput,
-    CreateUserInput, Customer, CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter,
-    CustomerPage, CustomerWithDetails, DocumentType, InitialSetupInput, InitialSetupResult,
-    LoginInput, LoginPolicy, OperationMode, PersonType, PublicBranding, RecoverPasswordInput,
-    RecoverPasswordResult, ResetPasswordInput, Role, RoleWithPermissions, SessionInfo, Tenant,
-    TenantBranding, UpdateBrandingInput, UpdateCustomerInput, UpdateUserInput, UserRecord,
-    UserWithRole, PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE,
-    PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_USER_MANAGE, PERM_USER_READ, ROLE_SLUG_OWNER,
-    SYSTEM_ROLES,
+    build_customer_search_text, build_name_sort, mask_email_for_audit,
+    mask_individual_name_for_audit, parse_document_with_type, validate_addresses,
+    validate_contacts, validate_customer_common_fields, AuditLogEntry, BrandingValidator,
+    CreateCustomerInput, CreateUserInput, Customer, CustomerAddress, CustomerContact,
+    CustomerCursor, CustomerFilter, CustomerPage, CustomerWithDetails, DocumentType,
+    InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode, PersonType,
+    PublicBranding, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput, Role,
+    RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput,
+    UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole, PERM_BRANDING_MANAGE,
+    PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_USER_MANAGE,
+    PERM_USER_READ, ROLE_SLUG_OWNER, SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
@@ -852,31 +852,47 @@ impl CoreServices {
     /// Redefine a senha do proprietário usando a Chave de Recuperação offline.
     /// Em caso de falha de chave, o incremento e bloqueio são persistidos com commit.
     /// Em sucesso, a nova chave rotacionada e a senha são salvas de forma atômica.
+    /// Protegido contra enumeração de usuários (timing constante e política de bloqueio).
     pub async fn recover_password(
         &self,
         tenant_id: &str,
         input: &RecoverPasswordInput,
+        policy: &LoginPolicy,
     ) -> Result<RecoverPasswordResult> {
         let email = input.email.trim().to_lowercase();
         let normalized_key = normalize_recovery_key(&input.recovery_key);
 
         validate_password(&input.new_password)?;
 
-        let Some(user) = self.stores.users.find_by_email(tenant_id, &email).await? else {
-            return Err(CoreError::InvalidCredentials);
+        let maybe_user = self.stores.users.find_by_email(tenant_id, &email).await?;
+        let user = match maybe_user {
+            Some(u) if u.active && u.recovery_key_hash.is_some() => u,
+            _ => {
+                let _ = verify_secret(&normalized_key, DUMMY_ARGON2_HASH).await;
+                return Err(CoreError::InvalidCredentials);
+            }
         };
 
-        let Some(ref key_hash) = user.recovery_key_hash else {
-            return Err(CoreError::InvalidCredentials);
+        let key_hash = match user.recovery_key_hash.as_deref() {
+            Some(h) => h,
+            None => {
+                let _ = verify_secret(&normalized_key, DUMMY_ARGON2_HASH).await;
+                return Err(CoreError::InvalidCredentials);
+            }
         };
 
         let now = Utc::now();
         if let Some(ref locked_str) = user.recovery_locked_until {
             if let Ok(locked_dt) = DateTime::parse_from_rfc3339(locked_str) {
                 if locked_dt.with_timezone(&Utc) > now {
-                    return Err(CoreError::AccountLocked {
-                        locked_until: locked_str.clone(),
-                    });
+                    if policy.reveal_account_locked {
+                        return Err(CoreError::AccountLocked {
+                            locked_until: locked_str.clone(),
+                        });
+                    } else {
+                        let _ = verify_secret(&normalized_key, DUMMY_ARGON2_HASH).await;
+                        return Err(CoreError::InvalidCredentials);
+                    }
                 }
             }
         }
@@ -940,6 +956,7 @@ impl CoreServices {
                                 locked_until: until.clone(),
                             })
                         } else {
+                            let masked_email = mask_email_for_audit(&email);
                             stores
                                 .audit()
                                 .append(&build_audit_entry(
@@ -949,7 +966,7 @@ impl CoreServices {
                                     "user",
                                     &user_id,
                                     &format!(
-                                        "Tentativa inválida de chave de recuperação ({new_failures}) para {email}"
+                                        "Tentativa inválida de chave de recuperação ({new_failures}) para {masked_email}"
                                     ),
                                 ))
                                 .await?;
@@ -962,7 +979,11 @@ impl CoreServices {
 
             match outcome {
                 RecoveryFailureOutcome::Locked { locked_until } => {
-                    return Err(CoreError::AccountLocked { locked_until });
+                    if policy.reveal_account_locked {
+                        return Err(CoreError::AccountLocked { locked_until });
+                    } else {
+                        return Err(CoreError::InvalidCredentials);
+                    }
                 }
                 RecoveryFailureOutcome::Failed => {
                     return Err(CoreError::InvalidCredentials);
