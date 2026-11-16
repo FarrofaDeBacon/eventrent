@@ -89,7 +89,35 @@ describe("CustomerRepository (CRUD, Busca, Paginação por Cursor e RBAC)", () =
     });
     expect(created.customer.name).toBe("João Pedro Vasconcelos");
 
-    // Impede duplicidade de documento em cliente ativo
+    // Busca por telefone contendo apenas dígitos encontra o cliente
+    const searchPhone = await customerRepo.listCustomers({
+      query: "31998887766",
+    });
+    expect(searchPhone.items.length).toBeGreaterThanOrEqual(1);
+    expect(
+      searchPhone.items.some((c) => c.name === "João Pedro Vasconcelos"),
+    ).toBe(true);
+
+    // Busca por nome do contato encontra o cliente
+    const searchContact = await customerRepo.listCustomers({
+      query: "João Pedro",
+    });
+    expect(
+      searchContact.items.some((c) => c.name === "João Pedro Vasconcelos"),
+    ).toBe(true);
+
+    // Validação de limites na consulta de busca: máx 100 caracteres e máx 8 palavras
+    await expect(
+      customerRepo.listCustomers({ query: "a".repeat(101) }),
+    ).rejects.toThrow(/O termo de busca não pode exceder 100 caracteres/i);
+
+    await expect(
+      customerRepo.listCustomers({
+        query: "um dois tres quatro cinco seis sete oito nove",
+      }),
+    ).rejects.toThrow(/O termo de busca não pode conter mais de 8 palavras/i);
+
+    // Impede duplicidade de documento em cliente ativo ou inativo
     await expect(
       customerRepo.createCustomer({
         person_type: "individual",
@@ -109,7 +137,7 @@ describe("CustomerRepository (CRUD, Busca, Paginação por Cursor e RBAC)", () =
           },
         ],
       }),
-    ).rejects.toThrow(/Já existe um cliente ativo/i);
+    ).rejects.toThrow(/Já existe um cliente cadastrado com este documento/i);
 
     // Atualiza e consulta por ID
     const updated = await customerRepo.updateCustomer(created.customer.id, {

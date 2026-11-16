@@ -1524,6 +1524,20 @@ impl CoreServices {
             CustomerCursor::decode(cursor)?;
         }
 
+        if let Some(ref q) = filter.query {
+            let trimmed = q.trim();
+            if trimmed.chars().count() > 100 {
+                return Err(CoreError::Validation(
+                    "O termo de busca não pode exceder 100 caracteres.".to_string(),
+                ));
+            }
+            if trimmed.split_whitespace().count() > 8 {
+                return Err(CoreError::Validation(
+                    "O termo de busca não pode conter mais de 8 palavras.".to_string(),
+                ));
+            }
+        }
+
         let sanitized_filter = CustomerFilter {
             query: filter.query.clone(),
             person_type: filter.person_type,

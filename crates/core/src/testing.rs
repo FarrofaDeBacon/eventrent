@@ -798,6 +798,72 @@ pub async fn contract_customer_crud_and_lgpd_audit(
     assert_eq!(list_cnpj.items.len(), 1);
     assert_eq!(list_cnpj.items[0].id, created_pj.customer.id);
 
+    // 5.3 Busca por telefone contendo apenas dígitos encontra o cliente
+    let list_phone = services
+        .list_customers(
+            session,
+            &CustomerFilter {
+                query: Some("11998877665".to_string()),
+                person_type: None,
+                cursor: None,
+                limit: Some(10),
+            },
+        )
+        .await
+        .expect("Busca por telefone apenas dígitos");
+    assert_eq!(list_phone.items.len(), 3);
+    assert!(list_phone
+        .items
+        .iter()
+        .any(|c| c.id == created_pf.customer.id));
+
+    // 5.4 Busca por nome do contato encontra o cliente
+    let list_contact = services
+        .list_customers(
+            session,
+            &CustomerFilter {
+                query: Some("Diretoria Financeira".to_string()),
+                person_type: None,
+                cursor: None,
+                limit: Some(10),
+            },
+        )
+        .await
+        .expect("Busca por nome de contato");
+    assert_eq!(list_contact.items.len(), 1);
+    assert_eq!(list_contact.items[0].id, created_pj.customer.id);
+
+    // 5.5 Validação de limites na consulta de busca: máx 100 caracteres e máx 8 palavras
+    let query_too_long = services
+        .list_customers(
+            session,
+            &CustomerFilter {
+                query: Some("a".repeat(101)),
+                person_type: None,
+                cursor: None,
+                limit: None,
+            },
+        )
+        .await;
+    assert!(
+        matches!(query_too_long, Err(CoreError::Validation(msg)) if msg.contains("100 caracteres"))
+    );
+
+    let query_too_many_words = services
+        .list_customers(
+            session,
+            &CustomerFilter {
+                query: Some("um dois tres quatro cinco seis sete oito nove".to_string()),
+                person_type: None,
+                cursor: None,
+                limit: None,
+            },
+        )
+        .await;
+    assert!(
+        matches!(query_too_many_words, Err(CoreError::Validation(msg)) if msg.contains("8 palavras"))
+    );
+
     // 5.3 Cursor inválido ou adulterado deve retornar erro de validação limpo
     let bad_cursor_res = services
         .list_customers(

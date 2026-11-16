@@ -255,7 +255,12 @@ function buildSearchText(
     ? formatDocument(cleanDoc, input.person_type)
     : "";
   const contactTerms = input.contacts
-    .flatMap((c) => [c.name, c.email ?? "", c.phone ?? ""])
+    .flatMap((c) => [
+      c.name,
+      c.email ?? "",
+      c.phone ?? "",
+      c.phone ? c.phone.replace(/\D/g, "") : "",
+    ])
     .filter(Boolean);
   return [
     normalizeForSearch(input.name),
@@ -346,6 +351,16 @@ export class MockCustomerRepository implements CustomerRepository {
       PERMISSIONS.CUSTOMER_READ,
     );
     const store = loadStore(session.tenant_id);
+
+    if (filter.query) {
+      const trimmed = filter.query.trim();
+      if (trimmed.length > 100) {
+        throw new Error("O termo de busca não pode exceder 100 caracteres.");
+      }
+      if (trimmed.split(/\s+/).filter(Boolean).length > 8) {
+        throw new Error("O termo de busca não pode conter mais de 8 palavras.");
+      }
+    }
 
     let items = store.customers
       .map((entry) => entry.customer)
@@ -438,7 +453,7 @@ export class MockCustomerRepository implements CustomerRepository {
       );
       if (duplicate) {
         throw new Error(
-          "Já existe um cliente ativo cadastrado com este documento.",
+          "Já existe um cliente cadastrado com este documento (ativo ou inativo).",
         );
       }
     }
@@ -546,7 +561,7 @@ export class MockCustomerRepository implements CustomerRepository {
       );
       if (duplicate) {
         throw new Error(
-          "Já existe outro cliente ativo cadastrado com este documento.",
+          "Já existe um cliente cadastrado com este documento (ativo ou inativo).",
         );
       }
     }
