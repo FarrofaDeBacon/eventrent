@@ -83,7 +83,8 @@ test.describe("E2E — Módulo de Clientes (Fase 1B.2)", () => {
     await page.locator("#contact-email-0").fill("fernanda@megaaudio.com.br");
     await page.locator("#contact-phone-0").fill("11988887777");
 
-    // Preenche Endereço #1
+    // Preenche Endereço #1 (endereço é opcional, aciona botão para adicionar)
+    await page.getByTestId("add-address-btn").click();
     await page.locator("#address-label-0").fill("Galpão Principal");
     await page.locator("#address-cep-0").fill("04538132");
     await page.locator("#address-street-0").fill("Av. Brigadeiro Faria Lima");
