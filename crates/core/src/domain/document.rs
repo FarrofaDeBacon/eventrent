@@ -389,6 +389,26 @@ pub fn mask_phone_for_audit(phone: &str) -> String {
     }
 }
 
+/// Mascara nome de pessoa física para conformidade com a LGPD em logs e trilhas de auditoria (ex.: `J*** S***`).
+pub fn mask_individual_name_for_audit(name: &str) -> String {
+    let words: Vec<&str> = name.split_whitespace().collect();
+    if words.is_empty() {
+        return "***".to_string();
+    }
+    words
+        .into_iter()
+        .map(|w| {
+            let mut chars = w.chars();
+            if let Some(first) = chars.next() {
+                format!("{first}***")
+            } else {
+                "***".to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Utilitários de geração para suítes de teste automatizadas.
 #[cfg(any(test, feature = "test-utils"))]
 pub mod testing_utils {

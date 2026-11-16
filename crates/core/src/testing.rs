@@ -861,6 +861,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
                 is_primary: a.is_primary,
             })
             .collect(),
+        expected_updated_at: created_pf.customer.updated_at.clone(),
     };
 
     let updated = services
@@ -868,6 +869,44 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         .await
         .expect("Falha ao atualizar cliente");
     assert_eq!(updated.customer.name, "Carlos Eduardo da Silva Atualizado");
+
+    // Tentativa de atualização concorrente com expected_updated_at defasado deve falhar
+    let stale_concurrent_update = services
+        .update_customer(
+            session,
+            &created_pf.customer.id,
+            &UpdateCustomerInput {
+                person_type: PersonType::Individual,
+                name: "Tentativa Concorrente Bloqueada".to_string(),
+                trade_name: None,
+                document_type: DocumentType::Cpf,
+                document_number: Some("52998224725".to_string()),
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                contacts: vec![CreateContactInput {
+                    id: Some(original_contact_id.clone()),
+                    name: "Carlos".to_string(),
+                    email: Some("carlos@ex.com".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+                expected_updated_at: created_pf.customer.updated_at.clone(),
+            },
+        )
+        .await;
+
+    match stale_concurrent_update {
+        Err(CoreError::Conflict(msg)) => {
+            assert!(
+                msg.contains("O cadastro foi alterado por outra pessoa"),
+                "Mensagem de conflito inesperada: {msg}"
+            );
+        }
+        other => panic!("Esperado CoreError::Conflict por concorrência, obtido: {other:?}"),
+    }
     assert!(
         updated
             .contacts
@@ -1441,6 +1480,314 @@ mod unit_tests {
         );
         assert!(
             validate_customer_common_fields("OK", None, None, None, Some(&"M".repeat(31))).is_err()
+        );
+    }
+
+    #[test]
+    fn test_store_bundle_new_requires_tx_manager() {
+        use crate::error::CoreError;
+        use crate::store::{
+            AuditStore, BrandingStore, CustomerStore, RoleStore, StoreBundle, TenantStore,
+            UserStore,
+        };
+        use std::sync::Arc;
+
+        struct DummyStore;
+        #[async_trait::async_trait]
+        impl TenantStore for DummyStore {
+            async fn find_by_id(
+                &self,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::Tenant>> {
+                unreachable!()
+            }
+            async fn find_by_slug(
+                &self,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::Tenant>> {
+                unreachable!()
+            }
+            async fn create(
+                &self,
+                _: &crate::domain::Tenant,
+            ) -> crate::error::Result<crate::domain::Tenant> {
+                unreachable!()
+            }
+            async fn update_name(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<crate::domain::Tenant> {
+                unreachable!()
+            }
+        }
+        #[async_trait::async_trait]
+        impl BrandingStore for DummyStore {
+            async fn get_by_tenant_id(
+                &self,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::TenantBranding>> {
+                unreachable!()
+            }
+            async fn save(
+                &self,
+                _: &str,
+                _: &crate::domain::UpdateBrandingInput,
+            ) -> crate::error::Result<crate::domain::TenantBranding> {
+                unreachable!()
+            }
+        }
+        #[async_trait::async_trait]
+        impl RoleStore for DummyStore {
+            async fn list_by_tenant(
+                &self,
+                _: &str,
+            ) -> crate::error::Result<Vec<crate::domain::RoleWithPermissions>> {
+                unreachable!()
+            }
+            async fn find_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::RoleWithPermissions>> {
+                unreachable!()
+            }
+            async fn find_by_slug(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::RoleWithPermissions>> {
+                unreachable!()
+            }
+            async fn create(
+                &self,
+                _: &crate::domain::Role,
+                _: &[String],
+            ) -> crate::error::Result<crate::domain::RoleWithPermissions> {
+                unreachable!()
+            }
+            async fn set_permissions(
+                &self,
+                _: &str,
+                _: &str,
+                _: &[String],
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+        }
+        #[async_trait::async_trait]
+        impl UserStore for DummyStore {
+            async fn count_active_by_role_slug(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<i64> {
+                unreachable!()
+            }
+            async fn count_by_tenant(&self, _: &str) -> crate::error::Result<i64> {
+                unreachable!()
+            }
+            async fn create(
+                &self,
+                _: &crate::domain::UserRecord,
+            ) -> crate::error::Result<crate::domain::UserWithRole> {
+                unreachable!()
+            }
+            async fn find_by_email(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::UserRecord>> {
+                unreachable!()
+            }
+            async fn find_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::UserRecord>> {
+                unreachable!()
+            }
+            async fn find_with_role(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::UserWithRole>> {
+                unreachable!()
+            }
+            async fn list_by_tenant(
+                &self,
+                _: &str,
+            ) -> crate::error::Result<Vec<crate::domain::UserWithRole>> {
+                unreachable!()
+            }
+            async fn update(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<crate::domain::UserWithRole> {
+                unreachable!()
+            }
+            async fn set_active(
+                &self,
+                _: &str,
+                _: &str,
+                _: bool,
+                _: &str,
+            ) -> crate::error::Result<crate::domain::UserWithRole> {
+                unreachable!()
+            }
+            async fn update_password(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn record_login_success(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn increment_login_failure(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<i32> {
+                unreachable!()
+            }
+            async fn set_login_lockout(
+                &self,
+                _: &str,
+                _: &str,
+                _: Option<&str>,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn increment_recovery_failure(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<i32> {
+                unreachable!()
+            }
+            async fn set_recovery_lockout(
+                &self,
+                _: &str,
+                _: &str,
+                _: Option<&str>,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update_password_and_recovery_key(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+        }
+        #[async_trait::async_trait]
+        impl AuditStore for DummyStore {
+            async fn append(&self, _: &crate::domain::AuditLogEntry) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn list_by_tenant(
+                &self,
+                _: &str,
+                _: usize,
+            ) -> crate::error::Result<Vec<crate::domain::AuditLogEntry>> {
+                unreachable!()
+            }
+        }
+        #[async_trait::async_trait]
+        impl CustomerStore for DummyStore {
+            async fn find_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::CustomerWithDetails>> {
+                unreachable!()
+            }
+            async fn find_by_document(
+                &self,
+                _: &str,
+                _: crate::domain::DocumentType,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::Customer>> {
+                unreachable!()
+            }
+            async fn list(
+                &self,
+                _: &str,
+                _: &crate::domain::CustomerFilter,
+            ) -> crate::error::Result<crate::domain::CustomerPage> {
+                unreachable!()
+            }
+            async fn create(
+                &self,
+                _: &crate::domain::Customer,
+                _: &[crate::domain::CustomerContact],
+                _: &[crate::domain::CustomerAddress],
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update(
+                &self,
+                _: &crate::domain::Customer,
+                _: &[crate::domain::CustomerContact],
+                _: &[crate::domain::CustomerAddress],
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn set_active(
+                &self,
+                _: &str,
+                _: &str,
+                _: bool,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn soft_delete(&self, _: &str, _: &str, _: &str) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn count_active(&self, _: &str) -> crate::error::Result<u64> {
+                unreachable!()
+            }
+        }
+
+        let dummy = Arc::new(DummyStore);
+        let res = StoreBundle::new(
+            dummy.clone(),
+            dummy.clone(),
+            dummy.clone(),
+            dummy.clone(),
+            dummy.clone(),
+            dummy.clone(),
+            None,
+        );
+
+        assert!(
+            matches!(res, Err(CoreError::Configuration(_))),
+            "StoreBundle::new sem tx_manager deve retornar CoreError::Configuration"
         );
     }
 

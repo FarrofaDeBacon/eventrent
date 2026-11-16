@@ -324,14 +324,17 @@ function validateInput(input: CreateCustomerInput): {
       throw new Error(`Nome do contato #${i + 1} é obrigatório.`);
     }
   }
-  if (input.addresses.length === 0) {
-    throw new Error("Cliente deve possuir pelo menos um endereço cadastrado.");
-  }
   if (input.contacts.filter((c) => c.is_primary).length > 1) {
     throw new Error("Apenas um contato pode ser marcado como principal.");
   }
   if (input.addresses.filter((a) => a.is_primary).length > 1) {
     throw new Error("Apenas um endereço pode ser marcado como principal.");
+  }
+  if (
+    input.addresses.length > 0 &&
+    !input.addresses.some((a) => a.is_primary)
+  ) {
+    input.addresses[0].is_primary = true;
   }
 
   return { docType, cleanDoc };
@@ -521,6 +524,15 @@ export class MockCustomerRepository implements CustomerRepository {
     );
     if (idx === -1) {
       throw new Error("Cliente não encontrado.");
+    }
+
+    if (
+      input.expected_updated_at &&
+      store.customers[idx].customer.updated_at !== input.expected_updated_at
+    ) {
+      throw new Error(
+        "O cadastro foi alterado por outra pessoa. Recarregue e tente novamente.",
+      );
     }
 
     if (cleanDoc) {

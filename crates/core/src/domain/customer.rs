@@ -162,6 +162,7 @@ pub struct UpdateCustomerInput {
     pub contacts: Vec<CreateContactInput>,
     #[serde(default)]
     pub addresses: Vec<CreateAddressInput>,
+    pub expected_updated_at: String,
 }
 
 #[derive(Clone, Serialize, Deserialize, Default, PartialEq, Eq)]

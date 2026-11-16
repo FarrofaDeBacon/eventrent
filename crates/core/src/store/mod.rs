@@ -173,6 +173,33 @@ pub struct StoreBundle {
     pub tx_manager: Option<Arc<dyn TransactionManager>>,
 }
 
+impl StoreBundle {
+    pub fn new(
+        tenants: Arc<dyn TenantStore>,
+        branding: Arc<dyn BrandingStore>,
+        roles: Arc<dyn RoleStore>,
+        users: Arc<dyn UserStore>,
+        audit: Arc<dyn AuditStore>,
+        customers: Arc<dyn CustomerStore>,
+        tx_manager: Option<Arc<dyn TransactionManager>>,
+    ) -> Result<Self> {
+        let Some(tx) = tx_manager else {
+            return Err(CoreError::Configuration(
+                "TransactionManager (tx_manager) é obrigatório no StoreBundle para garantir atomicidade transacional.".to_string(),
+            ));
+        };
+        Ok(Self {
+            tenants,
+            branding,
+            roles,
+            users,
+            audit,
+            customers,
+            tx_manager: Some(tx),
+        })
+    }
+}
+
 #[async_trait]
 pub trait TransactionManager: Send + Sync {
     async fn begin_transaction(&self) -> Result<Box<dyn TxStoreBundle>>;

@@ -25,7 +25,7 @@ export interface AppStatus {
   default_tenant_id: string;
   has_owner: boolean;
   session: SessionInfo | null;
-  branding: TenantBranding | null;
+  branding: PublicBranding | null;
 }
 
 export interface InitialSetupInput {
@@ -285,7 +285,9 @@ export interface CreateCustomerInput {
   addresses: CreateAddressInput[];
 }
 
-export type UpdateCustomerInput = CreateCustomerInput;
+export interface UpdateCustomerInput extends CreateCustomerInput {
+  expected_updated_at: string;
+}
 
 export interface CustomerFilter {
   query?: string;

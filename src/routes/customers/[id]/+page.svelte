@@ -94,7 +94,10 @@
     try {
       const updated = await getCustomerRepository().updateCustomer(
         details.customer.id,
-        input,
+        {
+          ...input,
+          expected_updated_at: details.customer.updated_at,
+        },
       );
       details = updated;
       isEditing = false;

@@ -116,7 +116,14 @@ describe("CustomerRepository (CRUD, Busca, Paginação por Cursor e RBAC)", () =
       person_type: "individual",
       name: "João Pedro Vasconcelos Atualizado",
       document_number: created.customer.document_number,
-      contacts: [{ name: "João Pedro", is_primary: true }],
+      expected_updated_at: created.customer.updated_at,
+      contacts: [
+        {
+          name: "João Pedro",
+          email: "jp@email.com",
+          is_primary: true,
+        },
+      ],
       addresses: [
         {
           label: "Principal",
@@ -131,6 +138,23 @@ describe("CustomerRepository (CRUD, Busca, Paginação por Cursor e RBAC)", () =
       ],
     });
     expect(updated.customer.name).toBe("João Pedro Vasconcelos Atualizado");
+
+    // Concorrência: update com expected_updated_at desatualizado deve falhar com conflito
+    await expect(
+      customerRepo.updateCustomer(created.customer.id, {
+        person_type: "individual",
+        name: "Tentativa Concorrente",
+        expected_updated_at: "2020-01-01T00:00:00Z",
+        contacts: [
+          {
+            name: "João",
+            email: "j@ex.com",
+            is_primary: true,
+          },
+        ],
+        addresses: [],
+      }),
+    ).rejects.toThrow(/O cadastro foi alterado por outra pessoa/i);
 
     const loaded = await customerRepo.getCustomer(created.customer.id);
     expect(loaded.addresses[0].number).toBe("501");
