@@ -1,9 +1,9 @@
-# Relatório de Execução — Fase 1B.2 e Revisão 1B.2-rev
+# Relatório de Execução — Fase 1B.2, Revisão 1B.2-rev e Revisão 1B.2-rev2
 
 **Branch**: `fase-1b2-rev`  
 **Base**: `main` (após PR #6 `e64237f`)  
-**Data**: 12/11/2026  
-**Status**: Concluída (PR #7 aberto, aguardando checks do CI para revisão do usuário sem merge automático)
+**Data**: 16/11/2026  
+**Status**: Concluída (PR #7 aberto, aguardando checks do CI para revisão final do usuário sem merge automático)
 
 ---
 
@@ -136,9 +136,26 @@ Implementados em `test_branding_validator_images_magic_bytes_and_formats` e subm
 
 ---
 
-## 5. Métricas de Performance, Testes e Qualidade
+## 5. Itens da Revisão Técnica Complementar (Fase 1B.2-rev2: Itens A a J)
 
-### 5.1. Benchmark SQLite 20.000 Clientes e Virtualização DOM
+| Item  | Descrição                                                                                                                                                                                 | Status    | Commit        | Arquivos Principais                                                                                                                                                                |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A** | FK composta `(tenant_id, customer_id)` nas filhas `customer_contact` e `customer_address` na migração `0005_customers_rev.sql` e atualização do ADR-0011                                  | CONCLUÍDO | `3596008`     | `crates/store-sqlite/migrations/0005_customers_rev.sql`, `docs/decisions/0011-reconstrucao-tabelas-clientes-migracao-0005.md`                                                      |
+| **B** | Validações estritas no Core: CEP (8 dígitos), UF (27 siglas válidas), telefone (10/11 dígitos numéricos), e-mail RFC 5322 e limites máximos de tamanho e quantidade de itens filhas       | CONCLUÍDO | `62bed68`     | `crates/core/src/domain/customer.rs`, `crates/core/src/domain/mod.rs`, `crates/core/src/testing.rs`                                                                                |
+| **C** | Contato obrigatório (pelo menos 1 com e-mail ou telefone) e endereço opcional ("quando existirem"), documentando que a Fase 4 vinculará o endereço do evento diretamente à locação        | CONCLUÍDO | `8b19b47`     | `crates/core/src/domain/customer.rs`, `src/lib/components/customer-form.svelte`, `docs/03-regras-negocio.md`                                                                       |
+| **D** | Concorrência otimista com `expected_updated_at`, leituras movidas para dentro da transação e restrição de fallback sem transação (`PassthroughTxStoreBundle` apenas sob testes)           | CONCLUÍDO | `7e2ea78`     | `crates/core/src/error.rs`, `crates/core/src/services/mod.rs`, `crates/core/src/store/mod.rs`, `src/lib/components/customer-form.svelte`, `src/routes/customers/[id]/+page.svelte` |
+| **E** | Alinhamento de `recover_password` com proteção anti-enumeração, timing seguro com hash Argon2 dummy e respeito estrito a `LoginPolicy`                                                    | CONCLUÍDO | `290ad72`     | `crates/core/src/services/mod.rs`, `crates/store-sqlite/src/lib.rs`, `src-tauri/src/commands/auth.rs`                                                                              |
+| **F** | Indexação de telefones limpos (só dígitos) e nomes de contatos em `search_text`, limite de busca (100 caracteres / 8 palavras) e mensagem clara de duplicidade de documento ativo/inativo | CONCLUÍDO | `3663df6`     | `crates/core/src/domain/customer.rs`, `crates/core/src/services/mod.rs`, `crates/core/src/testing.rs`, `src/lib/data/customer-repository.spec.ts`                                  |
+| **G** | Redação estrita de PII na auditoria (mascaramento de nomes de PF e e-mails de usuários/clientes) e documentação de segurança com referência ao Art. 16 da LGPD (retenção/descarte)        | CONCLUÍDO | `41befba`     | `crates/core/src/services/mod.rs`, `crates/core/src/testing.rs`, `docs/seguranca.md`                                                                                               |
+| **H** | Proteção de comandos públicos (`get_public_branding` / `AppStatus.branding` expondo apenas `PublicBranding` sem IDs internos ou dados de auditoria) comprovada por teste unitário         | CONCLUÍDO | `4a114f8`     | `src-tauri/src/guards.rs`                                                                                                                                                          |
+| **I** | Provas no SQLite: troca atômica de contato/endereço principal sem colisão de índice único, soft delete com preservação de IDs e isolamento estrito multitenant                            | CONCLUÍDO | `2c594dc`     | `crates/store-sqlite/src/lib.rs`                                                                                                                                                   |
+| **J** | Consolidação documental da revisão rev2, portões 100% aprovados, links de verificação do CI e preparação do PR #7 para entrega ao usuário sem merge automático                            | CONCLUÍDO | _Este commit_ | `docs/relatorios/fase-1b-2.md`                                                                                                                                                     |
+
+---
+
+## 6. Métricas de Performance, Testes e Qualidade
+
+### 6.1. Benchmark SQLite 20.000 Clientes e Virtualização DOM
 
 - **Benchmark SQLite (`test_benchmark_20k_customers_search_and_pagination`)**:
   - Inserção em massa de 20.000 registros: `870 ms`
@@ -148,23 +165,23 @@ Implementados em `test_branding_validator_images_magic_bytes_and_formats` e subm
 - **Virtualização DOM (`VirtualList` em `src/lib/components/virtual-list.spec.ts`)**:
   - Lista com 20.000 itens renderiza janela inferior a 40 elementos `[data-virtual-index]` ativos no DOM, com rolagem direta verificada até o item 10.000.
 
-### 5.2. Resultados Consolidados dos Portões de Verificação
+### 6.2. Resultados Consolidados dos Portões de Verificação
 
 - **`node scripts/verify.js`** (executado antes de cada commit):
   1. `svelte-check`: `0` erros e `0` avisos.
   2. Lint & Cores: `0` cores literais em `28` componentes `.svelte`, Prettier e ESLint aprovados.
-  3. Vitest (`pnpm test:unit`): `6` arquivos, `34/34` testes aprovados (`color`, `document`, `auth-and-users`, `customer-repository`, `branding-repository`, `virtual-list`).
-  4. Congelamento de migrações (`scripts/test-check-migrations.js`): `5/5` cenários de prova aprovados (`0001`, `0002` e `0003` protegidas; `0004_customers.sql` permitida).
+  3. Vitest (`pnpm test:unit`): `6` arquivos, `35/35` testes aprovados (`color`, `document`, `auth-and-users`, `customer-repository`, `branding-repository`, `virtual-list`).
+  4. Congelamento de migrações (`scripts/test-check-migrations.js`): `6/6` cenários de prova aprovados (`0001` a `0004` protegidas; versões duplicadas e retroativas bloqueadas; nova versão sequencial permitida).
   5. `cargo fmt --check`: aprovado.
-  6. `cargo clippy --all-targets -- -D warnings`: aprovado sem avisos.
-  7. `cargo test --workspace`: `43/43` testes aprovados (`8` em `eventrent_app_lib`, `14` em `eventrent_core`, `21` em `eventrent_store_sqlite`).
+  6. `cargo clippy --all-targets -- -D warnings`: aprovado sem avisos (`#![deny(clippy::unwrap_used, clippy::expect_used)]`).
+  7. `cargo test --workspace`: `51/51` testes aprovados (`9` em `eventrent_app_lib`, `17` em `eventrent_core`, `25` em `eventrent_store_sqlite`).
 - **Suíte E2E Playwright (`pnpm test:e2e`)**:
   - `3/3` fluxos aprovados em Chromium headless (`smoke.spec.ts`, `branding.spec.ts`, `customers.spec.ts`).
 
 ---
 
-## 6. Próximos Passos (Ação Exclusiva do Usuário)
+## 7. Próximos Passos (Ação Exclusiva do Usuário)
 
-1. Abrir Pull Request da branch `fase-1b2-clientes` para `main` no GitHub.
-2. Conferir os dois checks verdes do CI (`verify` Windows e Ubuntu).
-3. Após revisão e aprovação do PR, realizar o merge (`Create a merge commit`) e criar a tag de release correspondente.
+1. Revisar o Pull Request #7 da branch `fase-1b2-rev` para `main` no GitHub.
+2. Conferir os dois checks verdes do CI (`Check & Tests (ubuntu-latest)` e `Check & Tests (windows-latest)`).
+3. Após revisão e aprovação formal, o **usuário** realiza o merge na interface do GitHub e cria a tag `v0.5.0-fase1b2`.
