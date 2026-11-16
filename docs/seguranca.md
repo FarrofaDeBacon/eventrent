@@ -113,6 +113,16 @@ O tratamento de dados pessoais e fiscais de clientes (CPF, CNPJ, contatos e ende
    - Os 5 comandos de clientes (`list_customers`, `get_customer`, `create_customer`, `update_customer`, `delete_customer`) passam obrigatoriamente por `require_session(&state)` no backend Rust, validam expiração por inatividade e delegam integralmente às permissões `customer:read` / `customer:manage` em `CoreServices`, sem acesso direto das interfaces aos repositórios de banco.
 3. **Ocultação de Erros Cru de Banco (`map_sqlx_err`)**:
    - Conflitos de unicidade de documento (código SQLite `2067` / `1555`) são convertidos em mensagens de domínio amigáveis (`CoreError::Conflict`) sem vazar consultas SQL ou estrutura interna de índices ao usuário.
-4. **Pendência de Anonimização LGPD e `search_text`**:
+4. **Trilha de Auditoria Append-Only e Ausência de PII Direta**:
+   - A tabela `audit_log` é estritamente **append-only** (protegida por triggers SQLite contra `UPDATE` e `DELETE`).
+   - Por ser imutável e permanente, a trilha de auditoria **não pode conter PII direta/crua** (nomes completos de pessoas físicas, e-mails ou telefones não mascarados, números de documentos completos).
+   - Todos os eventos em `audit_log` passam por funções de mascaramento criptográfico e de privacidade no Core:
+     - Nomes de titulares pessoa física: `mask_individual_name_for_audit` (ex.: `J*** S***`);
+     - E-mails de usuários e contatos: `mask_email_for_audit` (ex.: `u***@dominio.com`);
+     - Telefones de contato: `mask_phone_for_audit` (ex.: `(21) *****-1234`);
+     - Documentos fiscais (CPF/CNPJ): `mask_document_for_audit`.
+   - Fica registrada expressamente a **pendência da Política de Retenção e Descarte de Logs (Art. 16 da LGPD)** para implementação na Fase 2.5/Fase 7, definindo prazos de expiração (ex.: 5 anos para compliance contábil/fiscal) e rotina segura de expurgo ou arquivamento frio de logs históricos.
+
+5. **Pendência de Anonimização LGPD e `search_text`**:
    - A coluna derivada `customer.search_text` armazena cópia normalizada de dados pessoais (nome, documento, e-mail e telefone) para viabilizar busca textual rápida.
    - Fica registrada como requisito obrigatório de conformidade LGPD a futura operação de **anonimização de titular** (ex.: mediante solicitação de exclusão definitiva quando houver retenção fiscal/contratual), a qual deverá ofuscar `name`, `trade_name`, `document_number`, contatos, endereços e **limpar integralmente `search_text`**, preservando apenas os vínculos financeiros/fiscais anônimos.

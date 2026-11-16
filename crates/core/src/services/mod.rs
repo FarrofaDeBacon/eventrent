@@ -621,6 +621,7 @@ impl CoreServices {
                     ))
                     .await?;
 
+                let masked_owner_email = mask_email_for_audit(&owner_email);
                 stores
                     .audit()
                     .append(&build_audit_entry(
@@ -629,7 +630,7 @@ impl CoreServices {
                         "user.owner_created",
                         "user",
                         &created_owner.id,
-                        &format!("Conta de proprietário criada para {owner_email}"),
+                        &format!("Conta de proprietário criada para {masked_owner_email}"),
                     ))
                     .await?;
 
@@ -758,6 +759,7 @@ impl CoreServices {
                                 locked_until: until.clone(),
                             })
                         } else {
+                            let masked_email = mask_email_for_audit(&email);
                             stores
                                 .audit()
                                 .append(&build_audit_entry(
@@ -766,7 +768,7 @@ impl CoreServices {
                                     "auth.login_failed",
                                     "user",
                                     &user_id,
-                                    &format!("Tentativa de login falha ({new_failures}) para {email}"),
+                                    &format!("Tentativa de login falha ({new_failures}) para {masked_email}"),
                                 ))
                                 .await?;
 
@@ -817,6 +819,7 @@ impl CoreServices {
                             CoreError::NotFound("Usuário autenticado não encontrado.".to_string())
                         })?;
 
+                    let masked_user_email = mask_email_for_audit(&user_email);
                     stores
                         .audit()
                         .append(&build_audit_entry(
@@ -825,7 +828,7 @@ impl CoreServices {
                             "auth.login_success",
                             "session",
                             &user_id,
-                            &format!("Login realizado com sucesso por {user_email}"),
+                            &format!("Login realizado com sucesso por {masked_user_email}"),
                         ))
                         .await?;
 
@@ -1020,6 +1023,7 @@ impl CoreServices {
                     )
                     .await?;
 
+                let masked_email = mask_email_for_audit(&email);
                 stores
                     .audit()
                     .append(&build_audit_entry(
@@ -1029,7 +1033,7 @@ impl CoreServices {
                         "user",
                         &user_id,
                         &format!(
-                            "Senha redefinida com sucesso via chave de recuperação para {email}"
+                            "Senha redefinida com sucesso via chave de recuperação para {masked_email}"
                         ),
                     ))
                     .await?;
@@ -1043,7 +1047,7 @@ impl CoreServices {
                         "user",
                         &user_id,
                         &format!(
-                            "Chave de recuperação rotacionada com 80 bits de entropia para {email}"
+                            "Chave de recuperação rotacionada com 80 bits de entropia para {masked_email}"
                         ),
                     ))
                     .await?;
@@ -1144,6 +1148,8 @@ impl CoreServices {
 
                 let created = stores.users().create(&record).await?;
 
+                let masked_name = mask_individual_name_for_audit(&created.name);
+                let masked_email = mask_email_for_audit(&created.email);
                 stores
                     .audit()
                     .append(&build_audit_entry(
@@ -1154,7 +1160,7 @@ impl CoreServices {
                         &created.id,
                         &format!(
                             "Usuário '{}' ({}) criado com perfil '{}'",
-                            created.name, created.email, role.name
+                            masked_name, masked_email, role.name
                         ),
                     ))
                     .await?;
@@ -1268,6 +1274,8 @@ impl CoreServices {
                     )
                     .await?;
 
+                let masked_name = mask_individual_name_for_audit(&updated.name);
+                let masked_email = mask_email_for_audit(&updated.email);
                 stores
                     .audit()
                     .append(&build_audit_entry(
@@ -1278,7 +1286,7 @@ impl CoreServices {
                         &user_id,
                         &format!(
                             "Usuário '{}' atualizado (e-mail: {}, perfil: {})",
-                            updated.name, updated.email, updated.role_name
+                            masked_name, masked_email, updated.role_name
                         ),
                     ))
                     .await?;
@@ -1350,6 +1358,8 @@ impl CoreServices {
                     ("user.deactivated", "desativado")
                 };
 
+                let masked_name = mask_individual_name_for_audit(&updated.name);
+                let masked_email = mask_email_for_audit(&updated.email);
                 stores
                     .audit()
                     .append(&build_audit_entry(
@@ -1358,7 +1368,7 @@ impl CoreServices {
                         action,
                         "user",
                         &user_id,
-                        &format!("Usuário '{}' ({}) {}", updated.name, updated.email, verb),
+                        &format!("Usuário '{}' ({}) {}", masked_name, masked_email, verb),
                     ))
                     .await?;
 
@@ -1408,6 +1418,7 @@ impl CoreServices {
                     .update_password(&session.tenant_id, &user_id, &password_hash, &now)
                     .await?;
 
+                let masked_email = mask_email_for_audit(&target.email);
                 stores
                     .audit()
                     .append(&build_audit_entry(
@@ -1416,7 +1427,7 @@ impl CoreServices {
                         "user.password_reset",
                         "user",
                         &user_id,
-                        &format!("Senha redefinida administrativamente para {}", target.email),
+                        &format!("Senha redefinida administrativamente para {masked_email}"),
                     ))
                     .await?;
 

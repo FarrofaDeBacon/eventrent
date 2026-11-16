@@ -517,6 +517,14 @@ pub async fn contract_audit_log(stores: &StoreBundle, tenant_id: &str) {
     assert!(audits
         .iter()
         .any(|a| a.action == "auth.recovery_key_rotated"));
+
+    for a in &audits {
+        assert!(
+            !a.summary.contains("ana@luzesom.com.br"),
+            "Violação LGPD: e-mail cru do usuário presente no audit_log: {}",
+            a.summary
+        );
+    }
 }
 
 /// 10. Contrato: Índices únicos parciais WHERE deleted_at IS NULL.
@@ -1033,6 +1041,10 @@ pub async fn contract_customer_crud_and_lgpd_audit(
 
     for entry in &customer_audits {
         // NUNCA deve conter o CPF completo, CNPJ completo, e-mail completo ou telefone completo
+        assert!(
+            !entry.summary.contains("Carlos Eduardo da Silva"),
+            "Violação LGPD: nome completo de PF no log de auditoria!"
+        );
         assert!(
             !entry.summary.contains("52998224725") && !entry.summary.contains("529.982.247-25"),
             "Violação LGPD: CPF cru no log de auditoria!"
