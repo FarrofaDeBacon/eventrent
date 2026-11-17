@@ -149,34 +149,37 @@ Trilha imutável de auditoria para operações sensíveis de segurança, usuári
 | `deleted_at`  | TEXT |                         | Reservado para conformidade estrutural                             |
 | `created_by`  | TEXT |                         | ID do autor do evento                                              |
 
-## 5. Tabelas do Módulo de Clientes (`0004_customers.sql` e reconstrução `0005_customers_rev.sql`)
+## 5. Tabelas do Módulo de Terceiros: Clientes e Fornecedores (`0004`, `0005` e `0006_suppliers.sql`)
 
-Adicionadas na Fase 1B.2 (`0004`) e reconstruídas em caráter de exceção única na `0005_customers_rev.sql` (ADR-0011) para incluir `tenant_id`/`created_by` em contatos e endereços, `document_type`, `document_number` opcional, `active`, `country`, unicidade de principal e remoção do índice `idx_customer_tenant_search` (não utilizado por `LIKE '%termo%'`).
+A tabela `customer` representa o **cadastro unificado de terceiros** do sistema (clientes, fornecedores ou ambos simultaneamente, diferenciados pelos papéis `is_customer` e `is_supplier` adicionados na migração `0006_suppliers.sql`). Os dados de contato (`customer_contact`), endereços (`customer_address`) e categorias de fornecimento (`customer_supplier_category`) vinculam-se ao terceiro via chave estrangeira composta `(tenant_id, customer_id)`.
 
-### 5.1. `customer`
+### 5.1. `customer` (Cadastro Unificado de Terceiros)
 
-| Coluna                   | Tipo    | Restrições                                                      | Descrição                                                                |
-| ------------------------ | ------- | --------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `id`                     | TEXT    | PRIMARY KEY                                                     | UUID v7                                                                  |
-| `tenant_id`              | TEXT    | NOT NULL, FK(tenant.id)                                         | Tenant proprietário                                                      |
-| `person_type`            | TEXT    | NOT NULL, CHECK(`individual`/`legal`)                           | `individual` (PF) ou `legal` (PJ)                                        |
-| `name`                   | TEXT    | NOT NULL                                                        | Nome completo (PF) ou Razão Social (PJ)                                  |
-| `trade_name`             | TEXT    |                                                                 | Nome Fantasia (opcional)                                                 |
-| `document_type`          | TEXT    | NOT NULL DEFAULT `'none'`, CHECK(`cpf`/`cnpj`/`foreign`/`none`) | Tipo de documento fiscal ou identificação                                |
-| `document_number`        | TEXT    |                                                                 | CPF (11), CNPJ (14), documento estrangeiro (5–30) ou `NULL` (`none`)     |
-| `state_registration`     | TEXT    |                                                                 | Inscrição Estadual (IE)                                                  |
-| `municipal_registration` | TEXT    |                                                                 | Inscrição Municipal (IM)                                                 |
-| `notes`                  | TEXT    |                                                                 | Observações operacionais ou comerciais                                   |
-| `active`                 | INTEGER | NOT NULL DEFAULT 1                                              | `1` ativo, `0` desativado (`set_active`)                                 |
-| `search_text`            | TEXT    | NOT NULL                                                        | Índice textual normalizado em minúsculas sem acentos                     |
-| `name_sort`              | TEXT    | NOT NULL                                                        | Chave de ordenação normalizada sem diacríticos para paginação por cursor |
-| `created_at`             | TEXT    | NOT NULL                                                        | Data de criação UTC                                                      |
-| `updated_at`             | TEXT    | NOT NULL                                                        | Data de atualização UTC                                                  |
-| `deleted_at`             | TEXT    |                                                                 | Soft delete                                                              |
-| `created_by`             | TEXT    | FK(app_user.id)                                                 | Usuário criador                                                          |
+| Coluna                   | Tipo    | Restrições                                                      | Descrição                                                                     |
+| ------------------------ | ------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `id`                     | TEXT    | PRIMARY KEY                                                     | UUID v7                                                                       |
+| `tenant_id`              | TEXT    | NOT NULL, FK(tenant.id)                                         | Tenant proprietário                                                           |
+| `person_type`            | TEXT    | NOT NULL, CHECK(`individual`/`legal`)                           | `individual` (PF) ou `legal` (PJ)                                             |
+| `name`                   | TEXT    | NOT NULL                                                        | Nome completo (PF) ou Razão Social (PJ)                                       |
+| `trade_name`             | TEXT    |                                                                 | Nome Fantasia (opcional)                                                      |
+| `document_type`          | TEXT    | NOT NULL DEFAULT `'none'`, CHECK(`cpf`/`cnpj`/`foreign`/`none`) | Tipo de documento fiscal ou identificação                                     |
+| `document_number`        | TEXT    |                                                                 | CPF (11), CNPJ (14), documento estrangeiro (5–30) ou `NULL` (`none`)          |
+| `state_registration`     | TEXT    |                                                                 | Inscrição Estadual (IE)                                                       |
+| `municipal_registration` | TEXT    |                                                                 | Inscrição Municipal (IM)                                                      |
+| `notes`                  | TEXT    |                                                                 | Observações operacionais ou comerciais                                        |
+| `active`                 | INTEGER | NOT NULL DEFAULT 1                                              | `1` ativo, `0` desativado (`set_active`)                                      |
+| `is_customer`            | INTEGER | NOT NULL DEFAULT 1                                              | `1` atua como cliente, `0` não (`CHECK (is_customer = 1 OR is_supplier = 1)`) |
+| `is_supplier`            | INTEGER | NOT NULL DEFAULT 0                                              | `1` atua como fornecedor, `0` não                                             |
+| `search_text`            | TEXT    | NOT NULL                                                        | Índice textual normalizado em minúsculas sem acentos                          |
+| `name_sort`              | TEXT    | NOT NULL                                                        | Chave de ordenação normalizada sem diacríticos para paginação por cursor      |
+| `created_at`             | TEXT    | NOT NULL                                                        | Data de criação UTC                                                           |
+| `updated_at`             | TEXT    | NOT NULL                                                        | Data de atualização UTC                                                       |
+| `deleted_at`             | TEXT    |                                                                 | Soft delete                                                                   |
+| `created_by`             | TEXT    | FK(app_user.id)                                                 | Usuário criador                                                               |
 
 - **Índice único parcial**: `idx_customer_tenant_doc_active ON customer (tenant_id, document_type, document_number) WHERE document_number IS NOT NULL AND deleted_at IS NULL`
 - **Índice de paginação por cursor**: `idx_customer_tenant_sort ON customer (tenant_id, name_sort, id) WHERE deleted_at IS NULL`
+- **Índice de filtro por papel**: `idx_customer_tenant_roles ON customer (tenant_id, is_customer, is_supplier) WHERE deleted_at IS NULL`
 
 ### 5.2. `customer_contact`
 
@@ -222,6 +225,21 @@ Adicionadas na Fase 1B.2 (`0004`) e reconstruídas em caráter de exceção úni
 
 - **Índice**: `idx_customer_address_tenant_customer ON customer_address (tenant_id, customer_id) WHERE deleted_at IS NULL`
 - **Índice único parcial de principal**: `idx_customer_address_primary_active ON customer_address (tenant_id, customer_id) WHERE is_primary = 1 AND deleted_at IS NULL`
+
+### 5.4. `customer_supplier_category`
+
+| Coluna        | Tipo | Restrições                                                                            | Descrição                              |
+| ------------- | ---- | ------------------------------------------------------------------------------------- | -------------------------------------- |
+| `id`          | TEXT | PRIMARY KEY                                                                           | UUID v7                                |
+| `tenant_id`   | TEXT | NOT NULL, FK(tenant.id)                                                               | Tenant proprietário                    |
+| `customer_id` | TEXT | NOT NULL, FK(tenant_id, customer_id)                                                  | Terceiro associado (`is_supplier = 1`) |
+| `category`    | TEXT | NOT NULL, CHECK(`sublocacao`/`manutencao`/`transporte`/`compras`/`servicos`/`outros`) | Categoria de fornecimento              |
+| `created_at`  | TEXT | NOT NULL                                                                              | Data de criação UTC                    |
+| `updated_at`  | TEXT | NOT NULL                                                                              | Data de atualização UTC                |
+| `deleted_at`  | TEXT |                                                                                       | Soft delete                            |
+| `created_by`  | TEXT | FK(app_user.id)                                                                       | Usuário criador                        |
+
+- **Índice único parcial**: `idx_customer_supplier_category_active ON customer_supplier_category (tenant_id, customer_id, category) WHERE deleted_at IS NULL`
 
 ## 6. Diretrizes de Tipos de Dados
 
