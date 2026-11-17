@@ -245,10 +245,11 @@ describe("CustomerRepository (CRUD, Busca, Paginação por Cursor e RBAC)", () =
     }
   });
 
-  it("deve aplicar RBAC para leitura (Financeiro) e bloqueio completo (Estoque)", async () => {
+  it("deve aplicar RBAC para leitura (Financeiro), fornecedores (Estoque) e bloqueio completo (Técnico)", async () => {
     const roles = await userRepo.listRoles();
     const financeRole = roles.find((r) => r.slug === ROLE_SLUGS.FINANCE)!;
     const warehouseRole = roles.find((r) => r.slug === ROLE_SLUGS.WAREHOUSE)!;
+    const techRole = roles.find((r) => r.slug === ROLE_SLUGS.TECHNICIAN)!;
 
     await userRepo.createUser({
       name: "Maria Financeiro",
@@ -261,6 +262,12 @@ describe("CustomerRepository (CRUD, Busca, Paginação por Cursor e RBAC)", () =
       email: "pedro@palco.com.br",
       password: "PedroPassword#2026",
       role_id: warehouseRole.id,
+    });
+    await userRepo.createUser({
+      name: "Lucas Técnico",
+      email: "lucas@palco.com.br",
+      password: "LucasPassword#2026",
+      role_id: techRole.id,
     });
 
     // Financeiro pode ler clientes e gerenciar fornecedores, mas não criar cliente
@@ -312,17 +319,6 @@ describe("CustomerRepository (CRUD, Busca, Paginação por Cursor e RBAC)", () =
     expect(supplierListAsWarehouse.items).toEqual([]);
 
     // Técnico não possui customer:read nem supplier:read
-    await authRepo.logout();
-    await authRepo.login({
-      email: "dono@palco.com.br",
-      password: "OwnerPassword#2026",
-    });
-    await userRepo.createUser({
-      name: "Lucas Técnico",
-      email: "lucas@palco.com.br",
-      password: "LucasPassword#2026",
-      role_id: "role-technician",
-    });
     await authRepo.logout();
     const techSession = await authRepo.login({
       email: "lucas@palco.com.br",
