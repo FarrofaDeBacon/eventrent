@@ -183,7 +183,35 @@ pub fn normalize_and_validate_phone(phone: &str, country: Option<&str>) -> CoreR
         ));
     }
 
+    // '+' só é permitido como primeiro caractere
+    if trimmed.chars().skip(1).any(|c| c == '+') {
+        return Err(CoreError::Validation(
+            "Telefone inválido: o símbolo '+' só pode aparecer no início do número.".to_string(),
+        ));
+    }
+
+    let starts_with_plus = trimmed.starts_with('+');
     let mut digits: String = trimmed.chars().filter(|c| c.is_ascii_digit()).collect();
+
+    if starts_with_plus {
+        if digits.starts_with("55") {
+            digits = digits[2..].to_string();
+            if digits.len() == 10 || digits.len() == 11 {
+                return Ok(digits);
+            }
+            return Err(CoreError::Validation(
+                "Telefone inválido: para o Brasil (+55) deve conter 10 ou 11 dígitos com DDD (ex: 11987654321).".to_string(),
+            ));
+        }
+
+        if (8..=15).contains(&digits.len()) {
+            return Ok(digits);
+        }
+        return Err(CoreError::Validation(
+            "Telefone internacional inválido: deve conter entre 8 e 15 dígitos.".to_string(),
+        ));
+    }
+
     let is_br = country
         .map(|c| c.eq_ignore_ascii_case("BR"))
         .unwrap_or(true);
@@ -199,7 +227,7 @@ pub fn normalize_and_validate_phone(phone: &str, country: Option<&str>) -> CoreR
                 "Telefone inválido: para o Brasil deve conter 10 ou 11 dígitos com DDD (ex: 11987654321).".to_string(),
             ))
         }
-    } else if digits.len() >= 8 && digits.len() <= 15 {
+    } else if (8..=15).contains(&digits.len()) {
         Ok(digits)
     } else {
         Err(CoreError::Validation(

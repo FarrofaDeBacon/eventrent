@@ -28,10 +28,24 @@ export const contactSchema = z
       .refine(
         (val) => {
           if (!val) return true;
-          const d = digitsOnly(val);
+          const trimmed = val.trim();
+          let d = digitsOnly(trimmed);
+          if (trimmed.startsWith("+")) {
+            if (d.startsWith("55")) {
+              d = d.slice(2);
+              return d.length >= 10 && d.length <= 11;
+            }
+            return d.length >= 8 && d.length <= 15;
+          }
+          if (d.startsWith("55") && (d.length === 12 || d.length === 13)) {
+            d = d.slice(2);
+          }
           return d.length >= 10 && d.length <= 11;
         },
-        { message: "Telefone deve ter DDD + 8 ou 9 dígitos." },
+        {
+          message:
+            "Telefone deve ter DDD + 8 ou 9 dígitos (ou formato internacional +DDI com 8 a 15 dígitos).",
+        },
       )
       .optional()
       .nullable(),

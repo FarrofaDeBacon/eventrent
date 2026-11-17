@@ -1429,14 +1429,18 @@ mod unit_tests {
         assert!(validate_country_code("BRA").is_err());
         assert!(validate_country_code("B1").is_err());
 
-        // 4. Telefone: BR 10 ou 11 dígitos, remove +55 ou 55; Outros 8-15
+        // 4. Telefone: '+' internacional (8-15 dígitos), +55 vira nacional, sem '+' segue regra do Brasil
         assert_eq!(
             normalize_and_validate_phone("(11) 98765-4321", Some("BR")).unwrap(),
             "11987654321"
         );
         assert_eq!(
-            normalize_and_validate_phone("+55 11 98765-4321", Some("BR")).unwrap(),
-            "11987654321"
+            normalize_and_validate_phone("+55 21 99999-1234", None).unwrap(),
+            "21999991234"
+        );
+        assert_eq!(
+            normalize_and_validate_phone("+351 912 345 678", None).unwrap(),
+            "351912345678"
         );
         assert_eq!(
             normalize_and_validate_phone("5511987654321", Some("BR")).unwrap(),
@@ -1446,6 +1450,7 @@ mod unit_tests {
             normalize_and_validate_phone("(11) 2345-6789", Some("BR")).unwrap(),
             "1123456789"
         );
+        assert!(normalize_and_validate_phone("12345", None).is_err());
         assert!(normalize_and_validate_phone("119876", Some("BR")).is_err());
         assert!(normalize_and_validate_phone("1198765432100", Some("BR")).is_err());
         assert!(normalize_and_validate_phone("1198765abc", Some("BR")).is_err());
@@ -1455,6 +1460,7 @@ mod unit_tests {
             "12025550123"
         );
         assert!(normalize_and_validate_phone("12345", Some("US")).is_err());
+        assert!(normalize_and_validate_phone("+351 123", None).is_err());
 
         // 5. Contatos: telefone OU e-mail, exatamente 1 principal, IDs repetidos
         let mut contacts = vec![
