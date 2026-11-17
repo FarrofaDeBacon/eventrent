@@ -117,7 +117,19 @@ export function canAccessRoute(
   if (!session) return false;
 
   if (pathname.startsWith("/customers/new")) {
-    return hasPermission(session, PERMISSIONS.CUSTOMER_MANAGE);
+    return (
+      hasPermission(session, PERMISSIONS.CUSTOMER_MANAGE) ||
+      hasPermission(session, PERMISSIONS.SUPPLIER_MANAGE)
+    );
+  }
+  if (pathname.startsWith("/suppliers")) {
+    return hasPermission(session, PERMISSIONS.SUPPLIER_READ);
+  }
+  if (pathname.startsWith("/customers/")) {
+    return (
+      hasPermission(session, PERMISSIONS.CUSTOMER_READ) ||
+      hasPermission(session, PERMISSIONS.SUPPLIER_READ)
+    );
   }
   if (pathname.startsWith("/customers")) {
     return hasPermission(session, PERMISSIONS.CUSTOMER_READ);

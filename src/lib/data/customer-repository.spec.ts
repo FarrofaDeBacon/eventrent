@@ -294,13 +294,41 @@ describe("CustomerRepository (CRUD, Busca, Paginação por Cursor e RBAC)", () =
       }),
     ).rejects.toThrow(/Permissão insuficiente/i);
 
-    // Estoque não tem customer:read nem acesso à rota /customers
+    // Estoque não tem customer:read nem acesso à rota /customers, mas tem supplier:read e supplier:manage (/suppliers)
     await authRepo.logout();
     const warehouseSession = await authRepo.login({
       email: "pedro@palco.com.br",
       password: "PedroPassword#2026",
     });
     expect(canAccessRoute(warehouseSession, "/customers")).toBe(false);
+    expect(canAccessRoute(warehouseSession, "/suppliers")).toBe(true);
+    await expect(
+      customerRepo.listCustomers({ role_filter: "customer" }),
+    ).rejects.toThrow(/Permissão insuficiente/i);
+    const supplierListAsWarehouse = await customerRepo.listCustomers({
+      role_filter: "supplier",
+    });
+    expect(supplierListAsWarehouse.items).toEqual([]);
+
+    // Técnico não possui customer:read nem supplier:read
+    await authRepo.logout();
+    await authRepo.login({
+      email: "dono@palco.com.br",
+      password: "OwnerPassword#2026",
+    });
+    await userRepo.createUser({
+      name: "Lucas Técnico",
+      email: "lucas@palco.com.br",
+      password: "LucasPassword#2026",
+      role_id: "role-technician",
+    });
+    await authRepo.logout();
+    const techSession = await authRepo.login({
+      email: "lucas@palco.com.br",
+      password: "LucasPassword#2026",
+    });
+    expect(canAccessRoute(techSession, "/customers")).toBe(false);
+    expect(canAccessRoute(techSession, "/suppliers")).toBe(false);
     await expect(customerRepo.listCustomers({})).rejects.toThrow(
       /Permissão insuficiente/i,
     );
