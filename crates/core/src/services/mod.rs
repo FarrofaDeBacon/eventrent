@@ -1,15 +1,16 @@
 use crate::domain::{
     build_customer_search_text, build_name_sort, mask_email_for_audit,
     mask_individual_name_for_audit, parse_document_with_type, validate_addresses,
-    validate_contacts, validate_customer_common_fields, validate_email, AuditLogEntry,
-    BrandingValidator, CreateCustomerInput, CreateUserInput, Customer, CustomerAddress,
-    CustomerContact, CustomerCursor, CustomerFilter, CustomerPage, CustomerWithDetails,
-    DocumentType, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
-    PersonType, PublicBranding, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput,
-    Role, RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput,
-    UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole, PERM_BRANDING_MANAGE,
-    PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_USER_MANAGE,
-    PERM_USER_READ, ROLE_SLUG_OWNER, SYSTEM_ROLES,
+    validate_contacts, validate_customer_common_fields, validate_email, validate_user_name,
+    AuditLogEntry, BrandingValidator, CreateCustomerInput, CreateUserInput, Customer,
+    CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter, CustomerPage,
+    CustomerWithDetails, DocumentType, InitialSetupInput, InitialSetupResult, LoginInput,
+    LoginPolicy, OperationMode, PersonType, PublicBranding, RecoverPasswordInput,
+    RecoverPasswordResult, ResetPasswordInput, Role, RoleWithPermissions, SessionInfo, Tenant,
+    TenantBranding, UpdateBrandingInput, UpdateCustomerInput, UpdateUserInput, UserRecord,
+    UserWithRole, PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE,
+    PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_USER_MANAGE, PERM_USER_READ, ROLE_SLUG_OWNER,
+    SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
@@ -406,15 +407,9 @@ impl CoreServices {
         }
 
         let company_name = BrandingValidator::validate_company_name(&input.company_name)?;
-        let owner_name = input.owner_name.trim();
+        let owner_name_str = validate_user_name(&input.owner_name)?;
         let owner_email = validate_email(&input.owner_email)?;
         validate_password(&input.owner_password)?;
-
-        if owner_name.is_empty() {
-            return Err(CoreError::Validation(
-                "Informe o nome do proprietário.".to_string(),
-            ));
-        }
 
         let recovery_key = generate_recovery_key();
         let password_hash = hash_secret(&input.owner_password).await?;
@@ -422,7 +417,6 @@ impl CoreServices {
 
         let tenant_id_str = tenant_id.to_string();
         let company_name_str = company_name.to_string();
-        let owner_name_str = owner_name.to_string();
         let recovery_key_clone = recovery_key.clone();
 
         self.run_transaction(|stores| {
@@ -971,19 +965,12 @@ impl CoreServices {
     ) -> Result<UserWithRole> {
         self.check_session_and_permission(session, PERM_USER_MANAGE)?;
 
-        let name = input.name.trim();
+        let name_str = validate_user_name(&input.name)?;
         let email = validate_email(&input.email)?;
         validate_password(&input.password)?;
 
-        if name.is_empty() {
-            return Err(CoreError::Validation(
-                "Informe o nome do usuário.".to_string(),
-            ));
-        }
-
         let password_hash = hash_secret(&input.password).await?;
         let session = session.clone();
-        let name_str = name.to_string();
         let role_id = input.role_id.clone();
 
         self.run_transaction(|stores| {
@@ -1076,18 +1063,11 @@ impl CoreServices {
     ) -> Result<UserWithRole> {
         self.check_session_and_permission(session, PERM_USER_MANAGE)?;
 
-        let name = input.name.trim();
+        let name_str = validate_user_name(&input.name)?;
         let email = validate_email(&input.email)?;
-
-        if name.is_empty() {
-            return Err(CoreError::Validation(
-                "Informe o nome do usuário.".to_string(),
-            ));
-        }
 
         let session = session.clone();
         let user_id_str = user_id.to_string();
-        let name_str = name.to_string();
         let input_role_id = input.role_id.clone();
 
         self.run_transaction(|stores| {

@@ -34,5 +34,5 @@ pub use user::{
 };
 pub use validation::{
     normalize_and_validate_phone, normalize_and_validate_postal_code, validate_brazilian_state,
-    validate_country_code, validate_email, BRAZILIAN_STATES,
+    validate_country_code, validate_email, validate_user_name, BRAZILIAN_STATES,
 };

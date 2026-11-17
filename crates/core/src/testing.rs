@@ -1509,6 +1509,19 @@ mod unit_tests {
         assert!(validate_email("usuario@(comentario)dominio.com").is_err());
         assert!(validate_email("usuario@dominio.\u{212A}om").is_err());
         assert!(validate_email("mar\u{212A}@dominio.com").is_err());
+
+        // Nomes de usuário (1 a 100 caracteres, trim, sem controle)
+        use crate::domain::validation::validate_user_name;
+        assert_eq!(validate_user_name("  Ana Maria  ").unwrap(), "Ana Maria");
+        assert!(validate_user_name("").is_err());
+        assert!(validate_user_name("   ").is_err());
+        assert!(validate_user_name("Ana\nMaria").is_err());
+        assert!(validate_user_name("Ana\0Maria").is_err());
+        let name_100 = "á".repeat(100);
+        assert_eq!(name_100.len(), 200);
+        assert_eq!(name_100.chars().count(), 100);
+        assert!(validate_user_name(&name_100).is_ok());
+        assert!(validate_user_name(&"á".repeat(101)).is_err());
     }
 
     #[test]

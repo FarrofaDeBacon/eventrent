@@ -241,3 +241,21 @@ pub fn normalize_and_validate_phone(phone: &str, country: Option<&str>) -> CoreR
         ))
     }
 }
+
+/// Valida e normaliza o nome de usuário / proprietário (1 a 100 caracteres, sem caracteres de controle, já aparado).
+pub fn validate_user_name(name: &str) -> CoreResult<String> {
+    let trimmed = name.trim();
+    if trimmed.chars().any(|c| c.is_control()) {
+        return Err(CoreError::Validation(
+            "O nome do usuário não pode conter caracteres de controle ou quebras de linha."
+                .to_string(),
+        ));
+    }
+    let char_count = trimmed.chars().count();
+    if !(1..=100).contains(&char_count) {
+        return Err(CoreError::Validation(
+            "O nome do usuário deve conter entre 1 e 100 caracteres.".to_string(),
+        ));
+    }
+    Ok(trimmed.to_string())
+}
