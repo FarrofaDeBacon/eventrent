@@ -1,9 +1,9 @@
-# Relatório de Execução — Fase 1B.2, Revisão 1B.2-rev e Revisão 1B.2-rev2
+# Relatório de Execução — Fase 1B.2 e Revisões (rev, rev2, rev3)
 
 **Branch**: `fase-1b2-rev`  
 **Base**: `main` (após PR #6 `e64237f`)  
-**Data**: 16/11/2026  
-**Status**: Concluída (PR #7 aberto, aguardando checks do CI para revisão final do usuário sem merge automático)
+**Data**: 17/11/2026  
+**Status**: Concluída (PR #7 aberto, aguardando aprovação do usuário para merge e tag `v0.5.0-fase1b2`)
 
 ---
 
@@ -180,8 +180,510 @@ Implementados em `test_branding_validator_images_magic_bytes_and_formats` e subm
 
 ---
 
-## 7. Próximos Passos (Ação Exclusiva do Usuário)
+## 7. Revisão Técnica Final (Fase 1B.2-rev3: R1 a R8)
+
+| Item   | Descrição                                                                                                                                                                              | Status    | Commit                    | Arquivos Principais                                                                                                                                                            |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **R1** | Prova do Item A (saída real de `git show HEAD:crates/store-sqlite/migrations/0005_customers_rev.sql`, FK composta e teste de tenant diferente falhando)                                | CONCLUÍDO | `3596008` / _Este commit_ | `crates/store-sqlite/migrations/0005_customers_rev.sql`, `crates/store-sqlite/src/lib.rs`, `docs/relatorios/fase-1b-2.md`                                                      |
+| **R2** | URLs raw fixadas no hash imutável do commit (`eef3fd4`) para leitura direta sem cache                                                                                                  | CONCLUÍDO | _Este commit_             | `docs/relatorios/fase-1b-2.md`                                                                                                                                                 |
+| **R3** | Telefone internacional (`+DDI` de 8 a 15 dígitos quando não for `+55`; `+55` normaliza para nacional; sem `+` segue Brasil) + alinhamento do schema frontend                           | CONCLUÍDO | `91278b9`                 | `crates/core/src/domain/validation.rs`, `crates/core/src/testing.rs`, `src/lib/utils/customer-schema.ts`                                                                       |
+| **R4** | Contagem de limites em `chars().count()`, trim gravado em nomes/funções/endereços, `state` estrangeiro até 40 chars e bloqueio de caracteres de controle (quebra de linha só em notas) | CONCLUÍDO | `67ac3cc`                 | `crates/core/src/domain/customer.rs`, `crates/core/src/testing.rs`                                                                                                             |
+| **R5** | Movimentação de `validate_email` e validadores de formato para `crates/core/src/domain/validation.rs` (subconjunto ASCII restrito sem aspas, comentários ou espaços)                   | CONCLUÍDO | `8a79efb`                 | `crates/core/src/domain/validation.rs`, `crates/core/src/domain/mod.rs`, `crates/core/src/domain/customer.rs`, `crates/core/src/services/mod.rs`, `crates/core/src/testing.rs` |
+| **R6** | `Debug` de `Customer`, `CreateCustomerInput` e `UpdateCustomerInput` mascara nome de pessoa física com iniciais (e preserva razão social em PJ)                                        | CONCLUÍDO | `eef3fd4`                 | `crates/core/src/domain/customer.rs`, `crates/core/src/testing.rs`                                                                                                             |
+| **R7** | Cópias exatas do código real (`update_customer`, `recover_password`, `StoreBundle::new`, `validate_email` e exemplos reais de auditoria mascarada)                                     | CONCLUÍDO | _Este commit_             | `docs/relatorios/fase-1b-2.md`                                                                                                                                                 |
+| **R8** | Relatório atualizado, `git log --oneline` e checks verdes do CI (Ubuntu e Windows) no PR #7                                                                                            | CONCLUÍDO | _Este commit_             | `docs/relatorios/fase-1b-2.md`                                                                                                                                                 |
+
+### 7.1. Prova do Item A — Migração `0005_customers_rev.sql` (cópia exata)
+
+Saída de `git show HEAD:crates/store-sqlite/migrations/0005_customers_rev.sql` (linhas com `UNIQUE (tenant_id` e `REFERENCES customer`):
+
+```sql
+    UNIQUE (tenant_id, id)
+    FOREIGN KEY (tenant_id, customer_id) REFERENCES customer(tenant_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant_id, customer_id) REFERENCES customer(tenant_id, id) ON DELETE CASCADE,
+```
+
+Trecho exato de `crates/store-sqlite/migrations/0005_customers_rev.sql` (linhas 144–206):
+
+```sql
+CREATE TABLE customer (
+    id TEXT PRIMARY KEY NOT NULL,
+    tenant_id TEXT NOT NULL,
+    person_type TEXT NOT NULL CHECK (person_type IN ('individual', 'legal')),
+    name TEXT NOT NULL,
+    trade_name TEXT,
+    document_type TEXT NOT NULL DEFAULT 'none' CHECK (document_type IN ('cpf', 'cnpj', 'foreign', 'none')),
+    document_number TEXT,
+    state_registration TEXT,
+    municipal_registration TEXT,
+    notes TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    search_text TEXT NOT NULL,
+    name_sort TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT,
+    created_by TEXT,
+    FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES app_user(id) ON DELETE SET NULL,
+    UNIQUE (tenant_id, id)
+);
+
+CREATE TABLE customer_contact (
+    id TEXT PRIMARY KEY NOT NULL,
+    tenant_id TEXT NOT NULL,
+    customer_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    email TEXT,
+    phone TEXT,
+    role TEXT,
+    is_primary INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT,
+    created_by TEXT,
+    FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant_id, customer_id) REFERENCES customer(tenant_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES app_user(id) ON DELETE SET NULL
+);
+
+CREATE TABLE customer_address (
+    id TEXT PRIMARY KEY NOT NULL,
+    tenant_id TEXT NOT NULL,
+    customer_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    street TEXT NOT NULL,
+    number TEXT NOT NULL,
+    complement TEXT,
+    neighborhood TEXT NOT NULL,
+    city TEXT NOT NULL,
+    state TEXT NOT NULL,
+    postal_code TEXT NOT NULL,
+    country TEXT NOT NULL DEFAULT 'BR',
+    is_primary INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT,
+    created_by TEXT,
+    FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant_id, customer_id) REFERENCES customer(tenant_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES app_user(id) ON DELETE SET NULL
+);
+```
+
+- **Teste obrigatório**: `tests::test_migration_0005_rebuilds_and_preserves_existing_customer_data` em `crates/store-sqlite/src/lib.rs` (linhas 3226–3329) — **PASSOU (`ok`)**. Ele aplica as migrações `0001..0004`, insere cliente/contato/endereço no tenant `t1`, executa `0005_customers_rev.sql`, valida preservação dos dados e comprova que inserir `customer_contact` e `customer_address` no tenant `t2` apontando para `customer_id = 'c1'` (`t1`) retorna erro (`err_contact.is_err()` e `err_address.is_err()`).
+
+### 7.2. URLs Raw Fixadas no Hash do Commit (`eef3fd4`)
+
+- Migração `0005`: https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/eef3fd4/crates/store-sqlite/migrations/0005_customers_rev.sql
+- Domínio de Clientes: https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/eef3fd4/crates/core/src/domain/customer.rs
+- Validadores de Formato (`validate_email`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/eef3fd4/crates/core/src/domain/validation.rs
+- Serviços do Core: https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/eef3fd4/crates/core/src/services/mod.rs
+- Traits e `StoreBundle`: https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/eef3fd4/crates/core/src/store/mod.rs
+- SQLite Store: https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/eef3fd4/crates/store-sqlite/src/lib.rs
+- Testes do Core (`validate_email` e contratos): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/eef3fd4/crates/core/src/testing.rs
+- Componente `VirtualList`: https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/eef3fd4/src/lib/components/virtual-list.svelte
+
+### 7.3. Código Real de `validate_email` (`crates/core/src/domain/validation.rs`, linhas 17–111)
+
+```rust
+pub fn validate_email(email: &str) -> CoreResult<String> {
+    if email.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(CoreError::Validation(
+            "O e-mail não pode conter espaços ou caracteres de controle.".to_string(),
+        ));
+    }
+
+    let lowered = email.to_lowercase();
+    let total_chars = lowered.chars().count();
+    if !(5..=254).contains(&total_chars) {
+        return Err(CoreError::Validation(
+            "O e-mail deve ter entre 5 e 254 caracteres.".to_string(),
+        ));
+    }
+
+    let parts: Vec<&str> = lowered.split('@').collect();
+    if parts.len() != 2 {
+        return Err(CoreError::Validation(
+            "Informe um e-mail válido contendo um único '@'.".to_string(),
+        ));
+    }
+
+    let (local, domain) = (parts[0], parts[1]);
+    let local_chars = local.chars().count();
+    if local.is_empty()
+        || local_chars > 64
+        || local.starts_with('.')
+        || local.ends_with('.')
+        || local.contains("..")
+    {
+        return Err(CoreError::Validation(
+            "Parte local do e-mail inválida (máximo 64 caracteres, sem pontos nas extremidades ou consecutivos).".to_string(),
+        ));
+    }
+
+    // Subconjunto ASCII restrito: parte local aceita apenas a-z, 0-9 e . _ % + - (sem aspas, comentários ou espaços)
+    if !local
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '%' | '+' | '-'))
+    {
+        return Err(CoreError::Validation(
+            "Parte local do e-mail contém caracteres inválidos (permitidos apenas letras ASCII, dígitos e . _ % + -).".to_string(),
+        ));
+    }
+
+    if domain.is_empty()
+        || domain.starts_with('.')
+        || domain.ends_with('.')
+        || domain.starts_with('-')
+        || domain.ends_with('-')
+        || domain.contains("..")
+    {
+        return Err(CoreError::Validation(
+            "Domínio do e-mail inválido.".to_string(),
+        ));
+    }
+
+    let domain_labels: Vec<&str> = domain.split('.').collect();
+    if domain_labels.len() < 2 {
+        return Err(CoreError::Validation(
+            "Domínio do e-mail deve conter pelo menos uma extensão (ex: .com).".to_string(),
+        ));
+    }
+
+    // Cada rótulo do domínio aceita apenas a-z, 0-9 e hífen (sem hífen nas pontas)
+    for label in &domain_labels {
+        if label.is_empty()
+            || label.starts_with('-')
+            || label.ends_with('-')
+            || !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            return Err(CoreError::Validation(
+                "Rótulo de domínio do e-mail inválido (use apenas letras ASCII, dígitos ou hífen sem hífen nas extremidades).".to_string(),
+            ));
+        }
+    }
+
+    let Some(tld) = domain_labels.last() else {
+        return Err(CoreError::Validation(
+            "Extensão do e-mail inválida.".to_string(),
+        ));
+    };
+
+    if tld.len() < 2
+        || tld.starts_with('-')
+        || tld.ends_with('-')
+        || !tld.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return Err(CoreError::Validation(
+            "Extensão do e-mail inválida.".to_string(),
+        ));
+    }
+
+    Ok(lowered)
+}
+```
+
+Testes de `validate_email` em `crates/core/src/testing.rs` (`test_password_and_email_validation`, linhas 1345–1384):
+
+- Válidos: `"usuario@dominio.com"`, `"user.name+tag@sub.empresa.com.br"`, `"usuario@dominio.xn--p1ai"`, 64 caracteres na parte local.
+- Inválidos: `""`, `"sem-arroba.com"`, `"dois@@arrobas.com"`, `"@sem-local.com"`, `"local@"`, `"local@sem-tld"`, `"local@.ponto-no-inicio.com"`, `".ponto-inicio@dominio.com"`, `"ponto..duplo@dominio.com"`, `"usuario@-hifen-inicio.com"`, espaços (`"usuario @dominio.com"`, `"usuario@ dominio.com"`, `" usuario@dominio.com "`), quebra de linha (`"usuario\n@dominio.com"`), parte local com 65 caracteres, TLD terminando em `-` (`"usuario@dominio.com-"`), caracteres inválidos no domínio (`"usuario@exa!mple.com"`, `"usuario@sub.-empresa.com"`, `"usuario@empresa-.com"`), acentos/colchetes (`"usuá[rio]@dominio.com"`), aspas (`"\"usuario\"@dominio.com"`) e comentários (`"usuario(comentario)@dominio.com"`, `"usuario@(comentario)dominio.com"`).
+
+### 7.4. Trechos Exatos Solicitados (R7)
+
+#### a) `update_customer` — comparação de `expected_updated_at` dentro da transação (`crates/core/src/services/mod.rs`, linhas 1753–1766)
+
+```rust
+                // 1. Leitura DENTRO da transação: cliente existente
+                let existing = stores
+                    .customers()
+                    .find_by_id(&session.tenant_id, &id)
+                    .await?
+                    .ok_or_else(|| CoreError::NotFound("Cliente não encontrado.".to_string()))?;
+
+                // 2. Controle de concorrência otimista (expected_updated_at)
+                if existing.customer.updated_at != input.expected_updated_at {
+                    return Err(CoreError::Conflict(
+                        "O cadastro foi alterado por outra pessoa. Recarregue e tente novamente."
+                            .to_string(),
+                    ));
+                }
+```
+
+#### b) `recover_password` completa (`crates/core/src/services/mod.rs`, linhas 756–960)
+
+```rust
+    pub async fn recover_password(
+        &self,
+        tenant_id: &str,
+        input: &RecoverPasswordInput,
+        policy: &LoginPolicy,
+    ) -> Result<RecoverPasswordResult> {
+        let email = input.email.trim().to_lowercase();
+        let normalized_key = normalize_recovery_key(&input.recovery_key);
+
+        validate_password(&input.new_password)?;
+
+        let maybe_user = self.stores.users.find_by_email(tenant_id, &email).await?;
+        let user = match maybe_user {
+            Some(u) if u.active && u.recovery_key_hash.is_some() => u,
+            _ => {
+                let _ = verify_secret(&normalized_key, DUMMY_ARGON2_HASH).await;
+                return Err(CoreError::InvalidCredentials);
+            }
+        };
+
+        let key_hash = match user.recovery_key_hash.as_deref() {
+            Some(h) => h,
+            None => {
+                let _ = verify_secret(&normalized_key, DUMMY_ARGON2_HASH).await;
+                return Err(CoreError::InvalidCredentials);
+            }
+        };
+
+        let now = Utc::now();
+        if let Some(ref locked_str) = user.recovery_locked_until {
+            if let Ok(locked_dt) = DateTime::parse_from_rfc3339(locked_str) {
+                if locked_dt.with_timezone(&Utc) > now {
+                    if policy.reveal_account_locked {
+                        return Err(CoreError::AccountLocked {
+                            locked_until: locked_str.clone(),
+                        });
+                    } else {
+                        let _ = verify_secret(&normalized_key, DUMMY_ARGON2_HASH).await;
+                        return Err(CoreError::InvalidCredentials);
+                    }
+                }
+            }
+        }
+
+        if !verify_secret(&normalized_key, key_hash).await? {
+            enum RecoveryFailureOutcome {
+                Locked { locked_until: String },
+                Failed,
+            }
+
+            let tenant_id_str = tenant_id.to_string();
+            let user_id_str = user.id.clone();
+            let email_str = email.clone();
+
+            let outcome = self
+                .run_transaction(|stores| {
+                    let tenant_id = tenant_id_str.clone();
+                    let user_id = user_id_str.clone();
+                    let email = email_str.clone();
+
+                    Box::pin(async move {
+                        let now = Utc::now();
+                        let now_str = now.to_rfc3339();
+                        let new_failures = stores
+                            .users()
+                            .increment_recovery_failure(&tenant_id, &user_id, &now_str)
+                            .await?;
+                        let lockout_secs = calculate_lockout_seconds(new_failures);
+                        let locked_until = if lockout_secs > 0 {
+                            Some((now + Duration::seconds(lockout_secs)).to_rfc3339())
+                        } else {
+                            None
+                        };
+
+                        if let Some(ref until) = locked_until {
+                            stores
+                                .users()
+                                .set_recovery_lockout(
+                                    &tenant_id,
+                                    &user_id,
+                                    Some(until.as_str()),
+                                    &now_str,
+                                )
+                                .await?;
+
+                            stores
+                                .audit()
+                                .append(&build_audit_entry(
+                                    &tenant_id,
+                                    Some(&user_id),
+                                    "auth.recovery_locked",
+                                    "user",
+                                    &user_id,
+                                    &format!(
+                                        "Chave de recuperação bloqueada temporariamente após {new_failures} falhas consecutivas"
+                                    ),
+                                ))
+                                .await?;
+
+                            Ok(RecoveryFailureOutcome::Locked {
+                                locked_until: until.clone(),
+                            })
+                        } else {
+                            let masked_email = mask_email_for_audit(&email);
+                            stores
+                                .audit()
+                                .append(&build_audit_entry(
+                                    &tenant_id,
+                                    Some(&user_id),
+                                    "auth.recovery_failed",
+                                    "user",
+                                    &user_id,
+                                    &format!(
+                                        "Tentativa inválida de chave de recuperação ({new_failures}) para {masked_email}"
+                                    ),
+                                ))
+                                .await?;
+
+                            Ok(RecoveryFailureOutcome::Failed)
+                        }
+                    })
+                })
+                .await?;
+
+            match outcome {
+                RecoveryFailureOutcome::Locked { locked_until } => {
+                    if policy.reveal_account_locked {
+                        return Err(CoreError::AccountLocked { locked_until });
+                    } else {
+                        return Err(CoreError::InvalidCredentials);
+                    }
+                }
+                RecoveryFailureOutcome::Failed => {
+                    return Err(CoreError::InvalidCredentials);
+                }
+            }
+        }
+
+        let new_recovery_key = generate_recovery_key();
+        let new_recovery_key_hash = hash_secret(&normalize_recovery_key(&new_recovery_key)).await?;
+        let new_password_hash = hash_secret(&input.new_password).await?;
+
+        let tenant_id_str = tenant_id.to_string();
+        let user_id_str = user.id.clone();
+        let email_str = email.clone();
+        let return_key = new_recovery_key.clone();
+
+        self.run_transaction(|stores| {
+            let tenant_id = tenant_id_str.clone();
+            let user_id = user_id_str.clone();
+            let email = email_str.clone();
+            let new_password_hash = new_password_hash.clone();
+            let new_recovery_key_hash = new_recovery_key_hash.clone();
+
+            Box::pin(async move {
+                let now_str = Utc::now().to_rfc3339();
+                stores
+                    .users()
+                    .update_password_and_recovery_key(
+                        &tenant_id,
+                        &user_id,
+                        &new_password_hash,
+                        &new_recovery_key_hash,
+                        &now_str,
+                    )
+                    .await?;
+
+                let masked_email = mask_email_for_audit(&email);
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &tenant_id,
+                        Some(&user_id),
+                        "user.password_recovered",
+                        "user",
+                        &user_id,
+                        &format!(
+                            "Senha redefinida com sucesso via chave de recuperação para {masked_email}"
+                        ),
+                    ))
+                    .await?;
+
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &tenant_id,
+                        Some(&user_id),
+                        "auth.recovery_key_rotated",
+                        "user",
+                        &user_id,
+                        &format!(
+                            "Chave de recuperação rotacionada com 80 bits de entropia para {masked_email}"
+                        ),
+                    ))
+                    .await?;
+
+                Ok(())
+            })
+        })
+        .await?;
+
+        Ok(RecoverPasswordResult {
+            new_recovery_key: return_key,
+        })
+    }
+```
+
+#### c) `StoreBundle::new` exigindo `tx_manager` (`crates/core/src/store/mod.rs`, linhas 176–201) e teste (`crates/core/src/testing.rs`, linhas 2012–2027)
+
+```rust
+impl StoreBundle {
+    pub fn new(
+        tenants: Arc<dyn TenantStore>,
+        branding: Arc<dyn BrandingStore>,
+        roles: Arc<dyn RoleStore>,
+        users: Arc<dyn UserStore>,
+        audit: Arc<dyn AuditStore>,
+        customers: Arc<dyn CustomerStore>,
+        tx_manager: Option<Arc<dyn TransactionManager>>,
+    ) -> Result<Self> {
+        let Some(tx) = tx_manager else {
+            return Err(CoreError::Configuration(
+                "TransactionManager (tx_manager) é obrigatório no StoreBundle para garantir atomicidade transacional.".to_string(),
+            ));
+        };
+        Ok(Self {
+            tenants,
+            branding,
+            roles,
+            users,
+            audit,
+            customers,
+            tx_manager: Some(tx),
+        })
+    }
+}
+```
+
+Teste `test_store_bundle_new_requires_tx_manager` (`crates/core/src/testing.rs`, linhas 2012–2027):
+
+```rust
+        let dummy = Arc::new(DummyStore);
+        let res = StoreBundle::new(
+            dummy.clone(),
+            dummy.clone(),
+            dummy.clone(),
+            dummy.clone(),
+            dummy.clone(),
+            dummy.clone(),
+            None,
+        );
+
+        assert!(
+            matches!(res, Err(CoreError::Configuration(_))),
+            "StoreBundle::new sem tx_manager deve retornar CoreError::Configuration"
+        );
+```
+
+#### d) Exemplos reais de resumo de auditoria mascarados (`crates/core/src/services/mod.rs`, linhas 1048–1061 e 1662–1670)
+
+1. **Cliente PF** (`customer.created` para `"Carlos Eduardo da Silva"`):
+   `Cliente 'C*** E*** d*** S***' criado com sucesso (id: cust-01a1...)`
+2. **Cliente PJ** (`customer.created` para `"Produtora Horizonte Eventos Ltda"`):
+   `Cliente 'Produtora Horizonte Eventos Ltda' criado com sucesso (id: cust-01a1...)`
+3. **Usuário** (`user.created` para `"Ana Proprietária"` / `"ana@eventospalco.com.br"`):
+   `Usuário 'A*** P***' (a***@eventospalco.com.br) criado com perfil 'Proprietário'`
+
+---
+
+## 8. Próximos Passos (Ação Exclusiva do Usuário)
 
 1. Revisar o Pull Request #7 da branch `fase-1b2-rev` para `main` no GitHub.
 2. Conferir os dois checks verdes do CI (`Check & Tests (ubuntu-latest)` e `Check & Tests (windows-latest)`).
-3. Após revisão e aprovação formal, o **usuário** realiza o merge na interface do GitHub e cria a tag `v0.5.0-fase1b2`.
+3. Após revisão e aprovação formal, o **usuário** realiza o merge (`Create a merge commit`) na interface do GitHub e cria a tag `v0.5.0-fase1b2`.
