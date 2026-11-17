@@ -28,19 +28,32 @@ Este roadmap detalha as fases oficiais de evolução do sistema EventRent defini
 
 ---
 
-### Fase 1B — Clientes e Marca Completa
+### Fase 1B — Clientes e Marca Completa (Concluída — `v0.5.0-fase1b2`)
 
-- Cadastro completo de Clientes (PJ e PF) com documentos, endereços, contatos e histórico.
-- Validação estrita de branding (hexadecimal, tamanhos, sanitização de SVG), upload local de logotipo e geração automática de escala tonal com verificação de contraste WCAG AA.
+- Cadastro completo de Clientes (PJ e PF) com documentos (CPF e CNPJ numérico/alfanumérico conforme IN RFB nº 2.229/2024), endereços opcionais, contatos obrigatórios, busca indexada sem acentos e lista virtualizada.
+- Validação estrita de branding (hexadecimal, dimensões, imagens), upload local de logotipo e geração automática de escala tonal OKLCH com verificação de contraste WCAG AA.
 
 ---
 
-### Fase 2 — Catálogo de Equipamentos e Estoque
+### Fase 1C — Fornecedores, Correções de Hardening e ADR-0012 (Escopo Atual)
 
-- Modelos de equipamentos com atributos técnicos do audiovisual.
-- Modelo híbrido de controle de estoque (`serialized` vs. `quantity`).
-- Cadastro de unidades patrimoniais e números de série.
-- Composição de Kits que se desdobram em itens componentes.
+- Normalização de telefones em E.164 (`+`), validação ASCII estrita de e-mails, geração de IDs pelo servidor e limites Unicode em nomes de usuários.
+- Cadastro unificado de terceiros (`customer`) com papéis (`is_customer`, `is_supplier`), categorias de fornecedor (`sublocacao`, `manutencao`, `transporte`, `compras`, `servicos`, `outros`) e permissões granulares `supplier:read` / `supplier:manage`.
+- Registro arquitetural do modelo de alocação, capacidade, locais/espaços e equipe no **ADR-0012**.
+
+---
+
+### Fase 1D — Locais de Evento com Espaços
+
+- Cadastro de Locais (venues) e seus respectivos Espaços (pavilhões, salas, auditórios), com tempo de deslocamento interno configurável por local e campos técnicos opcionais (pé-direito, potência elétrica, rigging, acesso de carga, horários de montagem e restrições de ruído).
+
+---
+
+### Fase 2 — Catálogo e Estoque com Capacidade
+
+- Modelos de equipamentos com atributos técnicos do audiovisual e conceito unificado de capacidade (ADR-0012).
+- Modelo híbrido de controle de estoque: unidade com patrimônio (`serialized`, capacidade = 1) vs. item por quantidade (`quantity`, capacidade = saldo).
+- Cadastro de unidades patrimoniais, números de série e composição de Kits.
 
 ---
 
@@ -60,16 +73,21 @@ Este roadmap detalha as fases oficiais de evolução do sistema EventRent defini
 
 ### Fase 3 — Motor de Disponibilidade, Reservas e Timeline
 
-- Algoritmo de cálculo de disponibilidade e gravação de reservas na mesma transação.
-- Visualização de Timeline interativa e Gantt de locação por equipamento/categoria.
-- Gestão de períodos: trânsito, montagem, evento, desmontagem e retorno.
+- Motor único de disponibilidade por intervalo de tempo e capacidade, aplicando os 3 níveis de intervalos (virada no mesmo espaço 30 min, deslocamento interno configurável por local 20 min, deslocamento externo 60 min) e sugestão de alternativas.
+- Visualização de Timeline interativa e Gantt de locação por equipamento/espaço/categoria.
 
 ---
 
-### Fase 4 — Orçamento, Contrato e Emissão de Documentos
+### Fase 4 — Orçamento e Contrato
 
-- Criação e versionamento de propostas comerciais e orçamentos.
+- Criação e versionamento de propostas comerciais e orçamentos com hierarquia `Cliente → Evento → Ambientes → Alocações`.
 - Geração de contratos em PDF a partir de templates customizáveis.
+
+---
+
+### Fase 4.5 — Equipe Técnica
+
+- Cadastro de profissionais (fixo/freelancer) com capacidade padrão 1 ou liberação de simultaneidade N, funções, certificações com validade, rateio de custo configurável, níveis de risco por local/horário com justificativa e auditoria, e login opcional.
 
 ---
 
