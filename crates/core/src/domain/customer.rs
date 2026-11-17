@@ -297,6 +297,15 @@ pub fn build_customer_search_text(
     parts.join(" ")
 }
 
+fn reject_control_chars(value: &str, field_label: &str) -> CoreResult<()> {
+    if value.chars().any(|c| c.is_control()) {
+        return Err(CoreError::Validation(format!(
+            "{field_label} não pode conter caracteres de controle ou quebras de linha."
+        )));
+    }
+    Ok(())
+}
+
 pub fn validate_customer_common_fields(
     name: &str,
     trade_name: Option<&str>,
@@ -305,34 +314,51 @@ pub fn validate_customer_common_fields(
     municipal_registration: Option<&str>,
 ) -> CoreResult<()> {
     let name_trimmed = name.trim();
-    if name_trimmed.is_empty() || name_trimmed.len() > 150 {
+    reject_control_chars(name_trimmed, "Nome ou Razão Social")?;
+    let name_chars = name_trimmed.chars().count();
+    if name_chars == 0 || name_chars > 150 {
         return Err(CoreError::Validation(
             "Nome ou Razão Social deve conter entre 1 e 150 caracteres.".to_string(),
         ));
     }
     if let Some(trade) = trade_name {
-        if trade.trim().len() > 150 {
+        let trade_trimmed = trade.trim();
+        reject_control_chars(trade_trimmed, "Nome Fantasia")?;
+        if trade_trimmed.chars().count() > 150 {
             return Err(CoreError::Validation(
                 "Nome Fantasia excede o limite máximo de 150 caracteres.".to_string(),
             ));
         }
     }
     if let Some(n) = notes {
-        if n.trim().len() > 2000 {
+        let n_trimmed = n.trim();
+        if n_trimmed
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+        {
+            return Err(CoreError::Validation(
+                "Notas do cliente contêm caracteres de controle inválidos.".to_string(),
+            ));
+        }
+        if n_trimmed.chars().count() > 2000 {
             return Err(CoreError::Validation(
                 "Notas do cliente excedem o limite máximo de 2000 caracteres.".to_string(),
             ));
         }
     }
     if let Some(sr) = state_registration {
-        if sr.trim().len() > 30 {
+        let sr_trimmed = sr.trim();
+        reject_control_chars(sr_trimmed, "Inscrição Estadual")?;
+        if sr_trimmed.chars().count() > 30 {
             return Err(CoreError::Validation(
                 "Inscrição Estadual excede o limite máximo de 30 caracteres.".to_string(),
             ));
         }
     }
     if let Some(mr) = municipal_registration {
-        if mr.trim().len() > 30 {
+        let mr_trimmed = mr.trim();
+        reject_control_chars(mr_trimmed, "Inscrição Municipal")?;
+        if mr_trimmed.chars().count() > 30 {
             return Err(CoreError::Validation(
                 "Inscrição Municipal excede o limite máximo de 30 caracteres.".to_string(),
             ));
@@ -362,20 +388,31 @@ pub fn validate_contacts(contacts: &mut [CreateContactInput]) -> CoreResult<()> 
 
     let mut primary_count = 0;
     for (idx, c) in contacts.iter_mut().enumerate() {
-        let name_trimmed = c.name.trim();
-        if name_trimmed.is_empty() || name_trimmed.len() > 100 {
+        let name_trimmed = c.name.trim().to_string();
+        reject_control_chars(&name_trimmed, &format!("Nome do contato #{}", idx + 1))?;
+        let name_chars = name_trimmed.chars().count();
+        if name_chars == 0 || name_chars > 100 {
             return Err(CoreError::Validation(format!(
                 "Nome do contato #{} é obrigatório e deve ter até 100 caracteres.",
                 idx + 1
             )));
         }
+        c.name = name_trimmed;
+
         if let Some(ref role) = c.role {
-            if role.trim().len() > 60 {
+            let role_trimmed = role.trim().to_string();
+            reject_control_chars(&role_trimmed, &format!("Função do contato #{}", idx + 1))?;
+            if role_trimmed.chars().count() > 60 {
                 return Err(CoreError::Validation(format!(
                     "Função do contato #{} excede o limite máximo de 60 caracteres.",
                     idx + 1
                 )));
             }
+            c.role = if role_trimmed.is_empty() {
+                None
+            } else {
+                Some(role_trimmed)
+            };
         }
 
         let email_val = c.email.as_deref().map(str::trim).filter(|e| !e.is_empty());
@@ -388,13 +425,14 @@ pub fn validate_contacts(contacts: &mut [CreateContactInput]) -> CoreResult<()> 
             )));
         }
 
-        if let Some(email) = email_val {
-            validate_email(email)?;
-        }
-        if let Some(phone) = phone_val {
-            let normalized = normalize_and_validate_phone(phone, None)?;
-            c.phone = Some(normalized);
-        }
+        c.email = match email_val {
+            Some(email) => Some(validate_email(email)?),
+            None => None,
+        };
+        c.phone = match phone_val {
+            Some(phone) => Some(normalize_and_validate_phone(phone, None)?),
+            None => None,
+        };
 
         if c.is_primary {
             primary_count += 1;
@@ -434,49 +472,78 @@ pub fn validate_addresses(addresses: &mut [CreateAddressInput]) -> CoreResult<()
 
     let mut primary_count = 0;
     for (idx, a) in addresses.iter_mut().enumerate() {
-        let label = a.label.trim();
-        if !label.is_empty() && label.len() > 40 {
+        let label = a.label.trim().to_string();
+        reject_control_chars(&label, &format!("Rótulo do endereço #{}", idx + 1))?;
+        if !label.is_empty() && label.chars().count() > 40 {
             return Err(CoreError::Validation(format!(
                 "Rótulo do endereço #{} excede o limite máximo de 40 caracteres.",
                 idx + 1
             )));
         }
-        let street = a.street.trim();
-        if street.is_empty() || street.len() > 150 {
+        a.label = label;
+
+        let street = a.street.trim().to_string();
+        reject_control_chars(&street, &format!("Logradouro do endereço #{}", idx + 1))?;
+        let street_chars = street.chars().count();
+        if street_chars == 0 || street_chars > 150 {
             return Err(CoreError::Validation(format!(
                 "Logradouro do endereço #{} é obrigatório e deve ter até 150 caracteres.",
                 idx + 1
             )));
         }
-        let number = a.number.trim();
-        if number.is_empty() || number.len() > 20 {
+        a.street = street;
+
+        let number = a.number.trim().to_string();
+        reject_control_chars(&number, &format!("Número do endereço #{}", idx + 1))?;
+        let number_chars = number.chars().count();
+        if number_chars == 0 || number_chars > 20 {
             return Err(CoreError::Validation(format!(
                 "Número do endereço #{} é obrigatório e deve ter até 20 caracteres.",
                 idx + 1
             )));
         }
+        a.number = number;
+
         if let Some(ref comp) = a.complement {
-            if comp.trim().len() > 60 {
+            let comp_trimmed = comp.trim().to_string();
+            reject_control_chars(
+                &comp_trimmed,
+                &format!("Complemento do endereço #{}", idx + 1),
+            )?;
+            if comp_trimmed.chars().count() > 60 {
                 return Err(CoreError::Validation(format!(
                     "Complemento do endereço #{} excede o limite máximo de 60 caracteres.",
                     idx + 1
                 )));
             }
+            a.complement = if comp_trimmed.is_empty() {
+                None
+            } else {
+                Some(comp_trimmed)
+            };
         }
-        let neigh = a.neighborhood.trim();
-        if neigh.is_empty() || neigh.len() > 80 {
+
+        let neigh = a.neighborhood.trim().to_string();
+        reject_control_chars(&neigh, &format!("Bairro do endereço #{}", idx + 1))?;
+        let neigh_chars = neigh.chars().count();
+        if neigh_chars == 0 || neigh_chars > 80 {
             return Err(CoreError::Validation(format!(
                 "Bairro do endereço #{} é obrigatório e deve ter até 80 caracteres.",
                 idx + 1
             )));
         }
-        let city = a.city.trim();
-        if city.is_empty() || city.len() > 80 {
+        a.neighborhood = neigh;
+
+        let city = a.city.trim().to_string();
+        reject_control_chars(&city, &format!("Cidade do endereço #{}", idx + 1))?;
+        let city_chars = city.chars().count();
+        if city_chars == 0 || city_chars > 80 {
             return Err(CoreError::Validation(format!(
                 "Cidade do endereço #{} é obrigatória e deve ter até 80 caracteres.",
                 idx + 1
             )));
         }
+        a.city = city;
 
         let country = a.country.as_deref().unwrap_or("BR");
         let validated_country = validate_country_code(country)?;
@@ -485,6 +552,19 @@ pub fn validate_addresses(addresses: &mut [CreateAddressInput]) -> CoreResult<()
         if validated_country == "BR" {
             let validated_state = validate_brazilian_state(&a.state)?;
             a.state = validated_state;
+        } else {
+            let state_trimmed = a.state.trim().to_string();
+            reject_control_chars(
+                &state_trimmed,
+                &format!("Estado/Província do endereço #{}", idx + 1),
+            )?;
+            if state_trimmed.chars().count() > 40 {
+                return Err(CoreError::Validation(format!(
+                    "Estado/Província do endereço #{} excede o limite máximo de 40 caracteres.",
+                    idx + 1
+                )));
+            }
+            a.state = state_trimmed;
         }
 
         let normalized_postal =

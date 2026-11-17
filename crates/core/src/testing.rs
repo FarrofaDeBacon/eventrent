@@ -1556,13 +1556,73 @@ mod unit_tests {
         assert_eq!(addresses[0].state, "SP");
         assert_eq!(addresses[0].postal_code, "01310100");
 
-        // 7. Limites gerais
-        assert!(validate_customer_common_fields("Cliente OK", None, None, None, None).is_ok());
-        assert!(validate_customer_common_fields(&"A".repeat(151), None, None, None, None).is_err());
+        // 7. Limites gerais em caracteres (chars().count()), trim, controle e endereço estrangeiro
+        assert!(validate_customer_common_fields("José", None, None, None, None).is_ok());
+        // 150 caracteres acentuados (300 bytes) deve passar; 151 caracteres deve falhar
+        let accented_150 = "á".repeat(150);
+        assert_eq!(accented_150.len(), 300);
+        assert_eq!(accented_150.chars().count(), 150);
+        assert!(validate_customer_common_fields(&accented_150, None, None, None, None).is_ok());
+        assert!(validate_customer_common_fields(&"á".repeat(151), None, None, None, None).is_err());
         assert!(
             validate_customer_common_fields("OK", Some(&"T".repeat(151)), None, None, None)
                 .is_err()
         );
+
+        // Quebra de linha permitida apenas em notas, rejeitada em nome
+        assert!(
+            validate_customer_common_fields("OK", None, Some("Linha 1\nLinha 2"), None, None)
+                .is_ok()
+        );
+        assert!(validate_customer_common_fields("João\nSilva", None, None, None, None).is_err());
+
+        // Contato grava nome e função já aparados e rejeita caracteres de controle
+        let mut trimmed_contacts = vec![CreateContactInput {
+            id: None,
+            name: "  José da Silva  ".to_string(),
+            email: Some("jose@ex.com".to_string()),
+            phone: None,
+            role: Some("  Produtor  ".to_string()),
+            is_primary: false,
+        }];
+        assert!(validate_contacts(&mut trimmed_contacts).is_ok());
+        assert_eq!(trimmed_contacts[0].name, "José da Silva");
+        assert_eq!(trimmed_contacts[0].role.as_deref(), Some("Produtor"));
+
+        let mut bad_contact_ctrl = vec![CreateContactInput {
+            id: None,
+            name: "José\nSilva".to_string(),
+            email: Some("jose@ex.com".to_string()),
+            phone: None,
+            role: None,
+            is_primary: true,
+        }];
+        assert!(validate_contacts(&mut bad_contact_ctrl).is_err());
+
+        // Endereço fora do Brasil: state até 40 caracteres e rejeita caracteres de controle
+        let mut intl_addr = vec![CreateAddressInput {
+            id: None,
+            label: "  Sede Lisboa  ".to_string(),
+            street: "  Av da Liberdade  ".to_string(),
+            number: "100".to_string(),
+            complement: None,
+            neighborhood: "Santo António".to_string(),
+            city: "Lisboa".to_string(),
+            state: "Distrito de Lisboa".to_string(),
+            postal_code: "1250-096".to_string(),
+            country: Some("PT".to_string()),
+            is_primary: false,
+        }];
+        assert!(validate_addresses(&mut intl_addr).is_ok());
+        assert_eq!(intl_addr[0].label, "Sede Lisboa");
+
+        let mut intl_addr_state_41 = intl_addr.clone();
+        intl_addr_state_41[0].state = "á".repeat(41);
+        assert!(validate_addresses(&mut intl_addr_state_41).is_err());
+
+        let mut addr_ctrl_city = intl_addr.clone();
+        addr_ctrl_city[0].city = "Lisboa\tCentro".to_string();
+        assert!(validate_addresses(&mut addr_ctrl_city).is_err());
         assert!(
             validate_customer_common_fields("OK", None, Some(&"N".repeat(2001)), None, None)
                 .is_err()
