@@ -15,6 +15,12 @@ pub const BRAZILIAN_STATES: [&str; 27] = [
 /// 5. Domínio: pelo menos dois rótulos separados por `.`, cada rótulo com apenas `a-z`, `0-9` e hífen `-` (sem hífen no início/fim).
 /// 6. TLD: no mínimo 2 caracteres (`a-z`, `0-9` ou `-`, sem hífen no início/fim).
 pub fn validate_email(email: &str) -> CoreResult<String> {
+    if !email.is_ascii() {
+        return Err(CoreError::Validation(
+            "O e-mail deve conter apenas caracteres ASCII.".to_string(),
+        ));
+    }
+
     if email.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err(CoreError::Validation(
             "O e-mail não pode conter espaços ou caracteres de controle.".to_string(),

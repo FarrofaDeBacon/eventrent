@@ -1460,11 +1460,13 @@ mod unit_tests {
         assert!(validate_email("usuario@exa!mple.com").is_err());
         assert!(validate_email("usuario@sub.-empresa.com").is_err());
         assert!(validate_email("usuario@empresa-.com").is_err());
-        // Parte local com caracteres proibidos (aspas, comentários, acentos e colchetes)
+        // Parte local com caracteres proibidos (aspas, comentários, acentos, colchetes e U+212A Kelvin sign)
         assert!(validate_email("usuá[rio]@dominio.com").is_err());
         assert!(validate_email("\"usuario\"@dominio.com").is_err());
         assert!(validate_email("usuario(comentario)@dominio.com").is_err());
         assert!(validate_email("usuario@(comentario)dominio.com").is_err());
+        assert!(validate_email("usuario@dominio.\u{212A}om").is_err());
+        assert!(validate_email("mar\u{212A}@dominio.com").is_err());
     }
 
     #[test]
