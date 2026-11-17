@@ -1071,8 +1071,8 @@ pub async fn contract_customer_crud_and_lgpd_audit(
     assert!(!debug_details.contains("Carlos Eduardo da Silva"));
 
     // 10. create_customer ignora IDs enviados pelo cliente (ex: ID de contato/endereço de outro cliente)
-    let existing_contact_id = created_pf.contacts[0].id.clone();
-    let existing_address_id = created_pf.addresses[0].id.clone();
+    let existing_contact_id = created_pj.contacts[0].id.clone();
+    let existing_address_id = created_pj.addresses[0].id.clone();
     let forged_input = CreateCustomerInput {
         person_type: PersonType::Individual,
         name: "Cliente ID Forjado".to_string(),
