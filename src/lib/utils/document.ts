@@ -197,8 +197,40 @@ export function maskCep(input: string): string {
   return `${d.slice(0, 5)}-${d.slice(5, 8)}`;
 }
 
-/** Máscara de telefone brasileiro (`(00) 0000-0000` ou `(00) 00000-0000`). */
+/** Normaliza telefone para formato E.164 com `+` (BR: `+55` + 10/11 dígitos; internacional: `+` + 8..15 dígitos). */
+export function normalizePhoneE164(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return "";
+  const d = digitsOnly(trimmed);
+  if (!d) return "";
+  if (trimmed.startsWith("+")) {
+    if (d.startsWith("55")) {
+      return `+55${d.slice(2)}`;
+    }
+    return `+${d}`;
+  }
+  if (d.startsWith("55") && (d.length === 12 || d.length === 13)) {
+    return `+55${d.slice(2)}`;
+  }
+  return `+55${d}`;
+}
+
+/** Máscara de telefone para exibição e entrada (suporta E.164 `+55...`, brasileiro local e internacional `+DDI`). */
 export function maskPhone(input: string): string {
+  const trimmed = input.trim();
+  if (trimmed.startsWith("+")) {
+    const d = digitsOnly(trimmed).slice(0, 15);
+    if (d.startsWith("55") && d.length >= 4) {
+      const nat = d.slice(2, 13);
+      if (nat.length <= 2) return `+55 (${nat}`;
+      if (nat.length <= 6) return `+55 (${nat.slice(0, 2)}) ${nat.slice(2)}`;
+      if (nat.length <= 10) {
+        return `+55 (${nat.slice(0, 2)}) ${nat.slice(2, 6)}-${nat.slice(6)}`;
+      }
+      return `+55 (${nat.slice(0, 2)}) ${nat.slice(2, 7)}-${nat.slice(7, 11)}`;
+    }
+    return d.length > 0 ? `+${d}` : "+";
+  }
   const d = digitsOnly(input).slice(0, 11);
   if (d.length === 0) return "";
   if (d.length <= 2) return `(${d}`;

@@ -1512,27 +1512,34 @@ mod unit_tests {
         assert!(validate_country_code("BRA").is_err());
         assert!(validate_country_code("B1").is_err());
 
-        // 4. Telefone: '+' internacional (8-15 dígitos), +55 vira nacional, sem '+' segue regra do Brasil
+        // 4. Telefone: E.164 com '+' obrigatório no armazenamento, sem ambiguidade BR vs internacional
         assert_eq!(
             normalize_and_validate_phone("(11) 98765-4321", Some("BR")).unwrap(),
-            "11987654321"
+            "+5511987654321"
         );
         assert_eq!(
             normalize_and_validate_phone("+55 21 99999-1234", None).unwrap(),
-            "21999991234"
+            "+5521999991234"
         );
         assert_eq!(
             normalize_and_validate_phone("+351 912 345 678", None).unwrap(),
-            "351912345678"
+            "+351912345678"
         );
         assert_eq!(
             normalize_and_validate_phone("5511987654321", Some("BR")).unwrap(),
-            "11987654321"
+            "+5511987654321"
         );
         assert_eq!(
             normalize_and_validate_phone("(11) 2345-6789", Some("BR")).unwrap(),
-            "1123456789"
+            "+551123456789"
         );
+        // Sem ambiguidade entre EUA (+1 212 555 1234) e Brasil DDD 12 (12 91234 5678)
+        let us_e164 = normalize_and_validate_phone("+1 212 555 1234", None).unwrap();
+        let br_e164 = normalize_and_validate_phone("12 91234-5678", None).unwrap();
+        assert_eq!(us_e164, "+12125551234");
+        assert_eq!(br_e164, "+5512912345678");
+        assert_ne!(us_e164, br_e164);
+
         assert!(normalize_and_validate_phone("12345", None).is_err());
         assert!(normalize_and_validate_phone("119876", Some("BR")).is_err());
         assert!(normalize_and_validate_phone("1198765432100", Some("BR")).is_err());
@@ -1540,7 +1547,7 @@ mod unit_tests {
         // Internacional
         assert_eq!(
             normalize_and_validate_phone("+1 202 555 0123", Some("US")).unwrap(),
-            "12025550123"
+            "+12025550123"
         );
         assert!(normalize_and_validate_phone("12345", Some("US")).is_err());
         assert!(normalize_and_validate_phone("+351 123", None).is_err());
@@ -1568,7 +1575,7 @@ mod unit_tests {
         // Primeiro virou principal automaticamente
         assert!(contacts[0].is_primary);
         assert!(!contacts[1].is_primary);
-        assert_eq!(contacts[1].phone.as_deref(), Some("11987654321"));
+        assert_eq!(contacts[1].phone.as_deref(), Some("+5511987654321"));
 
         // Dois principais = erro
         let mut two_primaries = contacts.clone();

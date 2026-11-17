@@ -197,7 +197,7 @@ pub fn normalize_and_validate_phone(phone: &str, country: Option<&str>) -> CoreR
         if digits.starts_with("55") {
             digits = digits[2..].to_string();
             if digits.len() == 10 || digits.len() == 11 {
-                return Ok(digits);
+                return Ok(format!("+55{digits}"));
             }
             return Err(CoreError::Validation(
                 "Telefone inválido: para o Brasil (+55) deve conter 10 ou 11 dígitos com DDD (ex: 11987654321).".to_string(),
@@ -205,7 +205,7 @@ pub fn normalize_and_validate_phone(phone: &str, country: Option<&str>) -> CoreR
         }
 
         if (8..=15).contains(&digits.len()) {
-            return Ok(digits);
+            return Ok(format!("+{digits}"));
         }
         return Err(CoreError::Validation(
             "Telefone internacional inválido: deve conter entre 8 e 15 dígitos.".to_string(),
@@ -221,14 +221,14 @@ pub fn normalize_and_validate_phone(phone: &str, country: Option<&str>) -> CoreR
             digits = digits[2..].to_string();
         }
         if digits.len() == 10 || digits.len() == 11 {
-            Ok(digits)
+            Ok(format!("+55{digits}"))
         } else {
             Err(CoreError::Validation(
                 "Telefone inválido: para o Brasil deve conter 10 ou 11 dígitos com DDD (ex: 11987654321).".to_string(),
             ))
         }
     } else if (8..=15).contains(&digits.len()) {
-        Ok(digits)
+        Ok(format!("+{digits}"))
     } else {
         Err(CoreError::Validation(
             "Telefone inválido: para outros países deve conter entre 8 e 15 dígitos.".to_string(),
