@@ -1,6 +1,6 @@
 use crate::AppState;
 use eventrent_core::{
-    AppConfig, InitialSetupInput, InitialSetupResult, OperationMode, SessionInfo, TenantBranding,
+    AppConfig, InitialSetupInput, InitialSetupResult, OperationMode, PublicBranding, SessionInfo,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -11,7 +11,7 @@ pub struct AppStatus {
     pub default_tenant_id: String,
     pub has_owner: bool,
     pub session: Option<SessionInfo>,
-    pub branding: Option<TenantBranding>,
+    pub branding: Option<PublicBranding>,
 }
 
 #[tauri::command]
@@ -24,7 +24,7 @@ pub async fn get_app_status(state: State<'_, AppState>) -> Result<AppStatus, Str
         .map_err(crate::map_core_err)?;
     let branding = state
         .services
-        .get_tenant_branding(&state.default_tenant_id)
+        .get_public_branding(&state.default_tenant_id)
         .await
         .map_err(crate::map_core_err)?;
     let session = state.get_session_without_touch();

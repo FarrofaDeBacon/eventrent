@@ -65,7 +65,7 @@ test.describe("E2E — Módulo de Clientes (Fase 1B.2)", () => {
       page.getByText("Produtora Horizonte Eventos Ltda"),
     ).toBeVisible();
 
-    // 4. Cadastro de Novo Cliente PJ com CNPJ Alfanumérico (IN RFB nº 2.229/2025)
+    // 4. Cadastro de Novo Cliente PJ com CNPJ Alfanumérico (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024)
     await page.getByTestId("new-customer-btn").click();
     await expect(page).toHaveURL(/\/customers\/new$/);
 
@@ -83,7 +83,8 @@ test.describe("E2E — Módulo de Clientes (Fase 1B.2)", () => {
     await page.locator("#contact-email-0").fill("fernanda@megaaudio.com.br");
     await page.locator("#contact-phone-0").fill("11988887777");
 
-    // Preenche Endereço #1
+    // Preenche Endereço #1 (endereço é opcional, aciona botão para adicionar)
+    await page.getByTestId("add-address-btn").click();
     await page.locator("#address-label-0").fill("Galpão Principal");
     await page.locator("#address-cep-0").fill("04538132");
     await page.locator("#address-street-0").fill("Av. Brigadeiro Faria Lima");

@@ -384,6 +384,7 @@ pub fn run() {
             commands::customers::get_customer,
             commands::customers::create_customer,
             commands::customers::update_customer,
+            commands::customers::set_customer_active,
             commands::customers::delete_customer,
         ])
         .run(tauri::generate_context!());

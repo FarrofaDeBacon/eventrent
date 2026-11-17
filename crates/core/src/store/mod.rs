@@ -1,7 +1,7 @@
 use crate::domain::{
     AuditLogEntry, Customer, CustomerAddress, CustomerContact, CustomerFilter, CustomerPage,
-    CustomerWithDetails, Role, RoleWithPermissions, Tenant, TenantBranding, UpdateBrandingInput,
-    UserRecord, UserWithRole,
+    CustomerWithDetails, DocumentType, Role, RoleWithPermissions, Tenant, TenantBranding,
+    UpdateBrandingInput, UserRecord, UserWithRole,
 };
 use crate::error::{CoreError, Result};
 use async_trait::async_trait;
@@ -135,6 +135,7 @@ pub trait CustomerStore: Send + Sync {
     async fn find_by_document(
         &self,
         tenant_id: &str,
+        document_type: DocumentType,
         document_number: &str,
     ) -> Result<Option<Customer>>;
     async fn list(&self, tenant_id: &str, filter: &CustomerFilter) -> Result<CustomerPage>;
@@ -150,6 +151,13 @@ pub trait CustomerStore: Send + Sync {
         contacts: &[CustomerContact],
         addresses: &[CustomerAddress],
     ) -> Result<()>;
+    async fn set_active(
+        &self,
+        tenant_id: &str,
+        id: &str,
+        active: bool,
+        updated_at: &str,
+    ) -> Result<()>;
     async fn soft_delete(&self, tenant_id: &str, id: &str, deleted_at: &str) -> Result<()>;
     async fn count_active(&self, tenant_id: &str) -> Result<u64>;
 }
@@ -163,6 +171,33 @@ pub struct StoreBundle {
     pub audit: Arc<dyn AuditStore>,
     pub customers: Arc<dyn CustomerStore>,
     pub tx_manager: Option<Arc<dyn TransactionManager>>,
+}
+
+impl StoreBundle {
+    pub fn new(
+        tenants: Arc<dyn TenantStore>,
+        branding: Arc<dyn BrandingStore>,
+        roles: Arc<dyn RoleStore>,
+        users: Arc<dyn UserStore>,
+        audit: Arc<dyn AuditStore>,
+        customers: Arc<dyn CustomerStore>,
+        tx_manager: Option<Arc<dyn TransactionManager>>,
+    ) -> Result<Self> {
+        let Some(tx) = tx_manager else {
+            return Err(CoreError::Configuration(
+                "TransactionManager (tx_manager) é obrigatório no StoreBundle para garantir atomicidade transacional.".to_string(),
+            ));
+        };
+        Ok(Self {
+            tenants,
+            branding,
+            roles,
+            users,
+            audit,
+            customers,
+            tx_manager: Some(tx),
+        })
+    }
 }
 
 #[async_trait]

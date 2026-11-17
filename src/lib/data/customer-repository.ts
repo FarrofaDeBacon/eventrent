@@ -14,5 +14,6 @@ export interface CustomerRepository {
     id: string,
     input: UpdateCustomerInput,
   ): Promise<CustomerWithDetails>;
+  setCustomerActive(id: string, active: boolean): Promise<CustomerWithDetails>;
   deleteCustomer(id: string): Promise<void>;
 }

@@ -113,20 +113,28 @@ Criados de forma idempotente por `ensure_system_roles` para cada tenant:
 - A paleta de cores do tenant sobrescreve dinamicamente as variáveis de tema no `:root` sem que nenhum componente precise de código condicional.
 - O tema respeita alternância entre modo claro e modo escuro, assegurando que o contraste atenda aos critérios WCAG AA.
 
-### 5.4. Cadastro de Clientes, Documentos e IN RFB nº 2.229/2025 (Fase 1B.2)
+### 5.4. Cadastro de Clientes, Documentos e Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024 (Fase 1B.2)
 
-- **Tipos de Pessoa**:
-  - **Pessoa Física (`individual`)**: exige CPF válido com 11 dígitos numéricos (Módulo 11, pesos `10..2` e `11..2`), rejeitando sequências repetidas (`000...`, `111...`).
-  - **Pessoa Jurídica (`legal`)**: exige CNPJ válido com 14 posições, suportando tanto o formato puramente numérico tradicional quanto o **CNPJ Alfanumérico (IN RFB nº 2.229/2025)**.
-- **Regra do CNPJ Alfanumérico (IN RFB nº 2.229/2025)**:
+- **Tipos de Pessoa e Documentos**:
+  - **Pessoa Física (`individual`)**: aceita `cpf` (11 dígitos numéricos, Módulo 11, rejeitando sequências repetidas), `foreign` (passaporte/documento estrangeiro: 5 a 30 caracteres alfanuméricos normalizados em maiúsculas, sem dígito verificador) ou `none` (pré-cadastro sem documento).
+  - **Pessoa Jurídica (`legal`)**: aceita `cnpj` (14 posições, numérico tradicional ou alfanumérico conforme **Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024**), `foreign` ou `none`.
+  - **Restrição para Contratos e Notas Fiscais (Fases 4 e 7)**: Embora o cadastro inicial permita `document_type = 'none'` (para pré-cadastro/orçamento rápido) ou `foreign`, a **emissão de contratos (Fase 4) e notas fiscais (Fase 7) EXIGEM obrigatoriamente `cpf` ou `cnpj` válidos**.
+- **Regra do CNPJ Alfanumérico (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024)**:
   - As 12 primeiras posições aceitam caracteres alfanuméricos `[0-9A-Z]` (convertidos por `ASCII - 48`: `'0'..'9' -> 0..9` e `'A'..'Z' -> 17..42`).
   - Os 2 últimos caracteres são estritamente dígitos verificadores numéricos `[0-9]`, calculados em Módulo 11 com pesos `[5,4,3,2,9,8,7,6,5,4,3,2]` e `[6,5,4,3,2,9,8,7,6,5,4,3,2]`.
 - **Unicidade e Soft Delete**:
   - O documento normalizado é único entre clientes ativos do mesmo tenant via índice parcial (`idx_customer_tenant_document_active WHERE deleted_at IS NULL`). Ao excluir logicamente um cliente, o documento fica liberado para eventual recadastro futuro sem violar histórico.
 - **Integridade de Contatos e Endereços**:
-  - Todo cliente deve possuir no mínimo **1 contato** e **1 endereço** cadastrados, mantendo ao menos um registro sinalizado como principal (`is_primary`).
+  - **Contato Obrigatório (mínimo 1)**: Todo cliente deve possuir pelo menos 1 contato com telefone OU e-mail válidos, com exatamente 1 contato principal (`is_primary`). Limite máximo de 20 contatos.
+  - **Endereço Opcional (zero ou mais)**: O cadastro inicial não exige endereço (zero ou mais endereços cadastrados), viabilizando pré-cadastros rápidos e orçamentos ágeis de locação (onde o local de entrega é definido por evento na Fase 4). Se informados endereços, deve haver exatamente 1 principal (`is_primary`). Limite máximo de 20 endereços.
+  - **Exigência Fiscal (Fase 7)**: O endereço completo passa a ser estritamente **obrigatório no momento da emissão de notas fiscais (Fase 7)**.
 - **Busca Desacentuada e Paginação Determinística**:
-  - Os campos normalizados `search_text` e `name_sort` removem acentuação e padronizam caixa baixa para busca instantânea em SQLite e paginação por cursor composto `(name_sort, id)` sem duplicações ou lacunas entre páginas.
+  - Os campos normalizados `search_text` e `name_sort` removem acentuação (formas NFC e marcas combinantes NFD `U+0300..U+036F`) e padronizam caixa baixa para busca em SQLite e paginação por cursor composto `(name_sort, id)`.
+  - **Limite de Escala da Busca por Trecho (`LIKE '%termo%'`)**: Na Fase 1B.2, a consulta `WHERE tenant_id = ? AND deleted_at IS NULL AND search_text LIKE ? ORDER BY name_sort ASC, id ASC` utiliza o índice `idx_customer_tenant_sort (tenant_id=?)` e realiza varredura linear sobre os registros ativos do tenant (~11 ms para 20.000 registros). Para volumes muito maiores de clientes por tenant, a evolução planejada para a **Fase 2.5** utilizará **FTS5** no SQLite local e **índices trigram (`pg_trgm` com GIN/GiST)** no PostgreSQL.
+- **Exclusão Lógica (`delete_customer`) e Ativação (`set_active`)**:
+  - `delete_customer` executa **exclusão lógica** (`soft delete`), preenchendo `deleted_at` em `customer`, `customer_contact` e `customer_address` na mesma transação e gravando evento `customer.deleted` em `audit_log`, liberando o documento no índice único parcial para eventual recadastro.
+  - `set_active` (permissão `customer:manage`) alterna a flag `active` (`true`/`false`) preservando integralmente o cadastro e gravando `customer.activated` / `customer.deactivated` no `audit_log`.
+  - **Regra Obrigatória da Fase 4 (Orçamentos e Contratos)**: Quando existirem orçamentos, reservas ou contratos vinculados ao cliente, a exclusão (`delete_customer`) **deverá ser bloqueada** pelo domínio, orientando o usuário a utilizar a desativação (`set_active(false)`).
 - **Autorização (RBAC)**:
   - Consulta permitida com `customer:read` (**Proprietário**, **Comercial**, **Financeiro**).
   - Criação, edição e exclusão lógica exigem `customer:manage` (**Proprietário**, **Comercial**).

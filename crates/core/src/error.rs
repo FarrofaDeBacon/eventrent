@@ -12,6 +12,9 @@ pub enum CoreError {
     #[error("Erro de validação: {0}")]
     Validation(String),
 
+    #[error("Erro de configuração: {0}")]
+    Configuration(String),
+
     #[error("Conflito de registro: {0}")]
     Conflict(String),
 

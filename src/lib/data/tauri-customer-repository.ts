@@ -30,6 +30,16 @@ export class TauriCustomerRepository implements CustomerRepository {
     return await invoke<CustomerWithDetails>("update_customer", { id, input });
   }
 
+  async setCustomerActive(
+    id: string,
+    active: boolean,
+  ): Promise<CustomerWithDetails> {
+    return await invoke<CustomerWithDetails>("set_customer_active", {
+      id,
+      active,
+    });
+  }
+
   async deleteCustomer(id: string): Promise<void> {
     await invoke<void>("delete_customer", { id });
   }

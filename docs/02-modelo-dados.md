@@ -149,56 +149,61 @@ Trilha imutável de auditoria para operações sensíveis de segurança, usuári
 | `deleted_at`  | TEXT |                         | Reservado para conformidade estrutural                             |
 | `created_by`  | TEXT |                         | ID do autor do evento                                              |
 
-## 5. Tabelas do Módulo de Clientes (`0004_customers.sql`)
+## 5. Tabelas do Módulo de Clientes (`0004_customers.sql` e reconstrução `0005_customers_rev.sql`)
 
-Adicionada na Fase 1B.2 para suportar clientes Pessoa Física e Jurídica com múltiplos contatos e endereços por tenant.
+Adicionadas na Fase 1B.2 (`0004`) e reconstruídas em caráter de exceção única na `0005_customers_rev.sql` (ADR-0011) para incluir `tenant_id`/`created_by` em contatos e endereços, `document_type`, `document_number` opcional, `active`, `country`, unicidade de principal e remoção do índice `idx_customer_tenant_search` (não utilizado por `LIKE '%termo%'`).
 
 ### 5.1. `customer`
 
-| Coluna                   | Tipo | Restrições                            | Descrição                                                                  |
-| ------------------------ | ---- | ------------------------------------- | -------------------------------------------------------------------------- |
-| `id`                     | TEXT | PRIMARY KEY                           | UUID v7                                                                    |
-| `tenant_id`              | TEXT | NOT NULL, FK(tenant.id)               | Tenant proprietário                                                        |
-| `person_type`            | TEXT | NOT NULL, CHECK(`individual`/`legal`) | `individual` (PF) ou `legal` (PJ)                                          |
-| `name`                   | TEXT | NOT NULL                              | Nome completo (PF) ou Razão Social (PJ)                                    |
-| `trade_name`             | TEXT |                                       | Nome Fantasia (opcional)                                                   |
-| `document_number`        | TEXT | NOT NULL                              | CPF (11 dígitos) ou CNPJ numérico/alfanumérico normalizado (14 caracteres) |
-| `state_registration`     | TEXT |                                       | Inscrição Estadual (IE)                                                    |
-| `municipal_registration` | TEXT |                                       | Inscrição Municipal (IM)                                                   |
-| `notes`                  | TEXT |                                       | Observações operacionais ou comerciais                                     |
-| `search_text`            | TEXT | NOT NULL                              | Índice textual normalizado em minúsculas sem acentos                       |
-| `name_sort`              | TEXT | NOT NULL                              | Chave de ordenação normalizada sem diacríticos para paginação por cursor   |
-| `created_at`             | TEXT | NOT NULL                              | Data de criação UTC                                                        |
-| `updated_at`             | TEXT | NOT NULL                              | Data de atualização UTC                                                    |
-| `deleted_at`             | TEXT |                                       | Soft delete                                                                |
-| `created_by`             | TEXT | FK(app_user.id)                       | Usuário criador                                                            |
+| Coluna                   | Tipo    | Restrições                                                      | Descrição                                                                |
+| ------------------------ | ------- | --------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `id`                     | TEXT    | PRIMARY KEY                                                     | UUID v7                                                                  |
+| `tenant_id`              | TEXT    | NOT NULL, FK(tenant.id)                                         | Tenant proprietário                                                      |
+| `person_type`            | TEXT    | NOT NULL, CHECK(`individual`/`legal`)                           | `individual` (PF) ou `legal` (PJ)                                        |
+| `name`                   | TEXT    | NOT NULL                                                        | Nome completo (PF) ou Razão Social (PJ)                                  |
+| `trade_name`             | TEXT    |                                                                 | Nome Fantasia (opcional)                                                 |
+| `document_type`          | TEXT    | NOT NULL DEFAULT `'none'`, CHECK(`cpf`/`cnpj`/`foreign`/`none`) | Tipo de documento fiscal ou identificação                                |
+| `document_number`        | TEXT    |                                                                 | CPF (11), CNPJ (14), documento estrangeiro (5–30) ou `NULL` (`none`)     |
+| `state_registration`     | TEXT    |                                                                 | Inscrição Estadual (IE)                                                  |
+| `municipal_registration` | TEXT    |                                                                 | Inscrição Municipal (IM)                                                 |
+| `notes`                  | TEXT    |                                                                 | Observações operacionais ou comerciais                                   |
+| `active`                 | INTEGER | NOT NULL DEFAULT 1                                              | `1` ativo, `0` desativado (`set_active`)                                 |
+| `search_text`            | TEXT    | NOT NULL                                                        | Índice textual normalizado em minúsculas sem acentos                     |
+| `name_sort`              | TEXT    | NOT NULL                                                        | Chave de ordenação normalizada sem diacríticos para paginação por cursor |
+| `created_at`             | TEXT    | NOT NULL                                                        | Data de criação UTC                                                      |
+| `updated_at`             | TEXT    | NOT NULL                                                        | Data de atualização UTC                                                  |
+| `deleted_at`             | TEXT    |                                                                 | Soft delete                                                              |
+| `created_by`             | TEXT    | FK(app_user.id)                                                 | Usuário criador                                                          |
 
-- **Índice único parcial**: `idx_customer_tenant_document_active ON customer (tenant_id, document_number) WHERE deleted_at IS NULL`
+- **Índice único parcial**: `idx_customer_tenant_doc_active ON customer (tenant_id, document_type, document_number) WHERE document_number IS NOT NULL AND deleted_at IS NULL`
 - **Índice de paginação por cursor**: `idx_customer_tenant_sort ON customer (tenant_id, name_sort, id) WHERE deleted_at IS NULL`
-- **Índice de busca**: `idx_customer_tenant_search ON customer (tenant_id, search_text) WHERE deleted_at IS NULL`
 
 ### 5.2. `customer_contact`
 
-| Coluna        | Tipo    | Restrições                | Descrição                           |
-| ------------- | ------- | ------------------------- | ----------------------------------- |
-| `id`          | TEXT    | PRIMARY KEY               | UUID v7                             |
-| `customer_id` | TEXT    | NOT NULL, FK(customer.id) | Cliente associado                   |
-| `name`        | TEXT    | NOT NULL                  | Nome do contato                     |
-| `email`       | TEXT    |                           | E-mail de contato                   |
-| `phone`       | TEXT    |                           | Telefone / WhatsApp                 |
-| `role`        | TEXT    |                           | Cargo ou função (Produtor, Compras) |
-| `is_primary`  | INTEGER | NOT NULL DEFAULT 0        | `1` para contato principal          |
-| `created_at`  | TEXT    | NOT NULL                  | Data de criação UTC                 |
-| `updated_at`  | TEXT    | NOT NULL                  | Data de atualização UTC             |
-| `deleted_at`  | TEXT    |                           | Soft delete                         |
+| Coluna        | Tipo    | Restrições                | Descrição                            |
+| ------------- | ------- | ------------------------- | ------------------------------------ |
+| `id`          | TEXT    | PRIMARY KEY               | UUID v7                              |
+| `tenant_id`   | TEXT    | NOT NULL, FK(tenant.id)   | Tenant proprietário (isolamento RLS) |
+| `customer_id` | TEXT    | NOT NULL, FK(customer.id) | Cliente associado                    |
+| `name`        | TEXT    | NOT NULL                  | Nome do contato                      |
+| `email`       | TEXT    |                           | E-mail de contato                    |
+| `phone`       | TEXT    |                           | Telefone / WhatsApp                  |
+| `role`        | TEXT    |                           | Cargo ou função (Produtor, Compras)  |
+| `is_primary`  | INTEGER | NOT NULL DEFAULT 0        | `1` para contato principal           |
+| `created_at`  | TEXT    | NOT NULL                  | Data de criação UTC                  |
+| `updated_at`  | TEXT    | NOT NULL                  | Data de atualização UTC              |
+| `deleted_at`  | TEXT    |                           | Soft delete                          |
+| `created_by`  | TEXT    | FK(app_user.id)           | Usuário criador                      |
 
-- **Índice**: `idx_customer_contact_customer ON customer_contact (customer_id) WHERE deleted_at IS NULL`
+- **Índice**: `idx_customer_contact_tenant_customer ON customer_contact (tenant_id, customer_id) WHERE deleted_at IS NULL`
+- **Índice único parcial de principal**: `idx_customer_contact_primary_active ON customer_contact (tenant_id, customer_id) WHERE is_primary = 1 AND deleted_at IS NULL`
 
 ### 5.3. `customer_address`
 
 | Coluna         | Tipo    | Restrições                | Descrição                            |
 | -------------- | ------- | ------------------------- | ------------------------------------ |
 | `id`           | TEXT    | PRIMARY KEY               | UUID v7                              |
+| `tenant_id`    | TEXT    | NOT NULL, FK(tenant.id)   | Tenant proprietário (isolamento RLS) |
 | `customer_id`  | TEXT    | NOT NULL, FK(customer.id) | Cliente associado                    |
 | `label`        | TEXT    | NOT NULL                  | Rótulo (`Sede`, `Galpão`, `Entrega`) |
 | `street`       | TEXT    | NOT NULL                  | Logradouro                           |
@@ -208,78 +213,15 @@ Adicionada na Fase 1B.2 para suportar clientes Pessoa Física e Jurídica com m�
 | `city`         | TEXT    | NOT NULL                  | Cidade                               |
 | `state`        | TEXT    | NOT NULL                  | UF (2 letras)                        |
 | `postal_code`  | TEXT    | NOT NULL                  | CEP                                  |
+| `country`      | TEXT    | NOT NULL DEFAULT `'BR'`   | País (ISO-3166 alfa-2)               |
 | `is_primary`   | INTEGER | NOT NULL DEFAULT 0        | `1` para endereço principal          |
 | `created_at`   | TEXT    | NOT NULL                  | Data de criação UTC                  |
 | `updated_at`   | TEXT    | NOT NULL                  | Data de atualização UTC              |
 | `deleted_at`   | TEXT    |                           | Soft delete                          |
+| `created_by`   | TEXT    | FK(app_user.id)           | Usuário criador                      |
 
-- **Índice**: `idx_customer_address_customer ON customer_address (customer_id) WHERE deleted_at IS NULL`
-
-## 6. Diretrizes de Tipos de Dados
-
-Adicionada na Fase 1B.2 para suportar clientes Pessoa Física e Jurídica com múltiplos contatos e endereços por tenant.
-
-### 5.1. `customer`
-
-| Coluna                   | Tipo | Restrições                            | Descrição                                                                  |
-| ------------------------ | ---- | ------------------------------------- | -------------------------------------------------------------------------- |
-| `id`                     | TEXT | PRIMARY KEY                           | UUID v7                                                                    |
-| `tenant_id`              | TEXT | NOT NULL, FK(tenant.id)               | Tenant proprietário                                                        |
-| `person_type`            | TEXT | NOT NULL, CHECK(`individual`/`legal`) | `individual` (PF) ou `legal` (PJ)                                          |
-| `name`                   | TEXT | NOT NULL                              | Nome completo (PF) ou Razão Social (PJ)                                    |
-| `trade_name`             | TEXT |                                       | Nome Fantasia (opcional)                                                   |
-| `document_number`        | TEXT | NOT NULL                              | CPF (11 dígitos) ou CNPJ numérico/alfanumérico normalizado (14 caracteres) |
-| `state_registration`     | TEXT |                                       | Inscrição Estadual (IE)                                                    |
-| `municipal_registration` | TEXT |                                       | Inscrição Municipal (IM)                                                   |
-| `notes`                  | TEXT |                                       | Observações operacionais ou comerciais                                     |
-| `search_text`            | TEXT | NOT NULL                              | Índice textual normalizado em minúsculas sem acentos                       |
-| `name_sort`              | TEXT | NOT NULL                              | Chave de ordenação normalizada sem diacríticos para paginação por cursor   |
-| `created_at`             | TEXT | NOT NULL                              | Data de criação UTC                                                        |
-| `updated_at`             | TEXT | NOT NULL                              | Data de atualização UTC                                                    |
-| `deleted_at`             | TEXT |                                       | Soft delete                                                                |
-| `created_by`             | TEXT | FK(app_user.id)                       | Usuário criador                                                            |
-
-- **Índice único parcial**: `idx_customer_tenant_document_active ON customer (tenant_id, document_number) WHERE deleted_at IS NULL`
-- **Índice de paginação por cursor**: `idx_customer_tenant_sort ON customer (tenant_id, name_sort, id) WHERE deleted_at IS NULL`
-- **Índice de busca**: `idx_customer_tenant_search ON customer (tenant_id, search_text) WHERE deleted_at IS NULL`
-
-### 5.2. `customer_contact`
-
-| Coluna        | Tipo    | Restrições                | Descrição                           |
-| ------------- | ------- | ------------------------- | ----------------------------------- |
-| `id`          | TEXT    | PRIMARY KEY               | UUID v7                             |
-| `customer_id` | TEXT    | NOT NULL, FK(customer.id) | Cliente associado                   |
-| `name`        | TEXT    | NOT NULL                  | Nome do contato                     |
-| `email`       | TEXT    |                           | E-mail de contato                   |
-| `phone`       | TEXT    |                           | Telefone / WhatsApp                 |
-| `role`        | TEXT    |                           | Cargo ou função (Produtor, Compras) |
-| `is_primary`  | INTEGER | NOT NULL DEFAULT 0        | `1` para contato principal          |
-| `created_at`  | TEXT    | NOT NULL                  | Data de criação UTC                 |
-| `updated_at`  | TEXT    | NOT NULL                  | Data de atualização UTC             |
-| `deleted_at`  | TEXT    |                           | Soft delete                         |
-
-- **Índice**: `idx_customer_contact_customer ON customer_contact (customer_id) WHERE deleted_at IS NULL`
-
-### 5.3. `customer_address`
-
-| Coluna         | Tipo    | Restrições                | Descrição                            |
-| -------------- | ------- | ------------------------- | ------------------------------------ |
-| `id`           | TEXT    | PRIMARY KEY               | UUID v7                              |
-| `customer_id`  | TEXT    | NOT NULL, FK(customer.id) | Cliente associado                    |
-| `label`        | TEXT    | NOT NULL                  | Rótulo (`Sede`, `Galpão`, `Entrega`) |
-| `street`       | TEXT    | NOT NULL                  | Logradouro                           |
-| `number`       | TEXT    | NOT NULL                  | Número                               |
-| `complement`   | TEXT    |                           | Complemento                          |
-| `neighborhood` | TEXT    | NOT NULL                  | Bairro                               |
-| `city`         | TEXT    | NOT NULL                  | Cidade                               |
-| `state`        | TEXT    | NOT NULL                  | UF (2 letras)                        |
-| `postal_code`  | TEXT    | NOT NULL                  | CEP                                  |
-| `is_primary`   | INTEGER | NOT NULL DEFAULT 0        | `1` para endereço principal          |
-| `created_at`   | TEXT    | NOT NULL                  | Data de criação UTC                  |
-| `updated_at`   | TEXT    | NOT NULL                  | Data de atualização UTC              |
-| `deleted_at`   | TEXT    |                           | Soft delete                          |
-
-- **Índice**: `idx_customer_address_customer ON customer_address (customer_id) WHERE deleted_at IS NULL`
+- **Índice**: `idx_customer_address_tenant_customer ON customer_address (tenant_id, customer_id) WHERE deleted_at IS NULL`
+- **Índice único parcial de principal**: `idx_customer_address_primary_active ON customer_address (tenant_id, customer_id) WHERE is_primary = 1 AND deleted_at IS NULL`
 
 ## 6. Diretrizes de Tipos de Dados
 
@@ -294,7 +236,8 @@ Toda migração já incorporada à branch principal (`main`) torna-se **estritam
 - `crates/store-sqlite/migrations/0001_init_tenant_and_branding.sql`
 - `crates/store-sqlite/migrations/0002_users_roles_and_audit.sql`
 - `crates/store-sqlite/migrations/0003_branding_dark_logo_and_icon.sql`
+- `crates/store-sqlite/migrations/0004_customers.sql`
 
-A Fase 1B.2 adicionou a migração incremental `crates/store-sqlite/migrations/0004_customers.sql`, que passará automaticamente a integrar o conjunto congelado após o merge na `main`.
-Qualquer alteração de esquema estrutural no banco de dados (novas tabelas, novas colunas, índices ou triggers) deve obrigatoriamente ser adicionada como uma nova migração incremental sequencial (`0005_...`, etc.).
+A Fase 1B.2-rev adicionou a migração incremental `crates/store-sqlite/migrations/0005_customers_rev.sql`, que passará automaticamente a integrar o conjunto congelado após o merge na `main`.
+Qualquer alteração de esquema estrutural no banco de dados (novas tabelas, novas colunas, índices ou triggers) deve obrigatoriamente ser adicionada como uma nova migração incremental sequencial (`0006_...`, etc.).
 O pipeline de CI (`.github/workflows/ci.yml`) executa `node scripts/check-migrations.js` comparando contra `origin/main` e bloqueia a execução caso qualquer arquivo de migração preexistente na `main` seja modificado, removido ou renomeado.

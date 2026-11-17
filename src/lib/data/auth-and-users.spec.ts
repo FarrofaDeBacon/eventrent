@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { canAccessRoute, hasPermission } from "./index";
 import {
+  getSharedMockState,
   MockAuthRepository,
   resetSharedMockState,
 } from "./mock-auth-repository";
+import systemRolesFixture from "./fixtures/system-roles.json";
 import { MockUserRepository } from "./mock-user-repository";
 import { DEFAULT_COMPANY_NAME, PERMISSIONS, ROLE_SLUGS } from "./types";
 
@@ -153,5 +155,19 @@ describe("AuthRepository & UserRepository (Regras de Domínio e Guards)", () => 
     await expect(userRepo.listUsers()).rejects.toThrow(
       /Permissão insuficiente/i,
     );
+  });
+
+  it("deve manter paridade exata entre perfis do mock e SYSTEM_ROLES do core (system-roles.json)", () => {
+    const mockRoles = getSharedMockState().roles;
+    expect(mockRoles).toHaveLength(systemRolesFixture.length);
+
+    for (const expected of systemRolesFixture) {
+      const actual = mockRoles.find((r) => r.slug === expected.slug);
+      expect(actual, `Perfil '${expected.slug}' ausente no mock`).toBeDefined();
+      expect(actual!.name).toBe(expected.name);
+      expect([...actual!.permissions].sort()).toEqual(
+        [...expected.permissions].sort(),
+      );
+    }
   });
 });

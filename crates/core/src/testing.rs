@@ -1,7 +1,7 @@
 use crate::domain::{
     CreateAddressInput, CreateContactInput, CreateCustomerInput, CreateUserInput, CustomerFilter,
-    InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode, PersonType,
-    RecoverPasswordInput, ResetPasswordInput, SessionInfo, UpdateBrandingInput,
+    DocumentType, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
+    PersonType, RecoverPasswordInput, ResetPasswordInput, SessionInfo, UpdateBrandingInput,
     UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole, ROLE_SLUG_COMMERCIAL,
     ROLE_SLUG_OWNER,
 };
@@ -451,6 +451,7 @@ pub async fn contract_recovery_key_rotation_and_lockout(
                 recovery_key: "ER-CHAVE-INVALIDA-0000".to_string(),
                 new_password: "TentativaInvalida#2026".to_string(),
             },
+            &LoginPolicy::default(),
         )
         .await;
     assert!(matches!(fail_recovery, Err(CoreError::InvalidCredentials)));
@@ -464,6 +465,7 @@ pub async fn contract_recovery_key_rotation_and_lockout(
                 recovery_key: initial_recovery_key.to_string(),
                 new_password: "AnaRecuperada#2026".to_string(),
             },
+            &LoginPolicy::default(),
         )
         .await
         .expect("Recuperação via chave de recuperação deve funcionar");
@@ -494,6 +496,7 @@ pub async fn contract_recovery_key_rotation_and_lockout(
                 recovery_key: initial_recovery_key.to_string(),
                 new_password: "TentativaReusoChave#2026".to_string(),
             },
+            &LoginPolicy::default(),
         )
         .await;
     assert!(matches!(old_key_reuse, Err(CoreError::InvalidCredentials)));
@@ -514,6 +517,14 @@ pub async fn contract_audit_log(stores: &StoreBundle, tenant_id: &str) {
     assert!(audits
         .iter()
         .any(|a| a.action == "auth.recovery_key_rotated"));
+
+    for a in &audits {
+        assert!(
+            !a.summary.contains("ana@luzesom.com.br"),
+            "Violação LGPD: e-mail cru do usuário presente no audit_log: {}",
+            a.summary
+        );
+    }
 }
 
 /// 10. Contrato: Índices únicos parciais WHERE deleted_at IS NULL.
@@ -626,11 +637,13 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         person_type: PersonType::Individual,
         name: "Carlos Eduardo da Silva".to_string(),
         trade_name: None,
-        document_number: "529.982.247-25".to_string(),
+        document_type: DocumentType::Cpf,
+        document_number: Some("529.982.247-25".to_string()),
         state_registration: None,
         municipal_registration: None,
         notes: Some("Cliente VIP de eventos corporativos".to_string()),
         contacts: vec![CreateContactInput {
+            id: None,
             name: "Carlos Silva".to_string(),
             email: Some("carlos@silvaeventos.com.br".to_string()),
             phone: Some("(11) 99887-7665".to_string()),
@@ -638,6 +651,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             is_primary: true,
         }],
         addresses: vec![CreateAddressInput {
+            id: None,
             label: "Sede".to_string(),
             street: "Av. Paulista".to_string(),
             number: "1000".to_string(),
@@ -646,6 +660,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             city: "São Paulo".to_string(),
             state: "SP".to_string(),
             postal_code: "01310-100".to_string(),
+            country: Some("BR".to_string()),
             is_primary: true,
         }],
     };
@@ -655,20 +670,27 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         .await
         .expect("Falha ao criar cliente PF com CPF válido");
     assert_eq!(created_pf.customer.name, "Carlos Eduardo da Silva");
-    assert_eq!(created_pf.customer.document_number, "52998224725");
+    assert_eq!(created_pf.customer.document_type, DocumentType::Cpf);
+    assert_eq!(
+        created_pf.customer.document_number.as_deref(),
+        Some("52998224725")
+    );
+    assert!(created_pf.customer.active);
     assert_eq!(created_pf.contacts.len(), 1);
     assert_eq!(created_pf.addresses.len(), 1);
 
-    // 2. Cria cliente PJ com CNPJ alfanumérico válido (IN RFB nº 2.229/2025)
+    // 2. Cria cliente PJ com CNPJ alfanumérico válido (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024)
     let pj_input = CreateCustomerInput {
         person_type: PersonType::Legal,
         name: "Prime Audiovisual & Iluminação Ltda.".to_string(),
         trade_name: Some("Prime Eventos".to_string()),
-        document_number: "12.ABC.345/0001-88".to_string(),
+        document_type: DocumentType::Cnpj,
+        document_number: Some("12.ABC.345/01DE-35".to_string()),
         state_registration: Some("123.456.789.000".to_string()),
         municipal_registration: Some("987654".to_string()),
         notes: None,
         contacts: vec![CreateContactInput {
+            id: None,
             name: "Diretoria Financeira".to_string(),
             email: Some("financeiro@primeeventos.com".to_string()),
             phone: Some("(11) 3322-1100".to_string()),
@@ -676,6 +698,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             is_primary: true,
         }],
         addresses: vec![CreateAddressInput {
+            id: None,
             label: "Galpão Principal".to_string(),
             street: "Rua dos Produtores".to_string(),
             number: "500".to_string(),
@@ -684,6 +707,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             city: "São Paulo".to_string(),
             state: "SP".to_string(),
             postal_code: "05311-000".to_string(),
+            country: None,
             is_primary: true,
         }],
     };
@@ -692,7 +716,40 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         .create_customer(session, &pj_input)
         .await
         .expect("Falha ao criar cliente PJ com CNPJ alfanumérico");
-    assert_eq!(created_pj.customer.document_number, "12ABC345000188");
+    assert_eq!(
+        created_pj.customer.document_number.as_deref(),
+        Some("12ABC34501DE35")
+    );
+    assert_eq!(created_pj.addresses[0].country, "BR");
+
+    // 2.1 Cria cliente sem documento (pré-cadastro: document_type = none) e cliente estrangeiro (foreign)
+    let mut no_doc_input = pf_input.clone();
+    no_doc_input.name = "Pré Cadastro Evento".to_string();
+    no_doc_input.document_type = DocumentType::None;
+    no_doc_input.document_number = None;
+    let created_no_doc = services
+        .create_customer(session, &no_doc_input)
+        .await
+        .expect("Pré-cadastro sem documento deve ser permitido");
+    assert_eq!(created_no_doc.customer.document_type, DocumentType::None);
+    assert!(created_no_doc.customer.document_number.is_none());
+
+    let mut foreign_input = pf_input.clone();
+    foreign_input.name = "John Doe International".to_string();
+    foreign_input.document_type = DocumentType::Foreign;
+    foreign_input.document_number = Some("us-pass-998877".to_string());
+    let created_foreign = services
+        .create_customer(session, &foreign_input)
+        .await
+        .expect("Cliente estrangeiro com passaporte alfanumérico deve ser aceito");
+    assert_eq!(
+        created_foreign.customer.document_type,
+        DocumentType::Foreign
+    );
+    assert_eq!(
+        created_foreign.customer.document_number.as_deref(),
+        Some("USPASS998877")
+    );
 
     // 3. Unicidade ativa: tentativa de criar cliente duplicado com mesmo CPF deve falhar com CoreError::Conflict
     let dup_pf = services.create_customer(session, &pf_input).await;
@@ -701,14 +758,16 @@ pub async fn contract_customer_crud_and_lgpd_audit(
 
     // 4. Incompatibilidade: PF com CNPJ e PJ com CPF
     let mut invalid_pair1 = pf_input.clone();
-    invalid_pair1.document_number = "12.ABC.345/0001-88".to_string();
+    invalid_pair1.document_type = DocumentType::Cnpj;
+    invalid_pair1.document_number = Some("12.ABC.345/01DE-35".to_string());
     assert!(services
         .create_customer(session, &invalid_pair1)
         .await
         .is_err());
 
     let mut invalid_pair2 = pj_input.clone();
-    invalid_pair2.document_number = "529.982.247-25".to_string();
+    invalid_pair2.document_type = DocumentType::Cpf;
+    invalid_pair2.document_number = Some("529.982.247-25".to_string());
     assert!(services
         .create_customer(session, &invalid_pair2)
         .await
@@ -747,30 +806,126 @@ pub async fn contract_customer_crud_and_lgpd_audit(
     assert_eq!(list_cnpj.items.len(), 1);
     assert_eq!(list_cnpj.items[0].id, created_pj.customer.id);
 
-    // 6. Atualização de cliente
+    // 5.3 Busca por telefone contendo apenas dígitos encontra o cliente
+    let list_phone = services
+        .list_customers(
+            session,
+            &CustomerFilter {
+                query: Some("11998877665".to_string()),
+                person_type: None,
+                cursor: None,
+                limit: Some(10),
+            },
+        )
+        .await
+        .expect("Busca por telefone apenas dígitos");
+    assert_eq!(list_phone.items.len(), 3);
+    assert!(list_phone
+        .items
+        .iter()
+        .any(|c| c.id == created_pf.customer.id));
+
+    // 5.4 Busca por nome do contato encontra o cliente
+    let list_contact = services
+        .list_customers(
+            session,
+            &CustomerFilter {
+                query: Some("Diretoria Financeira".to_string()),
+                person_type: None,
+                cursor: None,
+                limit: Some(10),
+            },
+        )
+        .await
+        .expect("Busca por nome de contato");
+    assert_eq!(list_contact.items.len(), 1);
+    assert_eq!(list_contact.items[0].id, created_pj.customer.id);
+
+    // 5.5 Validação de limites na consulta de busca: máx 100 caracteres e máx 8 palavras
+    let query_too_long = services
+        .list_customers(
+            session,
+            &CustomerFilter {
+                query: Some("a".repeat(101)),
+                person_type: None,
+                cursor: None,
+                limit: None,
+            },
+        )
+        .await;
+    assert!(
+        matches!(query_too_long, Err(CoreError::Validation(msg)) if msg.contains("100 caracteres"))
+    );
+
+    let query_too_many_words = services
+        .list_customers(
+            session,
+            &CustomerFilter {
+                query: Some("um dois tres quatro cinco seis sete oito nove".to_string()),
+                person_type: None,
+                cursor: None,
+                limit: None,
+            },
+        )
+        .await;
+    assert!(
+        matches!(query_too_many_words, Err(CoreError::Validation(msg)) if msg.contains("8 palavras"))
+    );
+
+    // 5.3 Cursor inválido ou adulterado deve retornar erro de validação limpo
+    let bad_cursor_res = services
+        .list_customers(
+            session,
+            &CustomerFilter {
+                query: None,
+                person_type: None,
+                cursor: Some("cursor-adulterado-!@#".to_string()),
+                limit: None,
+            },
+        )
+        .await;
+    assert!(matches!(bad_cursor_res, Err(CoreError::Validation(_))));
+
+    // 6. Atualização de cliente preservando IDs estáveis de contato e endereço
+    let original_contact_id = created_pf.contacts[0].id.clone();
+    let original_address_id = created_pf.addresses[0].id.clone();
+
+    let mut updated_contacts: Vec<CreateContactInput> = created_pf
+        .contacts
+        .into_iter()
+        .map(|c| CreateContactInput {
+            id: Some(c.id),
+            name: "Carlos Silva Atualizado".to_string(),
+            email: c.email,
+            phone: c.phone,
+            role: c.role,
+            is_primary: false,
+        })
+        .collect();
+    updated_contacts.push(CreateContactInput {
+        id: None,
+        name: "Segundo Contato".to_string(),
+        email: Some("segundo@silvaeventos.com.br".to_string()),
+        phone: None,
+        role: Some("Produção".to_string()),
+        is_primary: true,
+    });
+
     let update_input = UpdateCustomerInput {
         person_type: PersonType::Individual,
         name: "Carlos Eduardo da Silva Atualizado".to_string(),
         trade_name: Some("Carlos VIP".to_string()),
-        document_number: "529.982.247-25".to_string(),
+        document_type: DocumentType::Cpf,
+        document_number: Some("529.982.247-25".to_string()),
         state_registration: None,
         municipal_registration: None,
         notes: Some("Notas atualizadas".to_string()),
-        contacts: created_pf
-            .contacts
-            .into_iter()
-            .map(|c| CreateContactInput {
-                name: c.name,
-                email: c.email,
-                phone: c.phone,
-                role: c.role,
-                is_primary: c.is_primary,
-            })
-            .collect(),
+        contacts: updated_contacts,
         addresses: created_pf
             .addresses
             .into_iter()
             .map(|a| CreateAddressInput {
+                id: Some(a.id),
                 label: a.label,
                 street: a.street,
                 number: a.number,
@@ -779,9 +934,11 @@ pub async fn contract_customer_crud_and_lgpd_audit(
                 city: a.city,
                 state: a.state,
                 postal_code: a.postal_code,
+                country: Some(a.country),
                 is_primary: a.is_primary,
             })
             .collect(),
+        expected_updated_at: created_pf.customer.updated_at.clone(),
     };
 
     let updated = services
@@ -789,6 +946,65 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         .await
         .expect("Falha ao atualizar cliente");
     assert_eq!(updated.customer.name, "Carlos Eduardo da Silva Atualizado");
+
+    // Tentativa de atualização concorrente com expected_updated_at defasado deve falhar
+    let stale_concurrent_update = services
+        .update_customer(
+            session,
+            &created_pf.customer.id,
+            &UpdateCustomerInput {
+                person_type: PersonType::Individual,
+                name: "Tentativa Concorrente Bloqueada".to_string(),
+                trade_name: None,
+                document_type: DocumentType::Cpf,
+                document_number: Some("52998224725".to_string()),
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                contacts: vec![CreateContactInput {
+                    id: Some(original_contact_id.clone()),
+                    name: "Carlos".to_string(),
+                    email: Some("carlos@ex.com".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+                expected_updated_at: created_pf.customer.updated_at.clone(),
+            },
+        )
+        .await;
+
+    match stale_concurrent_update {
+        Err(CoreError::Conflict(msg)) => {
+            assert!(
+                msg.contains("O cadastro foi alterado por outra pessoa"),
+                "Mensagem de conflito inesperada: {msg}"
+            );
+        }
+        other => panic!("Esperado CoreError::Conflict por concorrência, obtido: {other:?}"),
+    }
+    assert!(
+        updated
+            .contacts
+            .iter()
+            .any(|c| c.id == original_contact_id && c.name == "Carlos Silva Atualizado"),
+        "ID do contato existente deve ser preservado após atualização"
+    );
+    assert_eq!(updated.contacts.len(), 2);
+    assert_eq!(updated.addresses[0].id, original_address_id);
+
+    // 6.1 Ativação e desativação (set_customer_active)
+    let deactivated = services
+        .set_customer_active(session, &created_pf.customer.id, false)
+        .await
+        .expect("Falha ao desativar cliente");
+    assert!(!deactivated.customer.active);
+    let reactivated = services
+        .set_customer_active(session, &created_pf.customer.id, true)
+        .await
+        .expect("Falha ao reativar cliente");
+    assert!(reactivated.customer.active);
 
     // 7. Soft delete e reativação de documento
     services
@@ -824,25 +1040,55 @@ pub async fn contract_customer_crud_and_lgpd_audit(
     assert!(!customer_audits.is_empty());
 
     for entry in &customer_audits {
-        // NUNCA deve conter o CPF completo 52998224725 nem 529.982.247-25
+        // NUNCA deve conter o CPF completo, CNPJ completo, e-mail completo ou telefone completo
         assert!(
-            !entry.summary.contains("52998224725"),
+            !entry.summary.contains("Carlos Eduardo da Silva"),
+            "Violação LGPD: nome completo de PF no log de auditoria!"
+        );
+        assert!(
+            !entry.summary.contains("52998224725") && !entry.summary.contains("529.982.247-25"),
             "Violação LGPD: CPF cru no log de auditoria!"
         );
         assert!(
-            !entry.summary.contains("529.982.247-25"),
-            "Violação LGPD: CPF cru formatado no log de auditoria!"
-        );
-        // NUNCA deve conter o CNPJ completo 12ABC345000188 nem 12.ABC.345/0001-88
-        assert!(
-            !entry.summary.contains("12ABC345000188"),
+            !entry.summary.contains("12ABC34501DE35")
+                && !entry.summary.contains("12.ABC.345/01DE-35"),
             "Violação LGPD: CNPJ cru no log de auditoria!"
         );
         assert!(
-            !entry.summary.contains("12.ABC.345/0001-88"),
-            "Violação LGPD: CNPJ cru formatado no log de auditoria!"
+            !entry.summary.contains("carlos@silvaeventos.com.br")
+                && !entry.summary.contains("financeiro@primeeventos.com"),
+            "Violação LGPD: e-mail completo no log de auditoria!"
         );
+        assert!(
+            !entry.summary.contains("99887-7665") && !entry.summary.contains("3322-1100"),
+            "Violação LGPD: telefone completo no log de auditoria!"
+        );
+        println!("[AUDIT SUMMARY] {} => {}", entry.action, entry.summary);
     }
+
+    // 9. Prova LGPD em {:?} (Debug manual)
+    let debug_details = format!("{deactivated:?}");
+    let debug_filter = format!(
+        "{:?}",
+        CustomerFilter {
+            query: Some("529.982.247-25".to_string()),
+            person_type: Some(PersonType::Individual),
+            cursor: Some("abc".to_string()),
+            limit: Some(50),
+        }
+    );
+    let debug_create = format!("{pf_input:?}");
+    let debug_update = format!("{update_input:?}");
+    for dbg in [&debug_details, &debug_filter, &debug_create, &debug_update] {
+        assert!(!dbg.contains("52998224725") && !dbg.contains("529.982.247-25"));
+        assert!(!dbg.contains("carlos@silvaeventos.com.br"));
+        assert!(!dbg.contains("99887-7665"));
+        assert!(!dbg.contains("Av. Paulista"));
+        assert!(!dbg.contains("01310-100"));
+    }
+    assert!(debug_details.contains("***.***.***-25"));
+    assert!(debug_details.contains("c***@silvaeventos.com.br"));
+    assert!(debug_details.contains("(11) *****-7665"));
 }
 
 /// Suíte genérica agregadora de testes de contrato.
@@ -1074,11 +1320,95 @@ mod unit_tests {
         assert!(!user_rec_debug.contains("secret_hash_value"));
         assert!(!user_rec_debug.contains("secret_key_hash_value"));
         assert!(user_rec_debug.contains("[REDACTED]"));
+
+        // Debug de Customer, CreateCustomerInput e UpdateCustomerInput:
+        // PF mascara nome com iniciais; PJ exibe a razão social
+        use crate::domain::{
+            mask_individual_name_for_audit, CreateCustomerInput, Customer, DocumentType,
+            PersonType, UpdateCustomerInput,
+        };
+        let pf_name = "Carlos Eduardo da Silva";
+        let pj_name = "Produtora Horizonte Eventos Ltda";
+        let masked_pf = mask_individual_name_for_audit(pf_name);
+
+        let pf_cust = Customer {
+            id: "cust-1".to_string(),
+            tenant_id: "t1".to_string(),
+            person_type: PersonType::Individual,
+            name: pf_name.to_string(),
+            trade_name: None,
+            document_type: DocumentType::Cpf,
+            document_number: Some("52998224725".to_string()),
+            state_registration: None,
+            municipal_registration: None,
+            notes: None,
+            active: true,
+            search_text: "carlos eduardo".to_string(),
+            name_sort: "carlos eduardo".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            deleted_at: None,
+            created_by: None,
+        };
+        let pf_cust_dbg = format!("{pf_cust:?}");
+        assert!(!pf_cust_dbg.contains(pf_name));
+        assert!(pf_cust_dbg.contains(&masked_pf));
+        assert!(!pf_cust_dbg.contains("52998224725"));
+
+        let pf_create = CreateCustomerInput {
+            person_type: PersonType::Individual,
+            name: pf_name.to_string(),
+            trade_name: None,
+            document_type: DocumentType::Cpf,
+            document_number: Some("52998224725".to_string()),
+            state_registration: None,
+            municipal_registration: None,
+            notes: None,
+            contacts: vec![],
+            addresses: vec![],
+        };
+        let pf_create_dbg = format!("{pf_create:?}");
+        assert!(!pf_create_dbg.contains(pf_name));
+        assert!(pf_create_dbg.contains(&masked_pf));
+
+        let pf_update = UpdateCustomerInput {
+            person_type: PersonType::Individual,
+            name: pf_name.to_string(),
+            trade_name: None,
+            document_type: DocumentType::Cpf,
+            document_number: Some("52998224725".to_string()),
+            state_registration: None,
+            municipal_registration: None,
+            notes: None,
+            contacts: vec![],
+            addresses: vec![],
+            expected_updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let pf_update_dbg = format!("{pf_update:?}");
+        assert!(!pf_update_dbg.contains(pf_name));
+        assert!(pf_update_dbg.contains(&masked_pf));
+
+        let pj_create = CreateCustomerInput {
+            person_type: PersonType::Legal,
+            name: pj_name.to_string(),
+            trade_name: None,
+            document_type: DocumentType::Cnpj,
+            document_number: Some("12ABC34501DE35".to_string()),
+            state_registration: None,
+            municipal_registration: None,
+            notes: None,
+            contacts: vec![],
+            addresses: vec![],
+        };
+        let pj_create_dbg = format!("{pj_create:?}");
+        assert!(pj_create_dbg.contains(pj_name));
+        assert!(!pj_create_dbg.contains("12ABC34501DE35"));
     }
 
     #[test]
     fn test_password_and_email_validation() {
-        use crate::services::{validate_email, validate_password};
+        use crate::domain::validation::validate_email;
+        use crate::services::validate_password;
 
         // Senhas: mínimo 8 e máximo 128 caracteres (contagem Unicode)
         assert!(validate_password("1234567").is_err());
@@ -1126,6 +1456,574 @@ mod unit_tests {
         assert!(validate_email(&local_65).is_err());
         // TLD inválido terminando em hífen
         assert!(validate_email("usuario@dominio.com-").is_err());
+        // Rótulos de domínio inválidos e caracteres proibidos (ex: exclamação)
+        assert!(validate_email("usuario@exa!mple.com").is_err());
+        assert!(validate_email("usuario@sub.-empresa.com").is_err());
+        assert!(validate_email("usuario@empresa-.com").is_err());
+        // Parte local com caracteres proibidos (aspas, comentários, acentos e colchetes)
+        assert!(validate_email("usuá[rio]@dominio.com").is_err());
+        assert!(validate_email("\"usuario\"@dominio.com").is_err());
+        assert!(validate_email("usuario(comentario)@dominio.com").is_err());
+        assert!(validate_email("usuario@(comentario)dominio.com").is_err());
+    }
+
+    #[test]
+    fn test_customer_domain_validations_and_limits() {
+        use crate::domain::customer::*;
+        use crate::domain::validation::*;
+
+        // 1. CEP: BR normaliza para 8 dígitos, rejeita formato inválido
+        assert_eq!(
+            normalize_and_validate_postal_code("01310-100", "BR").unwrap(),
+            "01310100"
+        );
+        assert_eq!(
+            normalize_and_validate_postal_code("01310100", "br").unwrap(),
+            "01310100"
+        );
+        assert_eq!(
+            normalize_and_validate_postal_code(" 01310.100 ", "BR").unwrap(),
+            "01310100"
+        );
+        assert!(normalize_and_validate_postal_code("01310-10", "BR").is_err());
+        assert!(normalize_and_validate_postal_code("01310-1000", "BR").is_err());
+        assert!(normalize_and_validate_postal_code("01310-abc", "BR").is_err());
+        // Não-BR aceita códigos postais internacionais até 20 caracteres
+        assert_eq!(
+            normalize_and_validate_postal_code("90210", "US").unwrap(),
+            "90210"
+        );
+        assert_eq!(
+            normalize_and_validate_postal_code("SW1A 1AA", "GB").unwrap(),
+            "SW1A 1AA"
+        );
+        assert!(normalize_and_validate_postal_code(&"A".repeat(21), "US").is_err());
+
+        // 2. UF: 27 siglas válidas e rejeição de inválidas
+        assert_eq!(validate_brazilian_state("SP").unwrap(), "SP");
+        assert_eq!(validate_brazilian_state("rj").unwrap(), "RJ");
+        assert_eq!(validate_brazilian_state(" mg ").unwrap(), "MG");
+        assert!(validate_brazilian_state("XX").is_err());
+        assert!(validate_brazilian_state("Sao Paulo").is_err());
+
+        // 3. País: 2 letras ISO
+        assert_eq!(validate_country_code("BR").unwrap(), "BR");
+        assert_eq!(validate_country_code("us").unwrap(), "US");
+        assert!(validate_country_code("BRA").is_err());
+        assert!(validate_country_code("B1").is_err());
+
+        // 4. Telefone: '+' internacional (8-15 dígitos), +55 vira nacional, sem '+' segue regra do Brasil
+        assert_eq!(
+            normalize_and_validate_phone("(11) 98765-4321", Some("BR")).unwrap(),
+            "11987654321"
+        );
+        assert_eq!(
+            normalize_and_validate_phone("+55 21 99999-1234", None).unwrap(),
+            "21999991234"
+        );
+        assert_eq!(
+            normalize_and_validate_phone("+351 912 345 678", None).unwrap(),
+            "351912345678"
+        );
+        assert_eq!(
+            normalize_and_validate_phone("5511987654321", Some("BR")).unwrap(),
+            "11987654321"
+        );
+        assert_eq!(
+            normalize_and_validate_phone("(11) 2345-6789", Some("BR")).unwrap(),
+            "1123456789"
+        );
+        assert!(normalize_and_validate_phone("12345", None).is_err());
+        assert!(normalize_and_validate_phone("119876", Some("BR")).is_err());
+        assert!(normalize_and_validate_phone("1198765432100", Some("BR")).is_err());
+        assert!(normalize_and_validate_phone("1198765abc", Some("BR")).is_err());
+        // Internacional
+        assert_eq!(
+            normalize_and_validate_phone("+1 202 555 0123", Some("US")).unwrap(),
+            "12025550123"
+        );
+        assert!(normalize_and_validate_phone("12345", Some("US")).is_err());
+        assert!(normalize_and_validate_phone("+351 123", None).is_err());
+
+        // 5. Contatos: telefone OU e-mail, exatamente 1 principal, IDs repetidos
+        let mut contacts = vec![
+            CreateContactInput {
+                id: Some("c1".to_string()),
+                name: "Contato 1".to_string(),
+                email: Some("c1@ex.com".to_string()),
+                phone: None,
+                role: Some("Gerente".to_string()),
+                is_primary: false,
+            },
+            CreateContactInput {
+                id: Some("c2".to_string()),
+                name: "Contato 2".to_string(),
+                email: None,
+                phone: Some("(11) 98765-4321".to_string()),
+                role: None,
+                is_primary: false,
+            },
+        ];
+        assert!(validate_contacts(&mut contacts).is_ok());
+        // Primeiro virou principal automaticamente
+        assert!(contacts[0].is_primary);
+        assert!(!contacts[1].is_primary);
+        assert_eq!(contacts[1].phone.as_deref(), Some("11987654321"));
+
+        // Dois principais = erro
+        let mut two_primaries = contacts.clone();
+        two_primaries[1].is_primary = true;
+        assert!(validate_contacts(&mut two_primaries).is_err());
+
+        // Sem telefone e sem email = erro
+        let mut no_contact_info = vec![CreateContactInput {
+            id: None,
+            name: "Sem Nada".to_string(),
+            email: None,
+            phone: None,
+            role: None,
+            is_primary: true,
+        }];
+        assert!(validate_contacts(&mut no_contact_info).is_err());
+
+        // IDs repetidos na entrada = erro
+        let mut dup_ids = vec![
+            CreateContactInput {
+                id: Some("rep".to_string()),
+                name: "A".to_string(),
+                email: Some("a@ex.com".to_string()),
+                phone: None,
+                role: None,
+                is_primary: true,
+            },
+            CreateContactInput {
+                id: Some("rep".to_string()),
+                name: "B".to_string(),
+                email: Some("b@ex.com".to_string()),
+                phone: None,
+                role: None,
+                is_primary: false,
+            },
+        ];
+        assert!(validate_contacts(&mut dup_ids).is_err());
+
+        // Limite de 20 contatos
+        let mut over_20 = (0..21)
+            .map(|i| CreateContactInput {
+                id: Some(format!("c{i}")),
+                name: format!("Nome {i}"),
+                email: Some(format!("c{i}@ex.com")),
+                phone: None,
+                role: None,
+                is_primary: i == 0,
+            })
+            .collect::<Vec<_>>();
+        assert!(validate_contacts(&mut over_20).is_err());
+
+        // 6. Endereços: limites e principal
+        let mut addresses = vec![CreateAddressInput {
+            id: Some("a1".to_string()),
+            label: "Sede".to_string(),
+            street: "Av Paulista".to_string(),
+            number: "1000".to_string(),
+            complement: Some("Andar 10".to_string()),
+            neighborhood: "Bela Vista".to_string(),
+            city: "São Paulo".to_string(),
+            state: "sp".to_string(),
+            postal_code: "01310-100".to_string(),
+            country: Some("BR".to_string()),
+            is_primary: false,
+        }];
+        assert!(validate_addresses(&mut addresses).is_ok());
+        assert!(addresses[0].is_primary);
+        assert_eq!(addresses[0].state, "SP");
+        assert_eq!(addresses[0].postal_code, "01310100");
+
+        // 7. Limites gerais em caracteres (chars().count()), trim, controle e endereço estrangeiro
+        assert!(validate_customer_common_fields("José", None, None, None, None).is_ok());
+        // 150 caracteres acentuados (300 bytes) deve passar; 151 caracteres deve falhar
+        let accented_150 = "á".repeat(150);
+        assert_eq!(accented_150.len(), 300);
+        assert_eq!(accented_150.chars().count(), 150);
+        assert!(validate_customer_common_fields(&accented_150, None, None, None, None).is_ok());
+        assert!(validate_customer_common_fields(&"á".repeat(151), None, None, None, None).is_err());
+        assert!(
+            validate_customer_common_fields("OK", Some(&"T".repeat(151)), None, None, None)
+                .is_err()
+        );
+
+        // Quebra de linha permitida apenas em notas, rejeitada em nome
+        assert!(
+            validate_customer_common_fields("OK", None, Some("Linha 1\nLinha 2"), None, None)
+                .is_ok()
+        );
+        assert!(validate_customer_common_fields("João\nSilva", None, None, None, None).is_err());
+
+        // Contato grava nome e função já aparados e rejeita caracteres de controle
+        let mut trimmed_contacts = vec![CreateContactInput {
+            id: None,
+            name: "  José da Silva  ".to_string(),
+            email: Some("jose@ex.com".to_string()),
+            phone: None,
+            role: Some("  Produtor  ".to_string()),
+            is_primary: false,
+        }];
+        assert!(validate_contacts(&mut trimmed_contacts).is_ok());
+        assert_eq!(trimmed_contacts[0].name, "José da Silva");
+        assert_eq!(trimmed_contacts[0].role.as_deref(), Some("Produtor"));
+
+        let mut bad_contact_ctrl = vec![CreateContactInput {
+            id: None,
+            name: "José\nSilva".to_string(),
+            email: Some("jose@ex.com".to_string()),
+            phone: None,
+            role: None,
+            is_primary: true,
+        }];
+        assert!(validate_contacts(&mut bad_contact_ctrl).is_err());
+
+        // Endereço fora do Brasil: state até 40 caracteres e rejeita caracteres de controle
+        let mut intl_addr = vec![CreateAddressInput {
+            id: None,
+            label: "  Sede Lisboa  ".to_string(),
+            street: "  Av da Liberdade  ".to_string(),
+            number: "100".to_string(),
+            complement: None,
+            neighborhood: "Santo António".to_string(),
+            city: "Lisboa".to_string(),
+            state: "Distrito de Lisboa".to_string(),
+            postal_code: "1250-096".to_string(),
+            country: Some("PT".to_string()),
+            is_primary: false,
+        }];
+        assert!(validate_addresses(&mut intl_addr).is_ok());
+        assert_eq!(intl_addr[0].label, "Sede Lisboa");
+
+        let mut intl_addr_state_41 = intl_addr.clone();
+        intl_addr_state_41[0].state = "á".repeat(41);
+        assert!(validate_addresses(&mut intl_addr_state_41).is_err());
+
+        let mut addr_ctrl_city = intl_addr.clone();
+        addr_ctrl_city[0].city = "Lisboa\tCentro".to_string();
+        assert!(validate_addresses(&mut addr_ctrl_city).is_err());
+        assert!(
+            validate_customer_common_fields("OK", None, Some(&"N".repeat(2001)), None, None)
+                .is_err()
+        );
+        assert!(
+            validate_customer_common_fields("OK", None, None, Some(&"S".repeat(31)), None).is_err()
+        );
+        assert!(
+            validate_customer_common_fields("OK", None, None, None, Some(&"M".repeat(31))).is_err()
+        );
+    }
+
+    #[test]
+    fn test_store_bundle_new_requires_tx_manager() {
+        use crate::error::CoreError;
+        use crate::store::{
+            AuditStore, BrandingStore, CustomerStore, RoleStore, StoreBundle, TenantStore,
+            UserStore,
+        };
+        use std::sync::Arc;
+
+        struct DummyStore;
+        #[async_trait::async_trait]
+        impl TenantStore for DummyStore {
+            async fn find_by_id(
+                &self,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::Tenant>> {
+                unreachable!()
+            }
+            async fn find_by_slug(
+                &self,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::Tenant>> {
+                unreachable!()
+            }
+            async fn create(
+                &self,
+                _: &crate::domain::Tenant,
+            ) -> crate::error::Result<crate::domain::Tenant> {
+                unreachable!()
+            }
+            async fn update_name(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<crate::domain::Tenant> {
+                unreachable!()
+            }
+        }
+        #[async_trait::async_trait]
+        impl BrandingStore for DummyStore {
+            async fn get_by_tenant_id(
+                &self,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::TenantBranding>> {
+                unreachable!()
+            }
+            async fn save(
+                &self,
+                _: &str,
+                _: &crate::domain::UpdateBrandingInput,
+            ) -> crate::error::Result<crate::domain::TenantBranding> {
+                unreachable!()
+            }
+        }
+        #[async_trait::async_trait]
+        impl RoleStore for DummyStore {
+            async fn list_by_tenant(
+                &self,
+                _: &str,
+            ) -> crate::error::Result<Vec<crate::domain::RoleWithPermissions>> {
+                unreachable!()
+            }
+            async fn find_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::RoleWithPermissions>> {
+                unreachable!()
+            }
+            async fn find_by_slug(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::RoleWithPermissions>> {
+                unreachable!()
+            }
+            async fn create(
+                &self,
+                _: &crate::domain::Role,
+                _: &[String],
+            ) -> crate::error::Result<crate::domain::RoleWithPermissions> {
+                unreachable!()
+            }
+            async fn set_permissions(
+                &self,
+                _: &str,
+                _: &str,
+                _: &[String],
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+        }
+        #[async_trait::async_trait]
+        impl UserStore for DummyStore {
+            async fn count_active_by_role_slug(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<i64> {
+                unreachable!()
+            }
+            async fn count_by_tenant(&self, _: &str) -> crate::error::Result<i64> {
+                unreachable!()
+            }
+            async fn create(
+                &self,
+                _: &crate::domain::UserRecord,
+            ) -> crate::error::Result<crate::domain::UserWithRole> {
+                unreachable!()
+            }
+            async fn find_by_email(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::UserRecord>> {
+                unreachable!()
+            }
+            async fn find_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::UserRecord>> {
+                unreachable!()
+            }
+            async fn find_with_role(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::UserWithRole>> {
+                unreachable!()
+            }
+            async fn list_by_tenant(
+                &self,
+                _: &str,
+            ) -> crate::error::Result<Vec<crate::domain::UserWithRole>> {
+                unreachable!()
+            }
+            async fn update(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<crate::domain::UserWithRole> {
+                unreachable!()
+            }
+            async fn set_active(
+                &self,
+                _: &str,
+                _: &str,
+                _: bool,
+                _: &str,
+            ) -> crate::error::Result<crate::domain::UserWithRole> {
+                unreachable!()
+            }
+            async fn update_password(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn record_login_success(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn increment_login_failure(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<i32> {
+                unreachable!()
+            }
+            async fn set_login_lockout(
+                &self,
+                _: &str,
+                _: &str,
+                _: Option<&str>,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn increment_recovery_failure(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<i32> {
+                unreachable!()
+            }
+            async fn set_recovery_lockout(
+                &self,
+                _: &str,
+                _: &str,
+                _: Option<&str>,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update_password_and_recovery_key(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+        }
+        #[async_trait::async_trait]
+        impl AuditStore for DummyStore {
+            async fn append(&self, _: &crate::domain::AuditLogEntry) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn list_by_tenant(
+                &self,
+                _: &str,
+                _: usize,
+            ) -> crate::error::Result<Vec<crate::domain::AuditLogEntry>> {
+                unreachable!()
+            }
+        }
+        #[async_trait::async_trait]
+        impl CustomerStore for DummyStore {
+            async fn find_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::CustomerWithDetails>> {
+                unreachable!()
+            }
+            async fn find_by_document(
+                &self,
+                _: &str,
+                _: crate::domain::DocumentType,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::Customer>> {
+                unreachable!()
+            }
+            async fn list(
+                &self,
+                _: &str,
+                _: &crate::domain::CustomerFilter,
+            ) -> crate::error::Result<crate::domain::CustomerPage> {
+                unreachable!()
+            }
+            async fn create(
+                &self,
+                _: &crate::domain::Customer,
+                _: &[crate::domain::CustomerContact],
+                _: &[crate::domain::CustomerAddress],
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update(
+                &self,
+                _: &crate::domain::Customer,
+                _: &[crate::domain::CustomerContact],
+                _: &[crate::domain::CustomerAddress],
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn set_active(
+                &self,
+                _: &str,
+                _: &str,
+                _: bool,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn soft_delete(&self, _: &str, _: &str, _: &str) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn count_active(&self, _: &str) -> crate::error::Result<u64> {
+                unreachable!()
+            }
+        }
+
+        let dummy = Arc::new(DummyStore);
+        let res = StoreBundle::new(
+            dummy.clone(),
+            dummy.clone(),
+            dummy.clone(),
+            dummy.clone(),
+            dummy.clone(),
+            dummy.clone(),
+            None,
+        );
+
+        assert!(
+            matches!(res, Err(CoreError::Configuration(_))),
+            "StoreBundle::new sem tx_manager deve retornar CoreError::Configuration"
+        );
     }
 
     #[tokio::test]
@@ -1674,18 +2572,27 @@ mod unit_tests {
     #[test]
     fn test_document_validation_cpf_and_cnpj_alphanumeric() {
         use crate::domain::document::{
-            format_cnpj, format_cpf, normalize_document, parse_document,
+            format_cnpj, format_cpf, mask_document_for_audit, normalize_document, parse_document,
             testing_utils::{generate_valid_cnpj_from_base, generate_valid_cpf_from_base},
             validate_cnpj, validate_cpf, DocumentType,
         };
 
-        // 1. Normalização de documentos
-        assert_eq!(normalize_document(" 12.ABC.345/0001-88 "), "12ABC345000188");
-        assert_eq!(normalize_document("529.982.247-25"), "52998224725");
+        // 1. Normalização de documentos (remove somente '.', '-', '/' e espaço; rejeita o resto)
         assert_eq!(
-            normalize_document("12abc345000188"),
-            "12ABC345000188" // converte para uppercase
+            normalize_document(" 12.ABC.345/01DE-35 ").expect("normaliza CNPJ"),
+            "12ABC34501DE35"
         );
+        assert_eq!(
+            normalize_document("529.982.247-25").expect("normaliza CPF"),
+            "52998224725"
+        );
+        assert_eq!(
+            normalize_document("12abc34501de35").expect("normaliza minusculas"),
+            "12ABC34501DE35"
+        );
+        assert!(normalize_document("12.ÁBC.345/01DE-35").is_err());
+        assert!(normalize_document("12_ABC_345_01DE_35").is_err());
+        assert!(normalize_document("529.982.247-25!").is_err());
 
         // 2. Validação de CPF
         // 2.1 CPFs válidos conhecidos
@@ -1749,24 +2656,56 @@ mod unit_tests {
             .to_string()
             .contains("segundo dígito verificador"));
 
-        // 4. Validação de CNPJ Alfanumérico (IN RFB nº 2.229/2025)
-        // 4.1 Exemplo calculado matematicamente: 12.ABC.345/0001-88
-        let alpha_cnpj_1 = "12.ABC.345/0001-88";
-        let valid_alpha_1 = validate_cnpj(alpha_cnpj_1).expect("CNPJ alfanumérico válido");
-        assert_eq!(valid_alpha_1, "12ABC345000188");
-        assert_eq!(format_cnpj(&valid_alpha_1), "12.ABC.345/0001-88");
+        // 4. Validação de CNPJ Alfanumérico (Instrução Normativa RFB nº 2.229, de 15 de outubro de 2024)
+        // Fonte oficial: Nota Técnica Conjunta Cocad/Suara/RFB nº 49/2024 e Simulador Oficial da Receita Federal
+        // 4.1 Exemplo oficial da documentação RFB/ENCAT: 12.ABC.345/01DE-35
+        let official_alpha_1 = "12.ABC.345/01DE-35";
+        let valid_official_1 =
+            validate_cnpj(official_alpha_1).expect("CNPJ alfanumérico oficial válido");
+        assert_eq!(valid_official_1, "12ABC34501DE35");
+        assert_eq!(format_cnpj(&valid_official_1), "12.ABC.345/01DE-35");
 
-        // 4.2 Minusculas devem ser normalizadas para maiúsculas
+        // 4.2 Outros exemplos validados pela especificação ASCII - 48 (Simulador RFB)
+        assert_eq!(
+            validate_cnpj("12.ABC.345/0001-88").expect("exemplo RFB #2"),
+            "12ABC345000188"
+        );
+        assert_eq!(
+            validate_cnpj("AB.CDE.123/0001-00").expect("exemplo RFB #3"),
+            "ABCDE123000100"
+        );
+        assert_eq!(
+            validate_cnpj("A0.B1C.2D3/0001-79").expect("exemplo RFB #4"),
+            "A0B1C2D3000179"
+        );
+
+        // 4.3 Minúsculas devem ser normalizadas para maiúsculas
         let valid_alpha_lower =
-            validate_cnpj("12.abc.345/0001-88").expect("normaliza minusculas para maiusculas");
-        assert_eq!(valid_alpha_lower, "12ABC345000188");
+            validate_cnpj("12.abc.345/01de-35").expect("normaliza minusculas para maiusculas");
+        assert_eq!(valid_alpha_lower, "12ABC34501DE35");
 
-        // 4.3 DVs devem ser estritamente numéricos
-        let invalid_dv_letter = "12ABC34500018A";
-        assert!(validate_cnpj(invalid_dv_letter)
+        // 4.4 DVs devem ser estritamente numéricos (letra nos dígitos verificadores rejeitada)
+        assert!(validate_cnpj("12ABC34501DE3A")
             .unwrap_err()
             .to_string()
             .contains("dígitos verificadores) devem ser numéricos"));
+        assert!(validate_cnpj("12ABC34501DEA5").is_err());
+
+        // 4.5 Caracteres fora de A-Z, acentuados e tamanho errado rejeitados
+        assert!(validate_cnpj("12.ÁBC.345/01DE-35").is_err());
+        assert!(validate_cnpj("12.ABC.345/01DE-350").is_err()); // 15 caracteres
+        assert!(validate_cnpj("12.ABC.345/01DE-3").is_err()); // 13 caracteres
+
+        // 4.6 Máscara LGPD nos dois formatos (CPF e CNPJ numérico/alfanumérico)
+        assert_eq!(mask_document_for_audit("529.982.247-25"), "***.***.***-25");
+        assert_eq!(
+            mask_document_for_audit("00.000.000/0001-91"),
+            "**.***.***/0001-**"
+        );
+        assert_eq!(
+            mask_document_for_audit("12.ABC.345/01DE-35"),
+            "**.***.***/01DE-**"
+        );
 
         // 4.4 DVs matematicamente incorretos em CNPJ alfanumérico
         let wrong_alpha_dv1 = "12ABC345000178"; // DV1 esperado 8, fornecido 7
@@ -1839,14 +2778,18 @@ mod unit_tests {
             build_customer_search_text, build_name_sort, normalize_for_search, remove_diacritics,
             CustomerCursor,
         };
+        use crate::error::CoreError;
 
-        // 1. Remoção de acentos em português e normalização
+        // 1. Remoção de acentos em português (NFC e NFD com combinantes U+0300..U+036F)
         let accented = "José da Conceição & Filhos — Produções Audiovisuais Ltda.";
         let unaccented = remove_diacritics(accented);
         assert_eq!(
             unaccented,
             "jose da conceicao & filhos — producoes audiovisuais ltda."
         );
+        assert_eq!(normalize_for_search("José"), "jose");
+        assert_eq!(normalize_for_search("Jose\u{0301}"), "jose");
+        assert_eq!(normalize_for_search("Sa\u{0303}o Joa\u{0303}o"), "sao joao");
 
         // 2. Colapso de múltiplos espaços e trim
         let raw_spacing = "   Som   &   Luz    Avançada   ";
@@ -1875,17 +2818,74 @@ mod unit_tests {
         assert!(search_text.contains("contato@spsom.com"));
         assert!(search_text.contains("(11) 98765-4321"));
 
-        // 5. CustomerCursor (encode / decode)
+        // 5. CustomerCursor (URL_SAFE_NO_PAD encode / decode)
         let cursor = CustomerCursor::new("carlos silva", "018f0000-0000-7000-8000-000000000042");
         let encoded = cursor.encode();
         assert!(!encoded.is_empty());
+        assert!(!encoded.contains('='));
+        assert!(!encoded.contains('+'));
+        assert!(!encoded.contains('/'));
 
         let decoded =
             CustomerCursor::decode(&encoded).expect("cursor deve decodificar com sucesso");
         assert_eq!(decoded, cursor);
 
-        // Cursor inválido deve retornar None de forma segura
-        assert!(CustomerCursor::decode("cursor-invalido-!@#").is_none());
-        assert!(CustomerCursor::decode("").is_none());
+        // Cursor inválido ou adulterado deve retornar CoreError::Validation
+        assert!(matches!(
+            CustomerCursor::decode("cursor-invalido-!@#"),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            CustomerCursor::decode(""),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            CustomerCursor::decode("e30"), // "{}" sem campos obrigatórios
+            Err(CoreError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn test_system_roles_fixture_is_up_to_date() {
+        use crate::domain::permission::SYSTEM_ROLES;
+        use std::path::Path;
+
+        #[derive(serde::Serialize)]
+        struct RoleFixture<'a> {
+            slug: &'a str,
+            name: &'a str,
+            description: &'a str,
+            permissions: &'a [&'a str],
+        }
+
+        let expected: Vec<RoleFixture<'_>> = SYSTEM_ROLES
+            .iter()
+            .map(|r| RoleFixture {
+                slug: r.slug,
+                name: r.name,
+                description: r.description,
+                permissions: r.permissions,
+            })
+            .collect();
+        let expected_json =
+            serde_json::to_value(&expected).expect("serialize SYSTEM_ROLES fixture");
+
+        let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src/lib/data/fixtures/system-roles.json");
+        let raw = std::fs::read_to_string(&fixture_path).unwrap_or_else(|e| {
+            panic!(
+                "Fixture {:?} ausente ({}). Gere-o com SYSTEM_ROLES.",
+                fixture_path, e
+            )
+        });
+        let actual_json: serde_json::Value =
+            serde_json::from_str(&raw).expect("system-roles.json inválido");
+
+        assert_eq!(
+            actual_json,
+            expected_json,
+            "src/lib/data/fixtures/system-roles.json está desatualizado em relação a SYSTEM_ROLES do core! Esperado:\n{}",
+            serde_json::to_string_pretty(&expected_json).unwrap_or_default()
+        );
     }
 }

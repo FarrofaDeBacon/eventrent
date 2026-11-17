@@ -89,7 +89,35 @@ describe("CustomerRepository (CRUD, Busca, Paginação por Cursor e RBAC)", () =
     });
     expect(created.customer.name).toBe("João Pedro Vasconcelos");
 
-    // Impede duplicidade de documento em cliente ativo
+    // Busca por telefone contendo apenas dígitos encontra o cliente
+    const searchPhone = await customerRepo.listCustomers({
+      query: "31998887766",
+    });
+    expect(searchPhone.items.length).toBeGreaterThanOrEqual(1);
+    expect(
+      searchPhone.items.some((c) => c.name === "João Pedro Vasconcelos"),
+    ).toBe(true);
+
+    // Busca por nome do contato encontra o cliente
+    const searchContact = await customerRepo.listCustomers({
+      query: "João Pedro",
+    });
+    expect(
+      searchContact.items.some((c) => c.name === "João Pedro Vasconcelos"),
+    ).toBe(true);
+
+    // Validação de limites na consulta de busca: máx 100 caracteres e máx 8 palavras
+    await expect(
+      customerRepo.listCustomers({ query: "a".repeat(101) }),
+    ).rejects.toThrow(/O termo de busca não pode exceder 100 caracteres/i);
+
+    await expect(
+      customerRepo.listCustomers({
+        query: "um dois tres quatro cinco seis sete oito nove",
+      }),
+    ).rejects.toThrow(/O termo de busca não pode conter mais de 8 palavras/i);
+
+    // Impede duplicidade de documento em cliente ativo ou inativo
     await expect(
       customerRepo.createCustomer({
         person_type: "individual",
@@ -109,14 +137,21 @@ describe("CustomerRepository (CRUD, Busca, Paginação por Cursor e RBAC)", () =
           },
         ],
       }),
-    ).rejects.toThrow(/Já existe um cliente ativo/i);
+    ).rejects.toThrow(/Já existe um cliente cadastrado com este documento/i);
 
     // Atualiza e consulta por ID
     const updated = await customerRepo.updateCustomer(created.customer.id, {
       person_type: "individual",
       name: "João Pedro Vasconcelos Atualizado",
       document_number: created.customer.document_number,
-      contacts: [{ name: "João Pedro", is_primary: true }],
+      expected_updated_at: created.customer.updated_at,
+      contacts: [
+        {
+          name: "João Pedro",
+          email: "jp@email.com",
+          is_primary: true,
+        },
+      ],
       addresses: [
         {
           label: "Principal",
@@ -132,8 +167,37 @@ describe("CustomerRepository (CRUD, Busca, Paginação por Cursor e RBAC)", () =
     });
     expect(updated.customer.name).toBe("João Pedro Vasconcelos Atualizado");
 
+    // Concorrência: update com expected_updated_at desatualizado deve falhar com conflito
+    await expect(
+      customerRepo.updateCustomer(created.customer.id, {
+        person_type: "individual",
+        name: "Tentativa Concorrente",
+        expected_updated_at: "2020-01-01T00:00:00Z",
+        contacts: [
+          {
+            name: "João",
+            email: "j@ex.com",
+            is_primary: true,
+          },
+        ],
+        addresses: [],
+      }),
+    ).rejects.toThrow(/O cadastro foi alterado por outra pessoa/i);
+
     const loaded = await customerRepo.getCustomer(created.customer.id);
     expect(loaded.addresses[0].number).toBe("501");
+
+    // Desativa e reativa (setCustomerActive)
+    const deactivated = await customerRepo.setCustomerActive(
+      created.customer.id,
+      false,
+    );
+    expect(deactivated.customer.active).toBe(false);
+    const reactivated = await customerRepo.setCustomerActive(
+      created.customer.id,
+      true,
+    );
+    expect(reactivated.customer.active).toBe(true);
 
     // Exclui (soft delete) e valida que não aparece mais nem permite consulta
     await customerRepo.deleteCustomer(created.customer.id);

@@ -1,5 +1,15 @@
+use crate::domain::document::{
+    mask_document_for_audit, mask_email_for_audit, mask_individual_name_for_audit,
+    mask_phone_for_audit, DocumentType,
+};
+use crate::domain::validation::{
+    normalize_and_validate_phone, normalize_and_validate_postal_code, validate_brazilian_state,
+    validate_country_code, validate_email,
+};
+use crate::error::{CoreError, Result as CoreResult};
 use base64::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -29,17 +39,19 @@ impl std::str::FromStr for PersonType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Customer {
     pub id: String,
     pub tenant_id: String,
     pub person_type: PersonType,
     pub name: String,
     pub trade_name: Option<String>,
-    pub document_number: String,
+    pub document_type: DocumentType,
+    pub document_number: Option<String>,
     pub state_registration: Option<String>,
     pub municipal_registration: Option<String>,
     pub notes: Option<String>,
+    pub active: bool,
     pub search_text: String,
     pub name_sort: String,
     pub created_at: String,
@@ -48,9 +60,10 @@ pub struct Customer {
     pub created_by: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CustomerContact {
     pub id: String,
+    pub tenant_id: String,
     pub customer_id: String,
     pub name: String,
     pub email: Option<String>,
@@ -60,11 +73,13 @@ pub struct CustomerContact {
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
+    pub created_by: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CustomerAddress {
     pub id: String,
+    pub tenant_id: String,
     pub customer_id: String,
     pub label: String,
     pub street: String,
@@ -74,10 +89,12 @@ pub struct CustomerAddress {
     pub city: String,
     pub state: String,
     pub postal_code: String,
+    pub country: String,
     pub is_primary: bool,
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
+    pub created_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -87,8 +104,10 @@ pub struct CustomerWithDetails {
     pub addresses: Vec<CustomerAddress>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateContactInput {
+    #[serde(default)]
+    pub id: Option<String>,
     pub name: String,
     pub email: Option<String>,
     pub phone: Option<String>,
@@ -96,8 +115,10 @@ pub struct CreateContactInput {
     pub is_primary: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateAddressInput {
+    #[serde(default)]
+    pub id: Option<String>,
     pub label: String,
     pub street: String,
     pub number: String,
@@ -106,18 +127,22 @@ pub struct CreateAddressInput {
     pub city: String,
     pub state: String,
     pub postal_code: String,
+    #[serde(default)]
+    pub country: Option<String>,
     pub is_primary: bool,
 }
 
 pub type UpdateContactInput = CreateContactInput;
 pub type UpdateAddressInput = CreateAddressInput;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateCustomerInput {
     pub person_type: PersonType,
     pub name: String,
     pub trade_name: Option<String>,
-    pub document_number: String,
+    #[serde(default)]
+    pub document_type: DocumentType,
+    pub document_number: Option<String>,
     pub state_registration: Option<String>,
     pub municipal_registration: Option<String>,
     pub notes: Option<String>,
@@ -127,12 +152,14 @@ pub struct CreateCustomerInput {
     pub addresses: Vec<CreateAddressInput>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UpdateCustomerInput {
     pub person_type: PersonType,
     pub name: String,
     pub trade_name: Option<String>,
-    pub document_number: String,
+    #[serde(default)]
+    pub document_type: DocumentType,
+    pub document_number: Option<String>,
     pub state_registration: Option<String>,
     pub municipal_registration: Option<String>,
     pub notes: Option<String>,
@@ -140,9 +167,10 @@ pub struct UpdateCustomerInput {
     pub contacts: Vec<CreateContactInput>,
     #[serde(default)]
     pub addresses: Vec<CreateAddressInput>,
+    pub expected_updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct CustomerFilter {
     pub query: Option<String>,
     pub person_type: Option<PersonType>,
@@ -174,19 +202,35 @@ impl CustomerCursor {
 
     pub fn encode(&self) -> String {
         let json = serde_json::to_string(self).unwrap_or_default();
-        BASE64_STANDARD.encode(json.as_bytes())
+        BASE64_URL_SAFE_NO_PAD.encode(json.as_bytes())
     }
 
-    pub fn decode(cursor_str: &str) -> Option<Self> {
-        let bytes = BASE64_STANDARD.decode(cursor_str.trim()).ok()?;
-        serde_json::from_slice(&bytes).ok()
+    pub fn decode(cursor_str: &str) -> CoreResult<Self> {
+        let trimmed = cursor_str.trim();
+        if trimmed.is_empty() {
+            return Err(CoreError::Validation(
+                "Cursor de paginação inválido ou vazio.".to_string(),
+            ));
+        }
+        let bytes = BASE64_URL_SAFE_NO_PAD.decode(trimmed).map_err(|_| {
+            CoreError::Validation("Cursor de paginação inválido ou adulterado.".to_string())
+        })?;
+        let decoded: Self = serde_json::from_slice(&bytes)
+            .map_err(|_| CoreError::Validation("Cursor de paginação malformado.".to_string()))?;
+        if decoded.id.trim().is_empty() {
+            return Err(CoreError::Validation(
+                "Cursor de paginação inválido: identificador ausente.".to_string(),
+            ));
+        }
+        Ok(decoded)
     }
 }
 
-/// Remove acentos de caracteres Unicode em português/latim e converte para minúsculas.
+/// Remove acentos de caracteres Unicode (suportando formas precompostas NFC e decompostas NFD U+0300..U+036F) e converte para minúsculas.
 pub fn remove_diacritics(input: &str) -> String {
     input
         .chars()
+        .filter(|&c| !('\u{0300}'..='\u{036f}').contains(&c))
         .map(|c| match c {
             'á' | 'à' | 'â' | 'ã' | 'ä' | 'Á' | 'À' | 'Â' | 'Ã' | 'Ä' => 'a',
             'é' | 'è' | 'ê' | 'ë' | 'É' | 'È' | 'Ê' | 'Ë' => 'e',
@@ -252,4 +296,424 @@ pub fn build_customer_search_text(
     }
 
     parts.join(" ")
+}
+
+fn reject_control_chars(value: &str, field_label: &str) -> CoreResult<()> {
+    if value.chars().any(|c| c.is_control()) {
+        return Err(CoreError::Validation(format!(
+            "{field_label} não pode conter caracteres de controle ou quebras de linha."
+        )));
+    }
+    Ok(())
+}
+
+pub fn validate_customer_common_fields(
+    name: &str,
+    trade_name: Option<&str>,
+    notes: Option<&str>,
+    state_registration: Option<&str>,
+    municipal_registration: Option<&str>,
+) -> CoreResult<()> {
+    let name_trimmed = name.trim();
+    reject_control_chars(name_trimmed, "Nome ou Razão Social")?;
+    let name_chars = name_trimmed.chars().count();
+    if name_chars == 0 || name_chars > 150 {
+        return Err(CoreError::Validation(
+            "Nome ou Razão Social deve conter entre 1 e 150 caracteres.".to_string(),
+        ));
+    }
+    if let Some(trade) = trade_name {
+        let trade_trimmed = trade.trim();
+        reject_control_chars(trade_trimmed, "Nome Fantasia")?;
+        if trade_trimmed.chars().count() > 150 {
+            return Err(CoreError::Validation(
+                "Nome Fantasia excede o limite máximo de 150 caracteres.".to_string(),
+            ));
+        }
+    }
+    if let Some(n) = notes {
+        let n_trimmed = n.trim();
+        if n_trimmed
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+        {
+            return Err(CoreError::Validation(
+                "Notas do cliente contêm caracteres de controle inválidos.".to_string(),
+            ));
+        }
+        if n_trimmed.chars().count() > 2000 {
+            return Err(CoreError::Validation(
+                "Notas do cliente excedem o limite máximo de 2000 caracteres.".to_string(),
+            ));
+        }
+    }
+    if let Some(sr) = state_registration {
+        let sr_trimmed = sr.trim();
+        reject_control_chars(sr_trimmed, "Inscrição Estadual")?;
+        if sr_trimmed.chars().count() > 30 {
+            return Err(CoreError::Validation(
+                "Inscrição Estadual excede o limite máximo de 30 caracteres.".to_string(),
+            ));
+        }
+    }
+    if let Some(mr) = municipal_registration {
+        let mr_trimmed = mr.trim();
+        reject_control_chars(mr_trimmed, "Inscrição Municipal")?;
+        if mr_trimmed.chars().count() > 30 {
+            return Err(CoreError::Validation(
+                "Inscrição Municipal excede o limite máximo de 30 caracteres.".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_contacts(contacts: &mut [CreateContactInput]) -> CoreResult<()> {
+    if contacts.len() > 20 {
+        return Err(CoreError::Validation(
+            "Número máximo de contatos excedido (limite de 20 contatos).".to_string(),
+        ));
+    }
+
+    let mut seen_ids = std::collections::HashSet::new();
+    for c in contacts.iter() {
+        if let Some(ref id) = c.id {
+            let trimmed = id.trim();
+            if !trimmed.is_empty() && !seen_ids.insert(trimmed.to_string()) {
+                return Err(CoreError::Validation(
+                    "Identificador de contato duplicado na requisição.".to_string(),
+                ));
+            }
+        }
+    }
+
+    let mut primary_count = 0;
+    for (idx, c) in contacts.iter_mut().enumerate() {
+        let name_trimmed = c.name.trim().to_string();
+        reject_control_chars(&name_trimmed, &format!("Nome do contato #{}", idx + 1))?;
+        let name_chars = name_trimmed.chars().count();
+        if name_chars == 0 || name_chars > 100 {
+            return Err(CoreError::Validation(format!(
+                "Nome do contato #{} é obrigatório e deve ter até 100 caracteres.",
+                idx + 1
+            )));
+        }
+        c.name = name_trimmed;
+
+        if let Some(ref role) = c.role {
+            let role_trimmed = role.trim().to_string();
+            reject_control_chars(&role_trimmed, &format!("Função do contato #{}", idx + 1))?;
+            if role_trimmed.chars().count() > 60 {
+                return Err(CoreError::Validation(format!(
+                    "Função do contato #{} excede o limite máximo de 60 caracteres.",
+                    idx + 1
+                )));
+            }
+            c.role = if role_trimmed.is_empty() {
+                None
+            } else {
+                Some(role_trimmed)
+            };
+        }
+
+        let email_val = c.email.as_deref().map(str::trim).filter(|e| !e.is_empty());
+        let phone_val = c.phone.as_deref().map(str::trim).filter(|p| !p.is_empty());
+
+        if email_val.is_none() && phone_val.is_none() {
+            return Err(CoreError::Validation(format!(
+                "Contato #{} deve possuir pelo menos um telefone ou e-mail preenchido.",
+                idx + 1
+            )));
+        }
+
+        c.email = match email_val {
+            Some(email) => Some(validate_email(email)?),
+            None => None,
+        };
+        c.phone = match phone_val {
+            Some(phone) => Some(normalize_and_validate_phone(phone, None)?),
+            None => None,
+        };
+
+        if c.is_primary {
+            primary_count += 1;
+        }
+    }
+
+    if primary_count > 1 {
+        return Err(CoreError::Validation(
+            "Apenas um contato pode ser marcado como principal.".to_string(),
+        ));
+    }
+    if primary_count == 0 && !contacts.is_empty() {
+        contacts[0].is_primary = true;
+    }
+
+    Ok(())
+}
+
+pub fn validate_addresses(addresses: &mut [CreateAddressInput]) -> CoreResult<()> {
+    if addresses.len() > 20 {
+        return Err(CoreError::Validation(
+            "Número máximo de endereços excedido (limite de 20 endereços).".to_string(),
+        ));
+    }
+
+    let mut seen_ids = std::collections::HashSet::new();
+    for a in addresses.iter() {
+        if let Some(ref id) = a.id {
+            let trimmed = id.trim();
+            if !trimmed.is_empty() && !seen_ids.insert(trimmed.to_string()) {
+                return Err(CoreError::Validation(
+                    "Identificador de endereço duplicado na requisição.".to_string(),
+                ));
+            }
+        }
+    }
+
+    let mut primary_count = 0;
+    for (idx, a) in addresses.iter_mut().enumerate() {
+        let label = a.label.trim().to_string();
+        reject_control_chars(&label, &format!("Rótulo do endereço #{}", idx + 1))?;
+        if !label.is_empty() && label.chars().count() > 40 {
+            return Err(CoreError::Validation(format!(
+                "Rótulo do endereço #{} excede o limite máximo de 40 caracteres.",
+                idx + 1
+            )));
+        }
+        a.label = label;
+
+        let street = a.street.trim().to_string();
+        reject_control_chars(&street, &format!("Logradouro do endereço #{}", idx + 1))?;
+        let street_chars = street.chars().count();
+        if street_chars == 0 || street_chars > 150 {
+            return Err(CoreError::Validation(format!(
+                "Logradouro do endereço #{} é obrigatório e deve ter até 150 caracteres.",
+                idx + 1
+            )));
+        }
+        a.street = street;
+
+        let number = a.number.trim().to_string();
+        reject_control_chars(&number, &format!("Número do endereço #{}", idx + 1))?;
+        let number_chars = number.chars().count();
+        if number_chars == 0 || number_chars > 20 {
+            return Err(CoreError::Validation(format!(
+                "Número do endereço #{} é obrigatório e deve ter até 20 caracteres.",
+                idx + 1
+            )));
+        }
+        a.number = number;
+
+        if let Some(ref comp) = a.complement {
+            let comp_trimmed = comp.trim().to_string();
+            reject_control_chars(
+                &comp_trimmed,
+                &format!("Complemento do endereço #{}", idx + 1),
+            )?;
+            if comp_trimmed.chars().count() > 60 {
+                return Err(CoreError::Validation(format!(
+                    "Complemento do endereço #{} excede o limite máximo de 60 caracteres.",
+                    idx + 1
+                )));
+            }
+            a.complement = if comp_trimmed.is_empty() {
+                None
+            } else {
+                Some(comp_trimmed)
+            };
+        }
+
+        let neigh = a.neighborhood.trim().to_string();
+        reject_control_chars(&neigh, &format!("Bairro do endereço #{}", idx + 1))?;
+        let neigh_chars = neigh.chars().count();
+        if neigh_chars == 0 || neigh_chars > 80 {
+            return Err(CoreError::Validation(format!(
+                "Bairro do endereço #{} é obrigatório e deve ter até 80 caracteres.",
+                idx + 1
+            )));
+        }
+        a.neighborhood = neigh;
+
+        let city = a.city.trim().to_string();
+        reject_control_chars(&city, &format!("Cidade do endereço #{}", idx + 1))?;
+        let city_chars = city.chars().count();
+        if city_chars == 0 || city_chars > 80 {
+            return Err(CoreError::Validation(format!(
+                "Cidade do endereço #{} é obrigatória e deve ter até 80 caracteres.",
+                idx + 1
+            )));
+        }
+        a.city = city;
+
+        let country = a.country.as_deref().unwrap_or("BR");
+        let validated_country = validate_country_code(country)?;
+        a.country = Some(validated_country.clone());
+
+        if validated_country == "BR" {
+            let validated_state = validate_brazilian_state(&a.state)?;
+            a.state = validated_state;
+        } else {
+            let state_trimmed = a.state.trim().to_string();
+            reject_control_chars(
+                &state_trimmed,
+                &format!("Estado/Província do endereço #{}", idx + 1),
+            )?;
+            if state_trimmed.chars().count() > 40 {
+                return Err(CoreError::Validation(format!(
+                    "Estado/Província do endereço #{} excede o limite máximo de 40 caracteres.",
+                    idx + 1
+                )));
+            }
+            a.state = state_trimmed;
+        }
+
+        let normalized_postal =
+            normalize_and_validate_postal_code(&a.postal_code, &validated_country)?;
+        a.postal_code = normalized_postal;
+
+        if a.is_primary {
+            primary_count += 1;
+        }
+    }
+
+    if primary_count > 1 {
+        return Err(CoreError::Validation(
+            "Apenas um endereço pode ser marcado como principal.".to_string(),
+        ));
+    }
+    if primary_count == 0 && !addresses.is_empty() {
+        addresses[0].is_primary = true;
+    }
+
+    Ok(())
+}
+
+fn debug_customer_name(person_type: PersonType, name: &str) -> String {
+    match person_type {
+        PersonType::Individual => mask_individual_name_for_audit(name),
+        PersonType::Legal => name.to_string(),
+    }
+}
+
+impl fmt::Debug for Customer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Customer")
+            .field("id", &self.id)
+            .field("tenant_id", &self.tenant_id)
+            .field("person_type", &self.person_type)
+            .field("name", &debug_customer_name(self.person_type, &self.name))
+            .field("document_type", &self.document_type)
+            .field(
+                "document_number",
+                &self.document_number.as_deref().map(mask_document_for_audit),
+            )
+            .field("active", &self.active)
+            .field("search_text", &"[REDACTED]")
+            .field("name_sort", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl fmt::Debug for CustomerContact {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CustomerContact")
+            .field("id", &self.id)
+            .field("tenant_id", &self.tenant_id)
+            .field("customer_id", &self.customer_id)
+            .field("name", &self.name)
+            .field("email", &self.email.as_deref().map(mask_email_for_audit))
+            .field("phone", &self.phone.as_deref().map(mask_phone_for_audit))
+            .field("is_primary", &self.is_primary)
+            .finish()
+    }
+}
+
+impl fmt::Debug for CustomerAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CustomerAddress")
+            .field("id", &self.id)
+            .field("tenant_id", &self.tenant_id)
+            .field("customer_id", &self.customer_id)
+            .field("label", &self.label)
+            .field("street", &"[REDACTED]")
+            .field("number", &"[REDACTED]")
+            .field("city", &self.city)
+            .field("state", &self.state)
+            .field("postal_code", &"[REDACTED]")
+            .field("country", &self.country)
+            .field("is_primary", &self.is_primary)
+            .finish()
+    }
+}
+
+impl fmt::Debug for CreateContactInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateContactInput")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("email", &self.email.as_deref().map(mask_email_for_audit))
+            .field("phone", &self.phone.as_deref().map(mask_phone_for_audit))
+            .field("is_primary", &self.is_primary)
+            .finish()
+    }
+}
+
+impl fmt::Debug for CreateAddressInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateAddressInput")
+            .field("id", &self.id)
+            .field("label", &self.label)
+            .field("street", &"[REDACTED]")
+            .field("number", &"[REDACTED]")
+            .field("city", &self.city)
+            .field("state", &self.state)
+            .field("postal_code", &"[REDACTED]")
+            .field("country", &self.country)
+            .field("is_primary", &self.is_primary)
+            .finish()
+    }
+}
+
+impl fmt::Debug for CreateCustomerInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateCustomerInput")
+            .field("person_type", &self.person_type)
+            .field("name", &debug_customer_name(self.person_type, &self.name))
+            .field("document_type", &self.document_type)
+            .field(
+                "document_number",
+                &self.document_number.as_deref().map(mask_document_for_audit),
+            )
+            .field("contacts_count", &self.contacts.len())
+            .field("addresses_count", &self.addresses.len())
+            .finish()
+    }
+}
+
+impl fmt::Debug for UpdateCustomerInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UpdateCustomerInput")
+            .field("person_type", &self.person_type)
+            .field("name", &debug_customer_name(self.person_type, &self.name))
+            .field("document_type", &self.document_type)
+            .field(
+                "document_number",
+                &self.document_number.as_deref().map(mask_document_for_audit),
+            )
+            .field("contacts_count", &self.contacts.len())
+            .field("addresses_count", &self.addresses.len())
+            .finish()
+    }
+}
+
+impl fmt::Debug for CustomerFilter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CustomerFilter")
+            .field("query", &self.query.as_ref().map(|_| "[REDACTED]"))
+            .field("person_type", &self.person_type)
+            .field("cursor", &self.cursor.as_ref().map(|_| "[REDACTED]"))
+            .field("limit", &self.limit)
+            .finish()
+    }
 }

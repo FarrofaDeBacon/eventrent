@@ -1,0 +1,84 @@
+[
+  {
+    "slug": "owner",
+    "name": "Proprietário",
+    "description": "Acesso total à administração, configurações, usuários, financeiro e operação.",
+    "permissions": [
+      "user:read",
+      "user:manage",
+      "role:read",
+      "role:manage",
+      "branding:read",
+      "branding:manage",
+      "customer:read",
+      "customer:manage",
+      "catalog:read",
+      "catalog:manage",
+      "reservation:read",
+      "reservation:manage",
+      "quote:read",
+      "quote:manage",
+      "warehouse:read",
+      "warehouse:operate",
+      "finance:read",
+      "finance:manage",
+      "audit:read",
+      "settings:read",
+      "settings:manage"
+    ]
+  },
+  {
+    "slug": "commercial",
+    "name": "Comercial",
+    "description": "Gestão de clientes, orçamentos, reservas e consulta ao catálogo.",
+    "permissions": [
+      "customer:read",
+      "customer:manage",
+      "catalog:read",
+      "reservation:read",
+      "reservation:manage",
+      "quote:read",
+      "quote:manage",
+      "branding:read"
+    ]
+  },
+  {
+    "slug": "warehouse",
+    "name": "Estoque",
+    "description": "Gestão do catálogo de equipamentos, patrimônio, separação e conferência.",
+    "permissions": [
+      "catalog:read",
+      "catalog:manage",
+      "reservation:read",
+      "warehouse:read",
+      "warehouse:operate",
+      "branding:read"
+    ]
+  },
+  {
+    "slug": "technician",
+    "name": "Técnico",
+    "description": "Operação de conferência de carga, leitura QR, manutenção e consulta de eventos.",
+    "permissions": [
+      "catalog:read",
+      "reservation:read",
+      "warehouse:read",
+      "warehouse:operate",
+      "branding:read"
+    ]
+  },
+  {
+    "slug": "finance",
+    "name": "Financeiro",
+    "description": "Gestão de faturamento, contas a pagar/receber, contratos e auditoria.",
+    "permissions": [
+      "customer:read",
+      "quote:read",
+      "reservation:read",
+      "finance:read",
+      "finance:manage",
+      "audit:read",
+      "branding:read"
+    ]
+  }
+]
