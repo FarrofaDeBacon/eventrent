@@ -3929,4 +3929,164 @@ mod tests {
             .unwrap();
         assert!(c1_still_exists.is_some());
     }
+
+    #[tokio::test]
+    async fn test_store_suppliers_roles_categories_fk_and_isolation() {
+        let pool = init_memory_db()
+            .await
+            .expect("Falha ao inicializar banco em memória");
+        let store = SqliteStore::new(pool.clone()).into_bundle();
+        let now = Utc::now().to_rfc3339();
+
+        for tid in ["tenant-sup-1", "tenant-sup-2"] {
+            store
+                .tenants
+                .create(&Tenant {
+                    id: tid.to_string(),
+                    tenant_id: tid.to_string(),
+                    name: format!("Empresa {tid}"),
+                    slug: tid.to_string(),
+                    document_number: None,
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                    deleted_at: None,
+                    created_by: None,
+                })
+                .await
+                .unwrap();
+        }
+
+        // 1. Cria fornecedor puro no tenant 1 com 2 categorias
+        let supplier = Customer {
+            id: "sup-1".to_string(),
+            tenant_id: "tenant-sup-1".to_string(),
+            person_type: PersonType::Legal,
+            name: "Locadora Parceira Ltda".to_string(),
+            trade_name: None,
+            document_type: DocumentType::None,
+            document_number: None,
+            state_registration: None,
+            municipal_registration: None,
+            notes: None,
+            active: true,
+            is_customer: false,
+            is_supplier: true,
+            search_text: "locadora parceira ltda".to_string(),
+            name_sort: "locadora parceira ltda".to_string(),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            deleted_at: None,
+            created_by: None,
+        };
+        let cats = vec![
+            eventrent_core::domain::SupplierCategory::Sublocacao,
+            eventrent_core::domain::SupplierCategory::Transporte,
+        ];
+        store
+            .customers
+            .create(&supplier, &[], &[], &cats)
+            .await
+            .unwrap();
+
+        let loaded = store
+            .customers
+            .find_by_id("tenant-sup-1", "sup-1")
+            .await
+            .unwrap()
+            .expect("Fornecedor deve existir no tenant 1");
+        assert!(!loaded.customer.is_customer);
+        assert!(loaded.customer.is_supplier);
+        assert_eq!(loaded.supplier_categories.len(), 2);
+
+        // 2. Atualiza categorias (remove Transporte, adiciona Manutencao e mantém Sublocacao)
+        let new_cats = vec![
+            eventrent_core::domain::SupplierCategory::Sublocacao,
+            eventrent_core::domain::SupplierCategory::Manutencao,
+        ];
+        store
+            .customers
+            .update(&supplier, &[], &[], &new_cats)
+            .await
+            .unwrap();
+        let reloaded = store
+            .customers
+            .find_by_id("tenant-sup-1", "sup-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reloaded.supplier_categories.len(), 2);
+        assert!(reloaded
+            .supplier_categories
+            .contains(&eventrent_core::domain::SupplierCategory::Manutencao));
+        assert!(!reloaded
+            .supplier_categories
+            .contains(&eventrent_core::domain::SupplierCategory::Transporte));
+
+        // 3. Filtro por papel (Supplier encontra, Customer não encontra)
+        let sup_list = store
+            .customers
+            .list(
+                "tenant-sup-1",
+                &CustomerFilter {
+                    role_filter: eventrent_core::domain::CustomerRoleFilter::Supplier,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(sup_list.items.len(), 1);
+
+        let cust_list = store
+            .customers
+            .list(
+                "tenant-sup-1",
+                &CustomerFilter {
+                    role_filter: eventrent_core::domain::CustomerRoleFilter::Customer,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(cust_list.items.len(), 0);
+
+        // 4. Isolamento por tenant
+        let sup_list_t2 = store
+            .customers
+            .list(
+                "tenant-sup-2",
+                &CustomerFilter {
+                    role_filter: eventrent_core::domain::CustomerRoleFilter::Supplier,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(sup_list_t2.items.len(), 0);
+
+        // 5. CHECK (is_customer = 1 OR is_supplier = 1) no banco
+        let check_err = sqlx::query(
+            "INSERT INTO customer (id, tenant_id, person_type, name, is_customer, is_supplier, search_text, name_sort, created_at, updated_at) VALUES ('bad-role', 'tenant-sup-1', 'legal', 'Sem Papel', 0, 0, 'sem papel', 'sem papel', ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await;
+        assert!(
+            check_err.is_err(),
+            "CHECK deve impedir cadastro sem cliente e sem fornecedor"
+        );
+
+        // 6. FK composta (tenant_id, customer_id) em customer_supplier_category
+        let fk_err = sqlx::query(
+            "INSERT INTO customer_supplier_category (id, tenant_id, customer_id, category, created_at, updated_at) VALUES ('cat-cross', 'tenant-sup-2', 'sup-1', 'sublocacao', ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await;
+        assert!(
+            fk_err.is_err(),
+            "FK composta deve impedir categoria com tenant diferente do cliente"
+        );
+    }
 }

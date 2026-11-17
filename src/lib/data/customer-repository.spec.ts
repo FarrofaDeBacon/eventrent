@@ -330,4 +330,72 @@ describe("CustomerRepository (CRUD, Busca, Paginação por Cursor e RBAC)", () =
       /Permissão insuficiente/i,
     );
   });
+
+  it("deve cadastrar fornecedor com categorias, terceiro com dois papéis e filtrar por role_filter", async () => {
+    const pureSupplier = await customerRepo.createCustomer({
+      person_type: "legal",
+      name: "Subloca Audio Brasil Ltda",
+      document_type: "none",
+      document_number: null,
+      is_customer: false,
+      is_supplier: true,
+      supplier_categories: ["sublocacao", "transporte"],
+      contacts: [
+        {
+          name: "Pedro Subloca",
+          email: "pedro@subloca.com.br",
+          phone: "(11) 98888-1234",
+          is_primary: true,
+        },
+      ],
+      addresses: [],
+    });
+    expect(pureSupplier.customer.is_customer).toBe(false);
+    expect(pureSupplier.customer.is_supplier).toBe(true);
+    expect(pureSupplier.supplier_categories).toEqual([
+      "sublocacao",
+      "transporte",
+    ]);
+
+    const dualParty = await customerRepo.createCustomer({
+      person_type: "legal",
+      name: "Parceiro Híbrido Ltda",
+      document_type: "none",
+      document_number: null,
+      is_customer: true,
+      is_supplier: true,
+      supplier_categories: ["manutencao"],
+      contacts: [
+        {
+          name: "Carla Híbrida",
+          email: "carla@hibrido.com.br",
+          is_primary: true,
+        },
+      ],
+      addresses: [],
+    });
+
+    const onlySuppliers = await customerRepo.listCustomers({
+      role_filter: "supplier",
+    });
+    expect(onlySuppliers.items.map((c) => c.id)).toContain(
+      pureSupplier.customer.id,
+    );
+    expect(onlySuppliers.items.map((c) => c.id)).toContain(
+      dualParty.customer.id,
+    );
+
+    const onlyBoth = await customerRepo.listCustomers({ role_filter: "both" });
+    expect(onlyBoth.items.map((c) => c.id)).toEqual([dualParty.customer.id]);
+
+    const onlyCustomers = await customerRepo.listCustomers({
+      role_filter: "customer",
+    });
+    expect(onlyCustomers.items.map((c) => c.id)).not.toContain(
+      pureSupplier.customer.id,
+    );
+    expect(onlyCustomers.items.map((c) => c.id)).toContain(
+      dualParty.customer.id,
+    );
+  });
 });

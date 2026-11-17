@@ -1199,6 +1199,313 @@ where
     contract_unique_partial_indexes(&stores, &tenant_id).await;
     contract_branding_dark_logo_and_icon(&stores, &tenant_id).await;
     contract_customer_crud_and_lgpd_audit(&services, &setup_result.session, &tenant_id).await;
+    contract_supplier_rbac_and_dual_roles(&services, &setup_result.session, &tenant_id).await;
+}
+
+pub async fn contract_supplier_rbac_and_dual_roles(
+    services: &CoreServices,
+    owner_session: &SessionInfo,
+    tenant_id: &str,
+) {
+    use crate::domain::{
+        CreateContactInput, CreateCustomerInput, CustomerFilter, CustomerRoleFilter, DocumentType,
+        LoginInput, LoginPolicy, PersonType, SupplierCategory, UpdateCustomerInput,
+    };
+    use crate::error::CoreError;
+
+    // Cria usuários Comercial, Estoque e Técnico para provar RBAC por papel
+    let roles = services
+        .list_roles(owner_session)
+        .await
+        .expect("list_roles");
+    let commercial_role = roles
+        .iter()
+        .find(|r| r.slug == "commercial")
+        .expect("commercial role");
+    let warehouse_role = roles
+        .iter()
+        .find(|r| r.slug == "warehouse")
+        .expect("warehouse role");
+    let tech_role = roles
+        .iter()
+        .find(|r| r.slug == "technician")
+        .expect("technician role");
+
+    services
+        .create_user(
+            owner_session,
+            &CreateUserInput {
+                name: "Comercial Teste".to_string(),
+                email: "comercial.sup@eventrent.com.br".to_string(),
+                password: "UserPass#2026".to_string(),
+                role_id: commercial_role.id.clone(),
+            },
+        )
+        .await
+        .expect("create commercial");
+    services
+        .create_user(
+            owner_session,
+            &CreateUserInput {
+                name: "Estoque Teste".to_string(),
+                email: "estoque.sup@eventrent.com.br".to_string(),
+                password: "UserPass#2026".to_string(),
+                role_id: warehouse_role.id.clone(),
+            },
+        )
+        .await
+        .expect("create warehouse");
+    services
+        .create_user(
+            owner_session,
+            &CreateUserInput {
+                name: "Tecnico Teste".to_string(),
+                email: "tecnico.sup@eventrent.com.br".to_string(),
+                password: "UserPass#2026".to_string(),
+                role_id: tech_role.id.clone(),
+            },
+        )
+        .await
+        .expect("create technician");
+
+    let policy = LoginPolicy {
+        reveal_account_locked: true,
+    };
+    let commercial_session = services
+        .login(
+            tenant_id,
+            &LoginInput {
+                email: "comercial.sup@eventrent.com.br".to_string(),
+                password: "UserPass#2026".to_string(),
+            },
+            &policy,
+            30,
+        )
+        .await
+        .expect("login commercial");
+    let warehouse_session = services
+        .login(
+            tenant_id,
+            &LoginInput {
+                email: "estoque.sup@eventrent.com.br".to_string(),
+                password: "UserPass#2026".to_string(),
+            },
+            &policy,
+            30,
+        )
+        .await
+        .expect("login warehouse");
+    let tech_session = services
+        .login(
+            tenant_id,
+            &LoginInput {
+                email: "tecnico.sup@eventrent.com.br".to_string(),
+                password: "UserPass#2026".to_string(),
+            },
+            &policy,
+            30,
+        )
+        .await
+        .expect("login technician");
+
+    // 1. Estoque (supplier:manage implica supplier:read) cria e lê fornecedor puro
+    let supplier_only = services
+        .create_customer(
+            &warehouse_session,
+            &CreateCustomerInput {
+                person_type: PersonType::Legal,
+                name: "Sublocadora Som & Luz Ltda".to_string(),
+                trade_name: Some("Subloca Som".to_string()),
+                document_type: DocumentType::None,
+                document_number: None,
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: false,
+                is_supplier: true,
+                supplier_categories: vec![
+                    SupplierCategory::Sublocacao,
+                    SupplierCategory::Transporte,
+                ],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Rafael Logística".to_string(),
+                    email: Some("rafael@sublocasom.com.br".to_string()),
+                    phone: Some("11988881111".to_string()),
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+            },
+        )
+        .await
+        .expect("Estoque deve criar fornecedor puro");
+    assert!(!supplier_only.customer.is_customer);
+    assert!(supplier_only.customer.is_supplier);
+    assert_eq!(supplier_only.supplier_categories.len(), 2);
+
+    let warehouse_list = services
+        .list_customers(
+            &warehouse_session,
+            &CustomerFilter {
+                query: None,
+                person_type: None,
+                role_filter: CustomerRoleFilter::Supplier,
+                cursor: None,
+                limit: Some(50),
+            },
+        )
+        .await
+        .expect("supplier:manage implica supplier:read");
+    assert!(warehouse_list
+        .items
+        .iter()
+        .any(|c| c.id == supplier_only.customer.id));
+
+    // 2. Categorias sem is_supplier = true devem falhar
+    let invalid_cat_res = services
+        .create_customer(
+            owner_session,
+            &CreateCustomerInput {
+                person_type: PersonType::Legal,
+                name: "Cliente Sem Fornecedor".to_string(),
+                trade_name: None,
+                document_type: DocumentType::None,
+                document_number: None,
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: true,
+                is_supplier: false,
+                supplier_categories: vec![SupplierCategory::Sublocacao],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "C".to_string(),
+                    email: Some("c@ex.com".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+            },
+        )
+        .await;
+    assert!(matches!(invalid_cat_res, Err(CoreError::Validation(_))));
+
+    // 3. Proprietário cria cadastro com os dois papéis (cliente e fornecedor)
+    let dual_party = services
+        .create_customer(
+            owner_session,
+            &CreateCustomerInput {
+                person_type: PersonType::Legal,
+                name: "Parceiro Duplo Eventos Ltda".to_string(),
+                trade_name: None,
+                document_type: DocumentType::None,
+                document_number: None,
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: true,
+                is_supplier: true,
+                supplier_categories: vec![SupplierCategory::Manutencao],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Contato Duplo".to_string(),
+                    email: Some("duplo@parceiro.com.br".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+            },
+        )
+        .await
+        .expect("Proprietário cria cadastro duplo");
+    assert!(dual_party.customer.is_customer && dual_party.customer.is_supplier);
+
+    // 4. Técnico (sem customer:read e sem supplier:read) não acessa nada
+    assert!(matches!(
+        services
+            .list_customers(&tech_session, &CustomerFilter::default())
+            .await,
+        Err(CoreError::Forbidden(_))
+    ));
+    assert!(matches!(
+        services
+            .get_customer(&tech_session, &supplier_only.customer.id)
+            .await,
+        Err(CoreError::Forbidden(_))
+    ));
+
+    // 5. Comercial lê fornecedor (supplier:read), mas não pode criar nem editar fornecedor
+    let commercial_sup = services
+        .get_customer(&commercial_session, &supplier_only.customer.id)
+        .await
+        .expect("Comercial tem supplier:read");
+    assert_eq!(commercial_sup.customer.id, supplier_only.customer.id);
+
+    let commercial_edit_sup = services
+        .update_customer(
+            &commercial_session,
+            &dual_party.customer.id,
+            &UpdateCustomerInput {
+                person_type: PersonType::Legal,
+                name: "Tentativa Comercial".to_string(),
+                trade_name: None,
+                document_type: DocumentType::None,
+                document_number: None,
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: true,
+                is_supplier: false, // remover papel de fornecedor exige supplier:manage
+                supplier_categories: vec![],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Contato Duplo".to_string(),
+                    email: Some("duplo@parceiro.com.br".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+                expected_updated_at: dual_party.customer.updated_at.clone(),
+            },
+        )
+        .await;
+    assert!(matches!(commercial_edit_sup, Err(CoreError::Forbidden(_))));
+
+    // 6. Estoque não pode remover papel de cliente em cadastro duplo
+    let warehouse_edit_dual = services
+        .update_customer(
+            &warehouse_session,
+            &dual_party.customer.id,
+            &UpdateCustomerInput {
+                person_type: PersonType::Legal,
+                name: "Tentativa Estoque".to_string(),
+                trade_name: None,
+                document_type: DocumentType::None,
+                document_number: None,
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: false,
+                is_supplier: true,
+                supplier_categories: vec![SupplierCategory::Manutencao],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Contato Duplo".to_string(),
+                    email: Some("duplo@parceiro.com.br".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+                expected_updated_at: dual_party.customer.updated_at.clone(),
+            },
+        )
+        .await;
+    assert!(matches!(warehouse_edit_dual, Err(CoreError::Forbidden(_))));
 }
 
 #[cfg(test)]
