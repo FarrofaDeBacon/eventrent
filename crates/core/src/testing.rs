@@ -1324,7 +1324,8 @@ mod unit_tests {
 
     #[test]
     fn test_password_and_email_validation() {
-        use crate::services::{validate_email, validate_password};
+        use crate::domain::validation::validate_email;
+        use crate::services::validate_password;
 
         // Senhas: mínimo 8 e máximo 128 caracteres (contagem Unicode)
         assert!(validate_password("1234567").is_err());
@@ -1376,13 +1377,17 @@ mod unit_tests {
         assert!(validate_email("usuario@exa!mple.com").is_err());
         assert!(validate_email("usuario@sub.-empresa.com").is_err());
         assert!(validate_email("usuario@empresa-.com").is_err());
-        // Parte local com caracteres proibidos
+        // Parte local com caracteres proibidos (aspas, comentários, acentos e colchetes)
         assert!(validate_email("usuá[rio]@dominio.com").is_err());
+        assert!(validate_email("\"usuario\"@dominio.com").is_err());
+        assert!(validate_email("usuario(comentario)@dominio.com").is_err());
+        assert!(validate_email("usuario@(comentario)dominio.com").is_err());
     }
 
     #[test]
     fn test_customer_domain_validations_and_limits() {
         use crate::domain::customer::*;
+        use crate::domain::validation::*;
 
         // 1. CEP: BR normaliza para 8 dígitos, rejeita formato inválido
         assert_eq!(

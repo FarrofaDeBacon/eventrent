@@ -7,18 +7,17 @@ pub mod permission;
 pub mod role;
 pub mod tenant;
 pub mod user;
+pub mod validation;
 
 pub use audit::AuditLogEntry;
 pub use branding::{BrandingValidator, PublicBranding, TenantBranding, UpdateBrandingInput};
 pub use config::{AppConfig, InitialSetupInput, InitialSetupResult, OperationMode};
 pub use customer::{
-    build_customer_search_text, build_name_sort, normalize_and_validate_phone,
-    normalize_and_validate_postal_code, normalize_for_search, remove_diacritics,
-    validate_addresses, validate_brazilian_state, validate_contacts, validate_country_code,
-    validate_customer_common_fields, CreateAddressInput, CreateContactInput, CreateCustomerInput,
-    Customer, CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter, CustomerPage,
-    CustomerWithDetails, PersonType, UpdateAddressInput, UpdateContactInput, UpdateCustomerInput,
-    BRAZILIAN_STATES,
+    build_customer_search_text, build_name_sort, normalize_for_search, remove_diacritics,
+    validate_addresses, validate_contacts, validate_customer_common_fields, CreateAddressInput,
+    CreateContactInput, CreateCustomerInput, Customer, CustomerAddress, CustomerContact,
+    CustomerCursor, CustomerFilter, CustomerPage, CustomerWithDetails, PersonType,
+    UpdateAddressInput, UpdateContactInput, UpdateCustomerInput,
 };
 pub use document::{
     format_cnpj, format_cpf, mask_document_for_audit, mask_email_for_audit,
@@ -32,4 +31,8 @@ pub use tenant::Tenant;
 pub use user::{
     CreateUserInput, LoginInput, LoginPolicy, RecoverPasswordInput, RecoverPasswordResult,
     ResetPasswordInput, SessionInfo, UpdateUserInput, UserRecord, UserWithRole,
+};
+pub use validation::{
+    normalize_and_validate_phone, normalize_and_validate_postal_code, validate_brazilian_state,
+    validate_country_code, validate_email, BRAZILIAN_STATES,
 };

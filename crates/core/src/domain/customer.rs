@@ -1,6 +1,10 @@
 use crate::domain::document::{
     mask_document_for_audit, mask_email_for_audit, mask_phone_for_audit, DocumentType,
 };
+use crate::domain::validation::{
+    normalize_and_validate_phone, normalize_and_validate_postal_code, validate_brazilian_state,
+    validate_country_code, validate_email,
+};
 use crate::error::{CoreError, Result as CoreResult};
 use base64::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -293,112 +297,6 @@ pub fn build_customer_search_text(
     parts.join(" ")
 }
 
-pub const BRAZILIAN_STATES: [&str; 27] = [
-    "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR",
-    "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO",
-];
-
-pub fn validate_brazilian_state(state: &str) -> CoreResult<String> {
-    let upper = state.trim().to_uppercase();
-    if BRAZILIAN_STATES.contains(&upper.as_str()) {
-        Ok(upper)
-    } else {
-        Err(CoreError::Validation(format!(
-            "UF inválida: '{state}'. Informe uma das 27 unidades federativas brasileiras (ex: SP, RJ, MG)."
-        )))
-    }
-}
-
-pub fn validate_country_code(country: &str) -> CoreResult<String> {
-    let trimmed = country.trim().to_uppercase();
-    if trimmed.len() == 2 && trimmed.chars().all(|c| c.is_ascii_alphabetic()) {
-        Ok(trimmed)
-    } else {
-        Err(CoreError::Validation(
-            "Código do país inválido: deve conter 2 letras ISO (ex: BR).".to_string(),
-        ))
-    }
-}
-
-pub fn normalize_and_validate_postal_code(postal_code: &str, country: &str) -> CoreResult<String> {
-    let trimmed = postal_code.trim();
-    if trimmed.is_empty() {
-        return Err(CoreError::Validation(
-            "CEP/Código postal é obrigatório.".to_string(),
-        ));
-    }
-    if country.eq_ignore_ascii_case("BR") {
-        if !trimmed
-            .chars()
-            .all(|c| c.is_ascii_digit() || c == '.' || c == '-' || c == ' ')
-        {
-            return Err(CoreError::Validation(
-                "CEP inválido: deve conter apenas dígitos e separadores usuais (traço ou ponto)."
-                    .to_string(),
-            ));
-        }
-        let digits: String = trimmed.chars().filter(|c| c.is_ascii_digit()).collect();
-        if digits.len() != 8 {
-            return Err(CoreError::Validation(
-                "CEP inválido: deve conter exatamente 8 dígitos numéricos.".to_string(),
-            ));
-        }
-        Ok(digits)
-    } else {
-        if trimmed.len() > 20 {
-            return Err(CoreError::Validation(
-                "Código postal excede o limite máximo de 20 caracteres.".to_string(),
-            ));
-        }
-        Ok(trimmed.to_string())
-    }
-}
-
-pub fn normalize_and_validate_phone(phone: &str, country: Option<&str>) -> CoreResult<String> {
-    let trimmed = phone.trim();
-    if trimmed.is_empty() {
-        return Err(CoreError::Validation(
-            "Telefone não pode ser vazio.".to_string(),
-        ));
-    }
-
-    if !trimmed
-        .chars()
-        .all(|c| c.is_ascii_digit() || matches!(c, '+' | '(' | ')' | '-' | '.' | ' '))
-    {
-        return Err(CoreError::Validation(
-            "Telefone contém caracteres inválidos. Utilize apenas números, espaços e os símbolos +, -, (, ), .".to_string(),
-        ));
-    }
-
-    let mut digits: String = trimmed.chars().filter(|c| c.is_ascii_digit()).collect();
-    let is_br = country
-        .map(|c| c.eq_ignore_ascii_case("BR"))
-        .unwrap_or(true);
-
-    if is_br {
-        if digits.starts_with("55") && (digits.len() == 12 || digits.len() == 13) {
-            digits = digits[2..].to_string();
-        }
-        if digits.len() == 10 || digits.len() == 11 {
-            Ok(digits)
-        } else {
-            Err(CoreError::Validation(
-                "Telefone inválido: para o Brasil deve conter 10 ou 11 dígitos com DDD (ex: 11987654321).".to_string(),
-            ))
-        }
-    } else {
-        if digits.len() >= 8 && digits.len() <= 15 {
-            Ok(digits)
-        } else {
-            Err(CoreError::Validation(
-                "Telefone inválido: para outros países deve conter entre 8 e 15 dígitos."
-                    .to_string(),
-            ))
-        }
-    }
-}
-
 pub fn validate_customer_common_fields(
     name: &str,
     trade_name: Option<&str>,
@@ -491,7 +389,7 @@ pub fn validate_contacts(contacts: &mut [CreateContactInput]) -> CoreResult<()> 
         }
 
         if let Some(email) = email_val {
-            crate::services::validate_email(email)?;
+            validate_email(email)?;
         }
         if let Some(phone) = phone_val {
             let normalized = normalize_and_validate_phone(phone, None)?;

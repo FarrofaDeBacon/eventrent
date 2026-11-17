@@ -1,12 +1,12 @@
 use crate::domain::{
     build_customer_search_text, build_name_sort, mask_email_for_audit,
     mask_individual_name_for_audit, parse_document_with_type, validate_addresses,
-    validate_contacts, validate_customer_common_fields, AuditLogEntry, BrandingValidator,
-    CreateCustomerInput, CreateUserInput, Customer, CustomerAddress, CustomerContact,
-    CustomerCursor, CustomerFilter, CustomerPage, CustomerWithDetails, DocumentType,
-    InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode, PersonType,
-    PublicBranding, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput, Role,
-    RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput,
+    validate_contacts, validate_customer_common_fields, validate_email, AuditLogEntry,
+    BrandingValidator, CreateCustomerInput, CreateUserInput, Customer, CustomerAddress,
+    CustomerContact, CustomerCursor, CustomerFilter, CustomerPage, CustomerWithDetails,
+    DocumentType, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
+    PersonType, PublicBranding, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput,
+    Role, RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput,
     UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole, PERM_BRANDING_MANAGE,
     PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_USER_MANAGE,
     PERM_USER_READ, ROLE_SLUG_OWNER, SYSTEM_ROLES,
@@ -44,109 +44,6 @@ pub fn validate_password(password: &str) -> Result<()> {
         )));
     }
     Ok(())
-}
-
-/// Valida formato de e-mail sem dependências externas nem unwrap().
-///
-/// Regras aplicadas (RFC 5321 e RFC 5890 para IDN/Punycode):
-/// 1. Sem espaços em branco ou caracteres de controle.
-/// 2. Comprimento total entre 5 e 254 caracteres.
-/// 3. Presença de exatamente um caractere '@', separando parte local e domínio.
-/// 4. Parte local: 1 a 64 caracteres, sem pontos no início/fim e sem pontos consecutivos.
-/// 5. Domínio: não vazio, sem pontos ou hífens no início/fim, com pelo menos uma extensão (TLD).
-/// 6. TLD (Top-Level Domain): no mínimo 2 caracteres, alfanumérico ou hífen (ex: punycode xn--p1ai), sem iniciar/terminar com hífen.
-pub fn validate_email(email: &str) -> Result<String> {
-    if email.chars().any(|c| c.is_whitespace() || c.is_control()) {
-        return Err(CoreError::Validation(
-            "O e-mail não pode conter espaços ou caracteres de controle.".to_string(),
-        ));
-    }
-
-    let lowered = email.to_lowercase();
-    if lowered.len() < 5 || lowered.len() > 254 {
-        return Err(CoreError::Validation(
-            "O e-mail deve ter entre 5 e 254 caracteres.".to_string(),
-        ));
-    }
-
-    let parts: Vec<&str> = lowered.split('@').collect();
-    if parts.len() != 2 {
-        return Err(CoreError::Validation(
-            "Informe um e-mail válido contendo um único '@'.".to_string(),
-        ));
-    }
-
-    let (local, domain) = (parts[0], parts[1]);
-    if local.is_empty()
-        || local.len() > 64
-        || local.starts_with('.')
-        || local.ends_with('.')
-        || local.contains("..")
-    {
-        return Err(CoreError::Validation(
-            "Parte local do e-mail inválida (máximo 64 caracteres, sem pontos nas extremidades ou consecutivos).".to_string(),
-        ));
-    }
-
-    // Endurecimento: parte local aceita apenas letras, números e . _ % + - (ASCII)
-    if !local
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '%' | '+' | '-'))
-    {
-        return Err(CoreError::Validation(
-            "Parte local do e-mail contém caracteres inválidos (permitidos apenas letras ASCII, dígitos e . _ % + -).".to_string(),
-        ));
-    }
-
-    if domain.is_empty()
-        || domain.starts_with('.')
-        || domain.ends_with('.')
-        || domain.starts_with('-')
-        || domain.ends_with('-')
-        || domain.contains("..")
-    {
-        return Err(CoreError::Validation(
-            "Domínio do e-mail inválido.".to_string(),
-        ));
-    }
-
-    let domain_labels: Vec<&str> = domain.split('.').collect();
-    if domain_labels.len() < 2 {
-        return Err(CoreError::Validation(
-            "Domínio do e-mail deve conter pelo menos uma extensão (ex: .com).".to_string(),
-        ));
-    }
-
-    // Endurecimento: cada rótulo do domínio aceita apenas a-z, 0-9 e hífen (sem hífen nas pontas)
-    for label in &domain_labels {
-        if label.is_empty()
-            || label.starts_with('-')
-            || label.ends_with('-')
-            || !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-        {
-            return Err(CoreError::Validation(
-                "Rótulo de domínio do e-mail inválido (use apenas letras ASCII, dígitos ou hífen sem hífen nas extremidades).".to_string(),
-            ));
-        }
-    }
-
-    let Some(tld) = domain_labels.last() else {
-        return Err(CoreError::Validation(
-            "Extensão do e-mail inválida.".to_string(),
-        ));
-    };
-
-    if tld.len() < 2
-        || tld.starts_with('-')
-        || tld.ends_with('-')
-        || !tld.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-    {
-        return Err(CoreError::Validation(
-            "Extensão do e-mail inválida.".to_string(),
-        ));
-    }
-
-    Ok(lowered)
 }
 
 /// Configuração recomendada pelo OWASP Password Storage Cheat Sheet para Argon2id:
