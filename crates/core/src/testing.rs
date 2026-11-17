@@ -1105,7 +1105,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         }],
     };
     let created_forged = services
-        .create_customer(&session, &forged_input)
+        .create_customer(session, &forged_input)
         .await
         .expect("create_customer deve ignorar IDs enviados pelo cliente");
     assert_ne!(created_forged.contacts[0].id, existing_contact_id);
