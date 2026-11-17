@@ -263,14 +263,15 @@ describe("CustomerRepository (CRUD, Busca, Paginação por Cursor e RBAC)", () =
       role_id: warehouseRole.id,
     });
 
-    // Financeiro pode ler clientes, mas não criar/excluir nem acessar /customers/new
+    // Financeiro pode ler clientes e gerenciar fornecedores, mas não criar cliente
     await authRepo.logout();
     const financeSession = await authRepo.login({
       email: "maria@palco.com.br",
       password: "MariaPassword#2026",
     });
     expect(canAccessRoute(financeSession, "/customers")).toBe(true);
-    expect(canAccessRoute(financeSession, "/customers/new")).toBe(false);
+    expect(canAccessRoute(financeSession, "/suppliers")).toBe(true);
+    expect(canAccessRoute(financeSession, "/customers/new")).toBe(true);
     const listAsFinance = await customerRepo.listCustomers({});
     expect(listAsFinance.items.length).toBeGreaterThan(0);
     await expect(
