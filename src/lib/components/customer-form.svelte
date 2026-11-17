@@ -5,6 +5,7 @@
     CreateCustomerInput,
     DocumentType,
     PersonType,
+    SupplierCategory,
   } from "$lib/data";
   import { _ } from "$lib/i18n";
   import {
@@ -32,6 +33,10 @@
 
   interface Props {
     initialValues?: CreateCustomerInput;
+    defaultIsCustomer?: boolean;
+    defaultIsSupplier?: boolean;
+    canManageCustomer?: boolean;
+    canManageSupplier?: boolean;
     readonly?: boolean;
     submitting?: boolean;
     submitError?: string | null;
@@ -41,12 +46,28 @@
 
   let {
     initialValues,
+    defaultIsCustomer = true,
+    defaultIsSupplier = false,
+    canManageCustomer = true,
+    canManageSupplier = true,
     readonly = false,
     submitting = false,
     submitError = null,
     onSubmit,
     onCancel,
   }: Props = $props();
+
+  const SUPPLIER_CATEGORY_OPTIONS: Array<{
+    value: SupplierCategory;
+    labelKey: string;
+  }> = [
+    { value: "sublocacao", labelKey: "customers.categorySublocacao" },
+    { value: "manutencao", labelKey: "customers.categoryManutencao" },
+    { value: "transporte", labelKey: "customers.categoryTransporte" },
+    { value: "compras", labelKey: "customers.categoryCompras" },
+    { value: "servicos", labelKey: "customers.categoryServicos" },
+    { value: "outros", labelKey: "customers.categoryOutros" },
+  ];
 
   interface ContactFormItem {
     id?: string | null;
@@ -80,6 +101,9 @@
     state_registration: string;
     municipal_registration: string;
     notes: string;
+    is_customer: boolean;
+    is_supplier: boolean;
+    supplier_categories: SupplierCategory[];
     contacts: ContactFormItem[];
     addresses: AddressFormItem[];
   }
@@ -95,6 +119,9 @@
         state_registration: "",
         municipal_registration: "",
         notes: "",
+        is_customer: defaultIsCustomer,
+        is_supplier: defaultIsSupplier,
+        supplier_categories: [],
         contacts: [
           {
             name: "",
@@ -129,6 +156,9 @@
       state_registration: src.state_registration ?? "",
       municipal_registration: src.municipal_registration ?? "",
       notes: src.notes ?? "",
+      is_customer: src.is_customer ?? true,
+      is_supplier: src.is_supplier ?? false,
+      supplier_categories: [...(src.supplier_categories ?? [])],
       contacts: src.contacts.map((c) => ({
         id: c.id ?? null,
         name: c.name,
@@ -345,6 +375,11 @@
           ? parsed.data.municipal_registration
           : null,
       notes: parsed.data.notes || null,
+      is_customer: parsed.data.is_customer,
+      is_supplier: parsed.data.is_supplier,
+      supplier_categories: parsed.data.is_supplier
+        ? parsed.data.supplier_categories
+        : [],
       contacts: parsed.data.contacts.map((c) => ({
         id: c.id ?? null,
         name: c.name,
@@ -370,6 +405,16 @@
 
     await onSubmit?.(payload);
   }
+  function toggleSupplierCategory(category: SupplierCategory) {
+    if (readonly) return;
+    if (form.supplier_categories.includes(category)) {
+      form.supplier_categories = form.supplier_categories.filter(
+        (c) => c !== category,
+      );
+    } else {
+      form.supplier_categories = [...form.supplier_categories, category];
+    }
+  }
 </script>
 
 <form onsubmit={handleFormSubmit} class="space-y-6" novalidate>
@@ -389,6 +434,69 @@
       <CardDescription>{$_("customers.basicSectionDesc")}</CardDescription>
     </CardHeader>
     <CardContent class="space-y-4">
+      <div class="space-y-3">
+        <span class="text-sm font-medium text-foreground block">
+          {$_("customers.rolesLabel")}
+        </span>
+        <div class="flex flex-wrap items-center gap-4">
+          <label
+            class="inline-flex items-center gap-2 text-sm text-foreground cursor-pointer"
+          >
+            <input
+              type="checkbox"
+              bind:checked={form.is_customer}
+              disabled={readonly || !canManageCustomer}
+              data-testid="role-customer-checkbox"
+              class="h-4 w-4 rounded-sm border-border text-primary focus:ring-primary"
+            />
+            <span>{$_("customers.roleCustomer")}</span>
+          </label>
+          <label
+            class="inline-flex items-center gap-2 text-sm text-foreground cursor-pointer"
+          >
+            <input
+              type="checkbox"
+              bind:checked={form.is_supplier}
+              disabled={readonly || !canManageSupplier}
+              data-testid="role-supplier-checkbox"
+              class="h-4 w-4 rounded-sm border-border text-primary focus:ring-primary"
+            />
+            <span>{$_("customers.roleSupplier")}</span>
+          </label>
+        </div>
+        {#if fieldErrors["is_customer"]}
+          <p class="text-xs text-destructive">{fieldErrors["is_customer"]}</p>
+        {/if}
+
+        {#if form.is_supplier}
+          <div class="space-y-2 pt-1" data-testid="supplier-categories-section">
+            <span class="text-xs font-medium text-muted-foreground block">
+              {$_("customers.categoriesLabel")} — {$_(
+                "customers.categoriesHint",
+              )}
+            </span>
+            <div class="flex flex-wrap gap-2">
+              {#each SUPPLIER_CATEGORY_OPTIONS as option (option.value)}
+                {@const selected = form.supplier_categories.includes(
+                  option.value,
+                )}
+                <button
+                  type="button"
+                  disabled={readonly}
+                  onclick={() => toggleSupplierCategory(option.value)}
+                  data-testid={`supplier-category-${option.value}`}
+                  class="px-3 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer {selected
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-muted/40 text-muted-foreground border-border hover:text-foreground'}"
+                >
+                  {$_(option.labelKey)}
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </div>
+
       <div class="space-y-2">
         <span class="text-sm font-medium text-foreground block">
           {$_("customers.personTypeLabel")}

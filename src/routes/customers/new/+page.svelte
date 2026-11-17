@@ -1,14 +1,40 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import { page } from "$app/state";
   import { ArrowLeft } from "lucide-svelte";
   import { toast } from "svelte-sonner";
-  import { getCustomerRepository, type CreateCustomerInput } from "$lib/data";
+  import {
+    appSession,
+    getCustomerRepository,
+    hasPermission,
+    PERMISSIONS,
+    type CreateCustomerInput,
+  } from "$lib/data";
   import { _ } from "$lib/i18n";
   import CustomerForm from "$lib/components/customer-form.svelte";
   import { Button } from "$lib/ui/button";
 
   let submitting = $state(false);
   let submitError = $state<string | null>(null);
+
+  let canManageCustomer = $derived(
+    hasPermission(appSession.session, PERMISSIONS.CUSTOMER_MANAGE),
+  );
+  let canManageSupplier = $derived(
+    hasPermission(appSession.session, PERMISSIONS.SUPPLIER_MANAGE),
+  );
+
+  let isSupplierContext = $derived(
+    page.url.searchParams.get("role") === "supplier",
+  );
+  let defaultIsSupplier = $derived(
+    isSupplierContext
+      ? canManageSupplier
+      : !canManageCustomer && canManageSupplier,
+  );
+  let defaultIsCustomer = $derived(
+    isSupplierContext ? false : canManageCustomer,
+  );
 
   async function handleCreate(input: CreateCustomerInput) {
     submitting = true;
@@ -49,9 +75,13 @@
   </div>
 
   <CustomerForm
+    {defaultIsCustomer}
+    {defaultIsSupplier}
+    {canManageCustomer}
+    {canManageSupplier}
     {submitting}
     {submitError}
     onSubmit={handleCreate}
-    onCancel={() => goto("/customers")}
+    onCancel={() => goto(isSupplierContext ? "/suppliers" : "/customers")}
   />
 </div>

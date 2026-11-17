@@ -5,6 +5,7 @@
     CalendarDays,
     Speaker,
     Users,
+    Truck,
     UserCog,
     Shield,
     Palette,
@@ -70,6 +71,12 @@
       href: "/customers",
       icon: Users,
       permission: PERMISSIONS.CUSTOMER_READ,
+    },
+    {
+      labelKey: "nav.suppliers",
+      href: "/suppliers",
+      icon: Truck,
+      permission: PERMISSIONS.SUPPLIER_READ,
     },
     {
       labelKey: "nav.users",

@@ -154,6 +154,20 @@ export const customerFormSchema = z
       .max(2000, "Notas excedem 2000 caracteres.")
       .optional()
       .nullable(),
+    is_customer: z.boolean().default(true),
+    is_supplier: z.boolean().default(false),
+    supplier_categories: z
+      .array(
+        z.enum([
+          "sublocacao",
+          "manutencao",
+          "transporte",
+          "compras",
+          "servicos",
+          "outros",
+        ]),
+      )
+      .default([]),
     contacts: z
       .array(contactSchema)
       .min(1, "Cliente deve possuir pelo menos um contato.")
@@ -164,6 +178,14 @@ export const customerFormSchema = z
       .default([]),
   })
   .superRefine((data, ctx) => {
+    if (!data.is_customer && !data.is_supplier) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["is_customer"],
+        message: "Selecione pelo menos um papel: Cliente ou Fornecedor.",
+      });
+    }
+
     const doc = (data.document_number ?? "").trim();
 
     if (data.document_type === "cpf") {

@@ -10,6 +10,8 @@ import {
   type CustomerPage,
   type CustomerWithDetails,
   type DocumentType,
+  type SessionInfo,
+  type SupplierCategory,
   type UpdateCustomerInput,
 } from "./types";
 import {
@@ -145,6 +147,8 @@ function createSeedCustomers(tenantId: string): CustomerWithDetails[] {
       municipal_registration: input.municipal_registration ?? null,
       notes: input.notes ?? null,
       active: true,
+      is_customer: input.is_customer ?? true,
+      is_supplier: input.is_supplier ?? false,
       search_text: searchText,
       name_sort: normalizeForSearch(input.name),
       created_at: now,
@@ -188,7 +192,12 @@ function createSeedCustomers(tenantId: string): CustomerWithDetails[] {
       created_by: "system",
     }));
 
-    return { customer, contacts, addresses };
+    return {
+      customer,
+      contacts,
+      addresses,
+      supplier_categories: input.supplier_categories ?? [],
+    };
   });
 }
 
@@ -237,15 +246,55 @@ export function resetMockCustomers(): void {
   }
 }
 
-function requireMockCustomerPermission(permission: string) {
+function requireMockSession(): SessionInfo {
   const state = getSharedMockState();
   if (!state.session) {
     throw new Error("Sessão não autenticada.");
   }
-  if (!state.session.permissions.includes(permission)) {
-    throw new Error(`Permissão insuficiente: requer '${permission}'.`);
+  return state.session;
+}
+
+function canReadCustomer(session: SessionInfo): boolean {
+  return (
+    session.permissions.includes(PERMISSIONS.CUSTOMER_READ) ||
+    session.permissions.includes(PERMISSIONS.CUSTOMER_MANAGE)
+  );
+}
+
+function canReadSupplier(session: SessionInfo): boolean {
+  return (
+    session.permissions.includes(PERMISSIONS.SUPPLIER_READ) ||
+    session.permissions.includes(PERMISSIONS.SUPPLIER_MANAGE)
+  );
+}
+
+function canManageCustomer(session: SessionInfo): boolean {
+  return session.permissions.includes(PERMISSIONS.CUSTOMER_MANAGE);
+}
+
+function canManageSupplier(session: SessionInfo): boolean {
+  return session.permissions.includes(PERMISSIONS.SUPPLIER_MANAGE);
+}
+
+function resolveValidatedRolesAndCategories(input: CreateCustomerInput): {
+  isCustomer: boolean;
+  isSupplier: boolean;
+  categories: SupplierCategory[];
+} {
+  const isCustomer = input.is_customer ?? true;
+  const isSupplier = input.is_supplier ?? false;
+  if (!isCustomer && !isSupplier) {
+    throw new Error(
+      "O terceiro deve possuir pelo menos um papel: Cliente ou Fornecedor.",
+    );
   }
-  return { state, session: state.session };
+  const categories = Array.from(new Set(input.supplier_categories ?? []));
+  if (!isSupplier && categories.length > 0) {
+    throw new Error(
+      "Categorias de fornecedor só podem ser atribuídas quando o papel Fornecedor estiver marcado.",
+    );
+  }
+  return { isCustomer, isSupplier, categories };
 }
 
 function buildSearchText(
@@ -348,9 +397,32 @@ function validateInput(input: CreateCustomerInput): {
 
 export class MockCustomerRepository implements CustomerRepository {
   async listCustomers(filter: CustomerFilter): Promise<CustomerPage> {
-    const { session } = requireMockCustomerPermission(
-      PERMISSIONS.CUSTOMER_READ,
-    );
+    const session = requireMockSession();
+    const readCust = canReadCustomer(session);
+    const readSupp = canReadSupplier(session);
+    const roleFilter = filter.role_filter ?? "all";
+
+    if (roleFilter === "customer" && !readCust) {
+      throw new Error(
+        `Permissão insuficiente: requer '${PERMISSIONS.CUSTOMER_READ}'.`,
+      );
+    }
+    if (roleFilter === "supplier" && !readSupp) {
+      throw new Error(
+        `Permissão insuficiente: requer '${PERMISSIONS.SUPPLIER_READ}'.`,
+      );
+    }
+    if (roleFilter === "both" && (!readCust || !readSupp)) {
+      throw new Error(
+        `Permissão insuficiente: requer '${PERMISSIONS.CUSTOMER_READ}' e '${PERMISSIONS.SUPPLIER_READ}'.`,
+      );
+    }
+    if (roleFilter === "all" && !readCust && !readSupp) {
+      throw new Error(
+        `Permissão insuficiente: requer '${PERMISSIONS.CUSTOMER_READ}' ou '${PERMISSIONS.SUPPLIER_READ}'.`,
+      );
+    }
+
     const store = loadStore(session.tenant_id);
 
     if (filter.query) {
@@ -365,7 +437,13 @@ export class MockCustomerRepository implements CustomerRepository {
 
     let items = store.customers
       .map((entry) => entry.customer)
-      .filter((c) => c.tenant_id === session.tenant_id && !c.deleted_at);
+      .filter((c) => c.tenant_id === session.tenant_id && !c.deleted_at)
+      .filter((c) => {
+        if (roleFilter === "customer") return c.is_customer;
+        if (roleFilter === "supplier") return c.is_supplier;
+        if (roleFilter === "both") return c.is_customer && c.is_supplier;
+        return (c.is_customer && readCust) || (c.is_supplier && readSupp);
+      });
 
     if (filter.person_type) {
       items = items.filter((c) => c.person_type === filter.person_type);
@@ -419,9 +497,14 @@ export class MockCustomerRepository implements CustomerRepository {
   }
 
   async getCustomer(id: string): Promise<CustomerWithDetails> {
-    const { session } = requireMockCustomerPermission(
-      PERMISSIONS.CUSTOMER_READ,
-    );
+    const session = requireMockSession();
+    const readCust = canReadCustomer(session);
+    const readSupp = canReadSupplier(session);
+    if (!readCust && !readSupp) {
+      throw new Error(
+        `Permissão insuficiente: requer '${PERMISSIONS.CUSTOMER_READ}' ou '${PERMISSIONS.SUPPLIER_READ}'.`,
+      );
+    }
     const store = loadStore(session.tenant_id);
     const found = store.customers.find(
       (entry) =>
@@ -432,15 +515,35 @@ export class MockCustomerRepository implements CustomerRepository {
     if (!found) {
       throw new Error("Cliente não encontrado.");
     }
+    const visible =
+      (found.customer.is_customer && readCust) ||
+      (found.customer.is_supplier && readSupp);
+    if (!visible) {
+      throw new Error(
+        found.customer.is_supplier
+          ? `Permissão insuficiente: requer '${PERMISSIONS.SUPPLIER_READ}'.`
+          : `Permissão insuficiente: requer '${PERMISSIONS.CUSTOMER_READ}'.`,
+      );
+    }
     return structuredClone(found);
   }
 
   async createCustomer(
     input: CreateCustomerInput,
   ): Promise<CustomerWithDetails> {
-    const { session } = requireMockCustomerPermission(
-      PERMISSIONS.CUSTOMER_MANAGE,
-    );
+    const session = requireMockSession();
+    const { isCustomer, isSupplier, categories } =
+      resolveValidatedRolesAndCategories(input);
+    if (isCustomer && !canManageCustomer(session)) {
+      throw new Error(
+        `Permissão insuficiente: requer '${PERMISSIONS.CUSTOMER_MANAGE}'.`,
+      );
+    }
+    if (isSupplier && !canManageSupplier(session)) {
+      throw new Error(
+        `Permissão insuficiente: requer '${PERMISSIONS.SUPPLIER_MANAGE}'.`,
+      );
+    }
     const store = loadStore(session.tenant_id);
     const { docType, cleanDoc } = validateInput(input);
 
@@ -473,6 +576,8 @@ export class MockCustomerRepository implements CustomerRepository {
       municipal_registration: input.municipal_registration?.trim() || null,
       notes: input.notes?.trim() || null,
       active: true,
+      is_customer: isCustomer,
+      is_supplier: isSupplier,
       search_text: buildSearchText(input, cleanDoc),
       name_sort: normalizeForSearch(input.name),
       created_at: now,
@@ -516,7 +621,12 @@ export class MockCustomerRepository implements CustomerRepository {
       created_by: session.user_id,
     }));
 
-    const created = { customer, contacts, addresses };
+    const created: CustomerWithDetails = {
+      customer,
+      contacts,
+      addresses,
+      supplier_categories: isSupplier ? categories : [],
+    };
     store.customers.push(created);
     persistStore();
     return structuredClone(created);
@@ -526,9 +636,9 @@ export class MockCustomerRepository implements CustomerRepository {
     id: string,
     input: UpdateCustomerInput,
   ): Promise<CustomerWithDetails> {
-    const { session } = requireMockCustomerPermission(
-      PERMISSIONS.CUSTOMER_MANAGE,
-    );
+    const session = requireMockSession();
+    const { isCustomer, isSupplier, categories } =
+      resolveValidatedRolesAndCategories(input);
     const store = loadStore(session.tenant_id);
     const { docType, cleanDoc } = validateInput(input);
 
@@ -540,6 +650,23 @@ export class MockCustomerRepository implements CustomerRepository {
     );
     if (idx === -1) {
       throw new Error("Cliente não encontrado.");
+    }
+    const prevCustomer = store.customers[idx].customer;
+    if (
+      (isCustomer || prevCustomer.is_customer) &&
+      !canManageCustomer(session)
+    ) {
+      throw new Error(
+        `Permissão insuficiente: requer '${PERMISSIONS.CUSTOMER_MANAGE}'.`,
+      );
+    }
+    if (
+      (isSupplier || prevCustomer.is_supplier) &&
+      !canManageSupplier(session)
+    ) {
+      throw new Error(
+        `Permissão insuficiente: requer '${PERMISSIONS.SUPPLIER_MANAGE}'.`,
+      );
     }
 
     if (
@@ -579,6 +706,8 @@ export class MockCustomerRepository implements CustomerRepository {
       state_registration: input.state_registration?.trim() || null,
       municipal_registration: input.municipal_registration?.trim() || null,
       notes: input.notes?.trim() || null,
+      is_customer: isCustomer,
+      is_supplier: isSupplier,
       search_text: buildSearchText(input, cleanDoc),
       name_sort: normalizeForSearch(input.name),
       updated_at: now,
@@ -631,7 +760,12 @@ export class MockCustomerRepository implements CustomerRepository {
       };
     });
 
-    const updated = { customer, contacts, addresses };
+    const updated: CustomerWithDetails = {
+      customer,
+      contacts,
+      addresses,
+      supplier_categories: isSupplier ? categories : [],
+    };
     store.customers[idx] = updated;
     persistStore();
     return structuredClone(updated);
@@ -641,9 +775,7 @@ export class MockCustomerRepository implements CustomerRepository {
     id: string,
     active: boolean,
   ): Promise<CustomerWithDetails> {
-    const { session } = requireMockCustomerPermission(
-      PERMISSIONS.CUSTOMER_MANAGE,
-    );
+    const session = requireMockSession();
     const store = loadStore(session.tenant_id);
     const target = store.customers.find(
       (entry) =>
@@ -654,6 +786,16 @@ export class MockCustomerRepository implements CustomerRepository {
     if (!target) {
       throw new Error("Cliente não encontrado.");
     }
+    if (target.customer.is_customer && !canManageCustomer(session)) {
+      throw new Error(
+        `Permissão insuficiente: requer '${PERMISSIONS.CUSTOMER_MANAGE}'.`,
+      );
+    }
+    if (target.customer.is_supplier && !canManageSupplier(session)) {
+      throw new Error(
+        `Permissão insuficiente: requer '${PERMISSIONS.SUPPLIER_MANAGE}'.`,
+      );
+    }
     target.customer.active = active;
     target.customer.updated_at = new Date().toISOString();
     persistStore();
@@ -661,9 +803,7 @@ export class MockCustomerRepository implements CustomerRepository {
   }
 
   async deleteCustomer(id: string): Promise<void> {
-    const { session } = requireMockCustomerPermission(
-      PERMISSIONS.CUSTOMER_MANAGE,
-    );
+    const session = requireMockSession();
     const store = loadStore(session.tenant_id);
     const target = store.customers.find(
       (entry) =>
@@ -673,6 +813,16 @@ export class MockCustomerRepository implements CustomerRepository {
     );
     if (!target) {
       throw new Error("Cliente não encontrado.");
+    }
+    if (target.customer.is_customer && !canManageCustomer(session)) {
+      throw new Error(
+        `Permissão insuficiente: requer '${PERMISSIONS.CUSTOMER_MANAGE}'.`,
+      );
+    }
+    if (target.customer.is_supplier && !canManageSupplier(session)) {
+      throw new Error(
+        `Permissão insuficiente: requer '${PERMISSIONS.SUPPLIER_MANAGE}'.`,
+      );
     }
     target.customer.deleted_at = new Date().toISOString();
     target.customer.updated_at = target.customer.deleted_at;
