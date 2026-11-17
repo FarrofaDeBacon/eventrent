@@ -96,7 +96,12 @@ export function hasPermission(
   permission: string,
 ): boolean {
   if (!session) return false;
-  return session.permissions.includes(permission);
+  if (session.permissions.includes(permission)) return true;
+  if (permission.endsWith(":read")) {
+    const impliedManage = `${permission.slice(0, -5)}:manage`;
+    return session.permissions.includes(impliedManage);
+  }
+  return false;
 }
 
 /**

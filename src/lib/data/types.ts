@@ -155,6 +155,8 @@ export const PERMISSIONS = {
   BRANDING_MANAGE: "branding:manage",
   CUSTOMER_READ: "customer:read",
   CUSTOMER_MANAGE: "customer:manage",
+  SUPPLIER_READ: "supplier:read",
+  SUPPLIER_MANAGE: "supplier:manage",
   CATALOG_READ: "catalog:read",
   CATALOG_MANAGE: "catalog:manage",
   RESERVATION_READ: "reservation:read",

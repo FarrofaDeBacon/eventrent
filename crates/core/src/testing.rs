@@ -71,7 +71,13 @@ pub async fn contract_system_roles(stores: &StoreBundle, tenant_id: &str) {
         .iter()
         .find(|r| r.slug == ROLE_SLUG_COMMERCIAL)
         .unwrap();
-    assert_eq!(repaired_comm.permissions.len(), 8);
+    let expected_comm_len = crate::domain::permission::SYSTEM_ROLES
+        .iter()
+        .find(|r| r.slug == ROLE_SLUG_COMMERCIAL)
+        .expect("commercial spec")
+        .permissions
+        .len();
+    assert_eq!(repaired_comm.permissions.len(), expected_comm_len);
 
     let audits = stores
         .audit
