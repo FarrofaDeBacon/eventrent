@@ -1,5 +1,6 @@
 use crate::domain::document::{
-    mask_document_for_audit, mask_email_for_audit, mask_phone_for_audit, DocumentType,
+    mask_document_for_audit, mask_email_for_audit, mask_individual_name_for_audit,
+    mask_phone_for_audit, DocumentType,
 };
 use crate::domain::validation::{
     normalize_and_validate_phone, normalize_and_validate_postal_code, validate_brazilian_state,
@@ -588,13 +589,20 @@ pub fn validate_addresses(addresses: &mut [CreateAddressInput]) -> CoreResult<()
     Ok(())
 }
 
+fn debug_customer_name(person_type: PersonType, name: &str) -> String {
+    match person_type {
+        PersonType::Individual => mask_individual_name_for_audit(name),
+        PersonType::Legal => name.to_string(),
+    }
+}
+
 impl fmt::Debug for Customer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Customer")
             .field("id", &self.id)
             .field("tenant_id", &self.tenant_id)
             .field("person_type", &self.person_type)
-            .field("name", &self.name)
+            .field("name", &debug_customer_name(self.person_type, &self.name))
             .field("document_type", &self.document_type)
             .field(
                 "document_number",
@@ -671,7 +679,7 @@ impl fmt::Debug for CreateCustomerInput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CreateCustomerInput")
             .field("person_type", &self.person_type)
-            .field("name", &self.name)
+            .field("name", &debug_customer_name(self.person_type, &self.name))
             .field("document_type", &self.document_type)
             .field(
                 "document_number",
@@ -687,7 +695,7 @@ impl fmt::Debug for UpdateCustomerInput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("UpdateCustomerInput")
             .field("person_type", &self.person_type)
-            .field("name", &self.name)
+            .field("name", &debug_customer_name(self.person_type, &self.name))
             .field("document_type", &self.document_type)
             .field(
                 "document_number",

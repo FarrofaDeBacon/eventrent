@@ -1320,6 +1320,89 @@ mod unit_tests {
         assert!(!user_rec_debug.contains("secret_hash_value"));
         assert!(!user_rec_debug.contains("secret_key_hash_value"));
         assert!(user_rec_debug.contains("[REDACTED]"));
+
+        // Debug de Customer, CreateCustomerInput e UpdateCustomerInput:
+        // PF mascara nome com iniciais; PJ exibe a razão social
+        use crate::domain::{
+            mask_individual_name_for_audit, CreateCustomerInput, Customer, DocumentType,
+            PersonType, UpdateCustomerInput,
+        };
+        let pf_name = "Carlos Eduardo da Silva";
+        let pj_name = "Produtora Horizonte Eventos Ltda";
+        let masked_pf = mask_individual_name_for_audit(pf_name);
+
+        let pf_cust = Customer {
+            id: "cust-1".to_string(),
+            tenant_id: "t1".to_string(),
+            person_type: PersonType::Individual,
+            name: pf_name.to_string(),
+            trade_name: None,
+            document_type: DocumentType::Cpf,
+            document_number: Some("52998224725".to_string()),
+            state_registration: None,
+            municipal_registration: None,
+            notes: None,
+            active: true,
+            search_text: "carlos eduardo".to_string(),
+            name_sort: "carlos eduardo".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            deleted_at: None,
+            created_by: None,
+        };
+        let pf_cust_dbg = format!("{pf_cust:?}");
+        assert!(!pf_cust_dbg.contains(pf_name));
+        assert!(pf_cust_dbg.contains(&masked_pf));
+        assert!(!pf_cust_dbg.contains("52998224725"));
+
+        let pf_create = CreateCustomerInput {
+            person_type: PersonType::Individual,
+            name: pf_name.to_string(),
+            trade_name: None,
+            document_type: DocumentType::Cpf,
+            document_number: Some("52998224725".to_string()),
+            state_registration: None,
+            municipal_registration: None,
+            notes: None,
+            contacts: vec![],
+            addresses: vec![],
+        };
+        let pf_create_dbg = format!("{pf_create:?}");
+        assert!(!pf_create_dbg.contains(pf_name));
+        assert!(pf_create_dbg.contains(&masked_pf));
+
+        let pf_update = UpdateCustomerInput {
+            person_type: PersonType::Individual,
+            name: pf_name.to_string(),
+            trade_name: None,
+            document_type: DocumentType::Cpf,
+            document_number: Some("52998224725".to_string()),
+            state_registration: None,
+            municipal_registration: None,
+            notes: None,
+            contacts: vec![],
+            addresses: vec![],
+            expected_updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let pf_update_dbg = format!("{pf_update:?}");
+        assert!(!pf_update_dbg.contains(pf_name));
+        assert!(pf_update_dbg.contains(&masked_pf));
+
+        let pj_create = CreateCustomerInput {
+            person_type: PersonType::Legal,
+            name: pj_name.to_string(),
+            trade_name: None,
+            document_type: DocumentType::Cnpj,
+            document_number: Some("12ABC34501DE35".to_string()),
+            state_registration: None,
+            municipal_registration: None,
+            notes: None,
+            contacts: vec![],
+            addresses: vec![],
+        };
+        let pj_create_dbg = format!("{pj_create:?}");
+        assert!(pj_create_dbg.contains(pj_name));
+        assert!(!pj_create_dbg.contains("12ABC34501DE35"));
     }
 
     #[test]
