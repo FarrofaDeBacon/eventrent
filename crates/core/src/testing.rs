@@ -1068,6 +1068,48 @@ pub async fn contract_customer_crud_and_lgpd_audit(
 
     // 9. Prova LGPD em {:?} (Debug manual)
     let debug_details = format!("{deactivated:?}");
+    assert!(!debug_details.contains("Carlos Eduardo da Silva"));
+
+    // 10. create_customer ignora IDs enviados pelo cliente (ex: ID de contato/endereço de outro cliente)
+    let existing_contact_id = created_pf.contacts[0].id.clone();
+    let existing_address_id = created_pf.addresses[0].id.clone();
+    let forged_input = CreateCustomerInput {
+        person_type: PersonType::Individual,
+        name: "Cliente ID Forjado".to_string(),
+        trade_name: None,
+        document_type: DocumentType::None,
+        document_number: None,
+        state_registration: None,
+        municipal_registration: None,
+        notes: None,
+        contacts: vec![CreateContactInput {
+            id: Some(existing_contact_id.clone()),
+            name: "Contato Forjado".to_string(),
+            email: Some("forjado@ex.com".to_string()),
+            phone: None,
+            role: None,
+            is_primary: true,
+        }],
+        addresses: vec![CreateAddressInput {
+            id: Some(existing_address_id.clone()),
+            label: "Sede".to_string(),
+            street: "Rua Forjada".to_string(),
+            number: "10".to_string(),
+            complement: None,
+            neighborhood: "Centro".to_string(),
+            city: "São Paulo".to_string(),
+            state: "SP".to_string(),
+            postal_code: "01001000".to_string(),
+            country: Some("BR".to_string()),
+            is_primary: true,
+        }],
+    };
+    let created_forged = services
+        .create_customer(&session, &forged_input)
+        .await
+        .expect("create_customer deve ignorar IDs enviados pelo cliente");
+    assert_ne!(created_forged.contacts[0].id, existing_contact_id);
+    assert_ne!(created_forged.addresses[0].id, existing_address_id);
     let debug_filter = format!(
         "{:?}",
         CustomerFilter {

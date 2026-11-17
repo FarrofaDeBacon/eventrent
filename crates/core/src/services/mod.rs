@@ -1500,7 +1500,11 @@ impl CoreServices {
         )?;
 
         // Validação no core de contatos e endereços (contato obrigatório >= 1, endereço opcional >= 0)
+        // Em criação, IDs enviados pelo cliente são sempre ignorados e gerados do zero no servidor.
         let mut contacts_input = input.contacts.clone();
+        for c in &mut contacts_input {
+            c.id = None;
+        }
         if contacts_input.is_empty() {
             return Err(CoreError::Validation(
                 "Cliente deve possuir pelo menos um contato.".to_string(),
@@ -1509,6 +1513,9 @@ impl CoreServices {
         validate_contacts(&mut contacts_input)?;
 
         let mut addresses_input = input.addresses.clone();
+        for a in &mut addresses_input {
+            a.id = None;
+        }
         validate_addresses(&mut addresses_input)?;
 
         let customer_id = Uuid::now_v7().to_string();
@@ -1517,7 +1524,7 @@ impl CoreServices {
         let contacts: Vec<CustomerContact> = contacts_input
             .into_iter()
             .map(|c| CustomerContact {
-                id: c.id.unwrap_or_else(|| Uuid::now_v7().to_string()),
+                id: Uuid::now_v7().to_string(),
                 tenant_id: session.tenant_id.clone(),
                 customer_id: customer_id.clone(),
                 name: c.name.trim().to_string(),
@@ -1535,7 +1542,7 @@ impl CoreServices {
         let addresses: Vec<CustomerAddress> = addresses_input
             .into_iter()
             .map(|a| CustomerAddress {
-                id: a.id.unwrap_or_else(|| Uuid::now_v7().to_string()),
+                id: Uuid::now_v7().to_string(),
                 tenant_id: session.tenant_id.clone(),
                 customer_id: customer_id.clone(),
                 label: if a.label.trim().is_empty() {
