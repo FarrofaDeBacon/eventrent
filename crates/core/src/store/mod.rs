@@ -1,7 +1,7 @@
 use crate::domain::{
     AuditLogEntry, Customer, CustomerAddress, CustomerContact, CustomerFilter, CustomerPage,
-    CustomerWithDetails, DocumentType, Role, RoleWithPermissions, Tenant, TenantBranding,
-    UpdateBrandingInput, UserRecord, UserWithRole,
+    CustomerWithDetails, DocumentType, Role, RoleWithPermissions, SupplierCategory, Tenant,
+    TenantBranding, UpdateBrandingInput, UserRecord, UserWithRole,
 };
 use crate::error::{CoreError, Result};
 use async_trait::async_trait;
@@ -144,12 +144,14 @@ pub trait CustomerStore: Send + Sync {
         customer: &Customer,
         contacts: &[CustomerContact],
         addresses: &[CustomerAddress],
+        supplier_categories: &[SupplierCategory],
     ) -> Result<()>;
     async fn update(
         &self,
         customer: &Customer,
         contacts: &[CustomerContact],
         addresses: &[CustomerAddress],
+        supplier_categories: &[SupplierCategory],
     ) -> Result<()>;
     async fn set_active(
         &self,

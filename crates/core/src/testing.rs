@@ -1,9 +1,9 @@
 use crate::domain::{
     CreateAddressInput, CreateContactInput, CreateCustomerInput, CreateUserInput, CustomerFilter,
-    DocumentType, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
-    PersonType, RecoverPasswordInput, ResetPasswordInput, SessionInfo, UpdateBrandingInput,
-    UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole, ROLE_SLUG_COMMERCIAL,
-    ROLE_SLUG_OWNER,
+    CustomerRoleFilter, DocumentType, InitialSetupInput, InitialSetupResult, LoginInput,
+    LoginPolicy, OperationMode, PersonType, RecoverPasswordInput, ResetPasswordInput, SessionInfo,
+    UpdateBrandingInput, UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole,
+    ROLE_SLUG_COMMERCIAL, ROLE_SLUG_OWNER,
 };
 use crate::error::CoreError;
 use crate::services::{
@@ -648,6 +648,9 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         state_registration: None,
         municipal_registration: None,
         notes: Some("Cliente VIP de eventos corporativos".to_string()),
+        is_customer: true,
+        is_supplier: false,
+        supplier_categories: vec![],
         contacts: vec![CreateContactInput {
             id: None,
             name: "Carlos Silva".to_string(),
@@ -695,6 +698,9 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         state_registration: Some("123.456.789.000".to_string()),
         municipal_registration: Some("987654".to_string()),
         notes: None,
+        is_customer: true,
+        is_supplier: false,
+        supplier_categories: vec![],
         contacts: vec![CreateContactInput {
             id: None,
             name: "Diretoria Financeira".to_string(),
@@ -787,6 +793,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             &CustomerFilter {
                 query: Some("eduardo silva".to_string()),
                 person_type: None,
+                role_filter: CustomerRoleFilter::All,
                 cursor: None,
                 limit: Some(10),
             },
@@ -803,6 +810,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             &CustomerFilter {
                 query: Some("12.ABC.345".to_string()),
                 person_type: None,
+                role_filter: CustomerRoleFilter::All,
                 cursor: None,
                 limit: Some(10),
             },
@@ -819,6 +827,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             &CustomerFilter {
                 query: Some("11998877665".to_string()),
                 person_type: None,
+                role_filter: CustomerRoleFilter::All,
                 cursor: None,
                 limit: Some(10),
             },
@@ -838,6 +847,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             &CustomerFilter {
                 query: Some("Diretoria Financeira".to_string()),
                 person_type: None,
+                role_filter: CustomerRoleFilter::All,
                 cursor: None,
                 limit: Some(10),
             },
@@ -854,6 +864,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             &CustomerFilter {
                 query: Some("a".repeat(101)),
                 person_type: None,
+                role_filter: CustomerRoleFilter::All,
                 cursor: None,
                 limit: None,
             },
@@ -869,6 +880,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             &CustomerFilter {
                 query: Some("um dois tres quatro cinco seis sete oito nove".to_string()),
                 person_type: None,
+                role_filter: CustomerRoleFilter::All,
                 cursor: None,
                 limit: None,
             },
@@ -885,6 +897,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             &CustomerFilter {
                 query: None,
                 person_type: None,
+                role_filter: CustomerRoleFilter::All,
                 cursor: Some("cursor-adulterado-!@#".to_string()),
                 limit: None,
             },
@@ -926,6 +939,9 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         state_registration: None,
         municipal_registration: None,
         notes: Some("Notas atualizadas".to_string()),
+        is_customer: true,
+        is_supplier: false,
+        supplier_categories: vec![],
         contacts: updated_contacts,
         addresses: created_pf
             .addresses
@@ -967,6 +983,9 @@ pub async fn contract_customer_crud_and_lgpd_audit(
                 state_registration: None,
                 municipal_registration: None,
                 notes: None,
+                is_customer: true,
+                is_supplier: false,
+                supplier_categories: vec![],
                 contacts: vec![CreateContactInput {
                     id: Some(original_contact_id.clone()),
                     name: "Carlos".to_string(),
@@ -1088,6 +1107,9 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         state_registration: None,
         municipal_registration: None,
         notes: None,
+        is_customer: true,
+        is_supplier: false,
+        supplier_categories: vec![],
         contacts: vec![CreateContactInput {
             id: Some(existing_contact_id.clone()),
             name: "Contato Forjado".to_string(),
@@ -1121,6 +1143,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         CustomerFilter {
             query: Some("529.982.247-25".to_string()),
             person_type: Some(PersonType::Individual),
+            role_filter: CustomerRoleFilter::All,
             cursor: Some("abc".to_string()),
             limit: Some(50),
         }
@@ -1391,6 +1414,8 @@ mod unit_tests {
             municipal_registration: None,
             notes: None,
             active: true,
+            is_customer: true,
+            is_supplier: false,
             search_text: "carlos eduardo".to_string(),
             name_sort: "carlos eduardo".to_string(),
             created_at: "2026-01-01T00:00:00Z".to_string(),
@@ -1412,6 +1437,9 @@ mod unit_tests {
             state_registration: None,
             municipal_registration: None,
             notes: None,
+            is_customer: true,
+            is_supplier: false,
+            supplier_categories: vec![],
             contacts: vec![],
             addresses: vec![],
         };
@@ -1428,6 +1456,9 @@ mod unit_tests {
             state_registration: None,
             municipal_registration: None,
             notes: None,
+            is_customer: true,
+            is_supplier: false,
+            supplier_categories: vec![],
             contacts: vec![],
             addresses: vec![],
             expected_updated_at: "2026-01-01T00:00:00Z".to_string(),
@@ -1445,6 +1476,9 @@ mod unit_tests {
             state_registration: None,
             municipal_registration: None,
             notes: None,
+            is_customer: true,
+            is_supplier: false,
+            supplier_categories: vec![],
             contacts: vec![],
             addresses: vec![],
         };
@@ -2051,6 +2085,7 @@ mod unit_tests {
                 _: &crate::domain::Customer,
                 _: &[crate::domain::CustomerContact],
                 _: &[crate::domain::CustomerAddress],
+                _: &[crate::domain::SupplierCategory],
             ) -> crate::error::Result<()> {
                 unreachable!()
             }
@@ -2059,6 +2094,7 @@ mod unit_tests {
                 _: &crate::domain::Customer,
                 _: &[crate::domain::CustomerContact],
                 _: &[crate::domain::CustomerAddress],
+                _: &[crate::domain::SupplierCategory],
             ) -> crate::error::Result<()> {
                 unreachable!()
             }

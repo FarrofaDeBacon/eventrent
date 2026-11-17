@@ -1,15 +1,16 @@
 use crate::domain::{
     build_customer_search_text, build_name_sort, mask_email_for_audit,
     mask_individual_name_for_audit, parse_document_with_type, validate_addresses,
-    validate_contacts, validate_customer_common_fields, validate_email, validate_user_name,
-    AuditLogEntry, BrandingValidator, CreateCustomerInput, CreateUserInput, Customer,
-    CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter, CustomerPage,
-    CustomerWithDetails, DocumentType, InitialSetupInput, InitialSetupResult, LoginInput,
-    LoginPolicy, OperationMode, PersonType, PublicBranding, RecoverPasswordInput,
-    RecoverPasswordResult, ResetPasswordInput, Role, RoleWithPermissions, SessionInfo, Tenant,
-    TenantBranding, UpdateBrandingInput, UpdateCustomerInput, UpdateUserInput, UserRecord,
-    UserWithRole, PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE,
-    PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_USER_MANAGE, PERM_USER_READ, ROLE_SLUG_OWNER,
+    validate_contacts, validate_customer_common_fields, validate_email,
+    validate_roles_and_categories, validate_user_name, AuditLogEntry, BrandingValidator,
+    CreateCustomerInput, CreateUserInput, Customer, CustomerAddress, CustomerContact,
+    CustomerCursor, CustomerFilter, CustomerPage, CustomerRoleFilter, CustomerWithDetails,
+    DocumentType, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
+    PersonType, PublicBranding, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput,
+    Role, RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput,
+    UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole, PERM_BRANDING_MANAGE,
+    PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ,
+    PERM_SUPPLIER_MANAGE, PERM_SUPPLIER_READ, PERM_USER_MANAGE, PERM_USER_READ, ROLE_SLUG_OWNER,
     SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
@@ -1399,14 +1400,52 @@ impl CoreServices {
     // SERVIÇOS DE GESTÃO DE CLIENTES (FASE 1B.2)
     // =========================================================================
 
-    /// Lista clientes com suporte a filtro textual, tipo de pessoa e paginação por cursor.
-    /// Requer permissão `customer:read`.
+    /// Lista clientes/fornecedores com suporte a filtro textual, tipo de pessoa, papel e paginação por cursor.
+    /// Requer `customer:read` e/ou `supplier:read` conforme o filtro de papel solicitado.
     pub async fn list_customers(
         &self,
         session: &SessionInfo,
         filter: &CustomerFilter,
     ) -> Result<CustomerPage> {
-        self.check_session_and_permission(session, PERM_CUSTOMER_READ)?;
+        self.verify_session_active(session)?;
+
+        let can_read_customer = session.has_permission(PERM_CUSTOMER_READ);
+        let can_read_supplier = session.has_permission(PERM_SUPPLIER_READ);
+        if !can_read_customer && !can_read_supplier {
+            return Err(CoreError::Forbidden(
+                "Acesso negado: permissão 'customer:read' ou 'supplier:read' necessária."
+                    .to_string(),
+            ));
+        }
+
+        let effective_role_filter = match filter.role_filter {
+            CustomerRoleFilter::Customer => {
+                if !can_read_customer {
+                    return Err(CoreError::Forbidden(
+                        "Acesso negado: permissão 'customer:read' necessária.".to_string(),
+                    ));
+                }
+                CustomerRoleFilter::Customer
+            }
+            CustomerRoleFilter::Supplier => {
+                if !can_read_supplier {
+                    return Err(CoreError::Forbidden(
+                        "Acesso negado: permissão 'supplier:read' necessária.".to_string(),
+                    ));
+                }
+                CustomerRoleFilter::Supplier
+            }
+            CustomerRoleFilter::Both => CustomerRoleFilter::Both,
+            CustomerRoleFilter::All => {
+                if can_read_customer && can_read_supplier {
+                    CustomerRoleFilter::All
+                } else if can_read_customer {
+                    CustomerRoleFilter::Customer
+                } else {
+                    CustomerRoleFilter::Supplier
+                }
+            }
+        };
 
         if let Some(ref cursor) = filter.cursor {
             CustomerCursor::decode(cursor)?;
@@ -1429,6 +1468,7 @@ impl CoreServices {
         let sanitized_filter = CustomerFilter {
             query: filter.query.clone(),
             person_type: filter.person_type,
+            role_filter: effective_role_filter,
             cursor: filter.cursor.clone(),
             limit: Some(filter.limit.unwrap_or(50).clamp(1, 100)),
         };
@@ -1439,29 +1479,60 @@ impl CoreServices {
             .await
     }
 
-    /// Obtém detalhes completos de um cliente (dados cadastrais, contatos e endereços).
-    /// Requer permissão `customer:read`.
+    /// Obtém detalhes completos de um terceiro (cliente/fornecedor).
+    /// Um cadastro com os dois papéis é visível a quem tiver `customer:read` OU `supplier:read`.
     pub async fn get_customer(
         &self,
         session: &SessionInfo,
         id: &str,
     ) -> Result<CustomerWithDetails> {
-        self.check_session_and_permission(session, PERM_CUSTOMER_READ)?;
-        self.stores
+        self.verify_session_active(session)?;
+        let can_read_customer = session.has_permission(PERM_CUSTOMER_READ);
+        let can_read_supplier = session.has_permission(PERM_SUPPLIER_READ);
+        if !can_read_customer && !can_read_supplier {
+            return Err(CoreError::Forbidden(
+                "Acesso negado: permissão 'customer:read' ou 'supplier:read' necessária."
+                    .to_string(),
+            ));
+        }
+
+        let details = self
+            .stores
             .customers
             .find_by_id(&session.tenant_id, id)
             .await?
-            .ok_or_else(|| CoreError::NotFound("Cliente não encontrado.".to_string()))
+            .ok_or_else(|| CoreError::NotFound("Cadastro não encontrado.".to_string()))?;
+
+        let visible = (details.customer.is_customer && can_read_customer)
+            || (details.customer.is_supplier && can_read_supplier);
+        if !visible {
+            return Err(CoreError::Forbidden(
+                "Acesso negado para visualizar este cadastro.".to_string(),
+            ));
+        }
+        Ok(details)
     }
 
-    /// Cria um novo cliente com validação estrita de CPF/CNPJ, unicidade, contatos e endereços.
-    /// Requer permissão `customer:manage`.
+    /// Cria um novo terceiro (cliente e/ou fornecedor) com validação estrita, contatos e endereços.
+    /// Exige `manage` de CADA papel marcado (`customer:manage` e/ou `supplier:manage`).
     pub async fn create_customer(
         &self,
         session: &SessionInfo,
         input: &CreateCustomerInput,
     ) -> Result<CustomerWithDetails> {
-        self.check_session_and_permission(session, PERM_CUSTOMER_MANAGE)?;
+        self.verify_session_active(session)?;
+        if input.is_customer {
+            self.check_session_and_permission(session, PERM_CUSTOMER_MANAGE)?;
+        }
+        if input.is_supplier {
+            self.check_session_and_permission(session, PERM_SUPPLIER_MANAGE)?;
+        }
+
+        let supplier_categories = validate_roles_and_categories(
+            input.is_customer,
+            input.is_supplier,
+            &input.supplier_categories,
+        )?;
 
         let name = input.name.trim();
         validate_customer_common_fields(
@@ -1604,6 +1675,8 @@ impl CoreServices {
                 .map(|n| n.trim().to_string())
                 .filter(|n| !n.is_empty()),
             active: true,
+            is_customer: input.is_customer,
+            is_supplier: input.is_supplier,
             search_text,
             name_sort,
             created_at: now.clone(),
@@ -1616,6 +1689,7 @@ impl CoreServices {
         let customer_clone = customer.clone();
         let contacts_clone = contacts.clone();
         let addresses_clone = addresses.clone();
+        let categories_clone = supplier_categories.clone();
         let doc_raw_clone = doc_raw_opt.clone();
 
         self.run_transaction(|stores| {
@@ -1623,6 +1697,7 @@ impl CoreServices {
             let customer = customer_clone.clone();
             let contacts = contacts_clone.clone();
             let addresses = addresses_clone.clone();
+            let categories = categories_clone.clone();
             let doc_raw = doc_raw_clone.clone();
 
             Box::pin(async move {
@@ -1643,7 +1718,7 @@ impl CoreServices {
 
                 stores
                     .customers()
-                    .create(&customer, &contacts, &addresses)
+                    .create(&customer, &contacts, &addresses, &categories)
                     .await?;
 
                 let masked_audit_name = if customer.person_type == PersonType::Individual {
@@ -1651,9 +1726,15 @@ impl CoreServices {
                 } else {
                     customer.name.clone()
                 };
+                let role_desc = match (customer.is_customer, customer.is_supplier) {
+                    (true, true) => "Cliente/Fornecedor",
+                    (true, false) => "Cliente",
+                    (false, true) => "Fornecedor",
+                    (false, false) => "Terceiro",
+                };
                 let audit_detail = format!(
-                    "Cliente '{}' criado com sucesso (id: {})",
-                    masked_audit_name, customer.id
+                    "{} '{}' criado com sucesso (id: {})",
+                    role_desc, masked_audit_name, customer.id
                 );
 
                 stores
@@ -1677,18 +1758,31 @@ impl CoreServices {
             customer,
             contacts,
             addresses,
+            supplier_categories,
         })
     }
 
-    /// Atualiza os dados de um cliente existente com validações completas e auditoria mascarada (LGPD).
-    /// Requer permissão `customer:manage`.
+    /// Atualiza os dados de um terceiro (cliente/fornecedor) existente com validações completas e auditoria mascarada (LGPD).
+    /// Exige `manage` de cada papel marcado na entrada e de cada papel removido.
     pub async fn update_customer(
         &self,
         session: &SessionInfo,
         id: &str,
         input: &UpdateCustomerInput,
     ) -> Result<CustomerWithDetails> {
-        self.check_session_and_permission(session, PERM_CUSTOMER_MANAGE)?;
+        self.verify_session_active(session)?;
+        if input.is_customer {
+            self.check_session_and_permission(session, PERM_CUSTOMER_MANAGE)?;
+        }
+        if input.is_supplier {
+            self.check_session_and_permission(session, PERM_SUPPLIER_MANAGE)?;
+        }
+
+        let supplier_categories = validate_roles_and_categories(
+            input.is_customer,
+            input.is_supplier,
+            &input.supplier_categories,
+        )?;
 
         let name = input.name.trim();
         validate_customer_common_fields(
@@ -1735,6 +1829,7 @@ impl CoreServices {
             let doc_formatted = doc_formatted.clone();
             let input = input_clone.clone();
             let now = now_clone.clone();
+            let categories = supplier_categories.clone();
 
             Box::pin(async move {
                 // 1. Leitura DENTRO da transação: cliente existente
@@ -1742,7 +1837,27 @@ impl CoreServices {
                     .customers()
                     .find_by_id(&session.tenant_id, &id)
                     .await?
-                    .ok_or_else(|| CoreError::NotFound("Cliente não encontrado.".to_string()))?;
+                    .ok_or_else(|| CoreError::NotFound("Cadastro não encontrado.".to_string()))?;
+
+                // Remover um papel exige manage desse papel
+                if existing.customer.is_customer
+                    && !input.is_customer
+                    && !session.has_permission(PERM_CUSTOMER_MANAGE)
+                {
+                    return Err(CoreError::Forbidden(
+                        "Acesso negado: permissão 'customer:manage' necessária para remover o papel Cliente."
+                            .to_string(),
+                    ));
+                }
+                if existing.customer.is_supplier
+                    && !input.is_supplier
+                    && !session.has_permission(PERM_SUPPLIER_MANAGE)
+                {
+                    return Err(CoreError::Forbidden(
+                        "Acesso negado: permissão 'supplier:manage' necessária para remover o papel Fornecedor."
+                            .to_string(),
+                    ));
+                }
 
                 // 2. Controle de concorrência otimista (expected_updated_at)
                 if existing.customer.updated_at != input.expected_updated_at {
@@ -1908,6 +2023,8 @@ impl CoreServices {
                         .map(|n| n.trim().to_string())
                         .filter(|n| !n.is_empty()),
                     active: existing.customer.active,
+                    is_customer: input.is_customer,
+                    is_supplier: input.is_supplier,
                     search_text,
                     name_sort,
                     created_at: existing.customer.created_at,
@@ -1918,7 +2035,7 @@ impl CoreServices {
 
                 stores
                     .customers()
-                    .update(&updated_customer, &contacts, &addresses)
+                    .update(&updated_customer, &contacts, &addresses, &categories)
                     .await?;
 
                 let masked_audit_name = if updated_customer.person_type == PersonType::Individual {
@@ -1926,9 +2043,15 @@ impl CoreServices {
                 } else {
                     updated_customer.name.clone()
                 };
+                let role_desc = match (updated_customer.is_customer, updated_customer.is_supplier) {
+                    (true, true) => "Cliente/Fornecedor",
+                    (true, false) => "Cliente",
+                    (false, true) => "Fornecedor",
+                    (false, false) => "Terceiro",
+                };
                 let audit_detail = format!(
-                    "Cliente '{}' atualizado com sucesso (id: {})",
-                    masked_audit_name, updated_customer.id
+                    "{} '{}' atualizado com sucesso (id: {})",
+                    role_desc, masked_audit_name, updated_customer.id
                 );
 
                 stores
@@ -1947,21 +2070,30 @@ impl CoreServices {
                     customer: updated_customer,
                     contacts,
                     addresses,
+                    supplier_categories: categories,
                 })
             })
         })
         .await
     }
 
-    /// Ativa ou desativa um cliente existente sem removê-lo do histórico.
-    /// Requer permissão `customer:manage`.
+    /// Ativa ou desativa um cliente/fornecedor existente sem removê-lo do histórico.
+    /// Exige `manage` de cada papel ativo no cadastro.
     pub async fn set_customer_active(
         &self,
         session: &SessionInfo,
         id: &str,
         active: bool,
     ) -> Result<CustomerWithDetails> {
-        self.check_session_and_permission(session, PERM_CUSTOMER_MANAGE)?;
+        self.verify_session_active(session)?;
+        if !session.has_permission(PERM_CUSTOMER_MANAGE)
+            && !session.has_permission(PERM_SUPPLIER_MANAGE)
+        {
+            return Err(CoreError::Forbidden(
+                "Acesso negado: permissão 'customer:manage' ou 'supplier:manage' necessária."
+                    .to_string(),
+            ));
+        }
 
         let session_clone = session.clone();
         let id_str = id.to_string();
@@ -1978,7 +2110,18 @@ impl CoreServices {
                     .customers()
                     .find_by_id(&session.tenant_id, &id)
                     .await?
-                    .ok_or_else(|| CoreError::NotFound("Cliente não encontrado.".to_string()))?;
+                    .ok_or_else(|| CoreError::NotFound("Cadastro não encontrado.".to_string()))?;
+
+                if existing.customer.is_customer && !session.has_permission(PERM_CUSTOMER_MANAGE) {
+                    return Err(CoreError::Forbidden(
+                        "Acesso negado: permissão 'customer:manage' necessária.".to_string(),
+                    ));
+                }
+                if existing.customer.is_supplier && !session.has_permission(PERM_SUPPLIER_MANAGE) {
+                    return Err(CoreError::Forbidden(
+                        "Acesso negado: permissão 'supplier:manage' necessária.".to_string(),
+                    ));
+                }
 
                 if existing.customer.active == active {
                     return Ok(existing);
@@ -2026,10 +2169,18 @@ impl CoreServices {
         .await
     }
 
-    /// Realiza exclusão lógica (soft delete) do cliente e seus contatos/endereços.
-    /// Requer permissão `customer:manage`.
+    /// Realiza exclusão lógica (soft delete) do terceiro e seus contatos/endereços.
+    /// Exige `manage` de cada papel ativo no cadastro.
     pub async fn delete_customer(&self, session: &SessionInfo, id: &str) -> Result<()> {
-        self.check_session_and_permission(session, PERM_CUSTOMER_MANAGE)?;
+        self.verify_session_active(session)?;
+        if !session.has_permission(PERM_CUSTOMER_MANAGE)
+            && !session.has_permission(PERM_SUPPLIER_MANAGE)
+        {
+            return Err(CoreError::Forbidden(
+                "Acesso negado: permissão 'customer:manage' ou 'supplier:manage' necessária."
+                    .to_string(),
+            ));
+        }
 
         let session_clone = session.clone();
         let id_str = id.to_string();
@@ -2046,7 +2197,18 @@ impl CoreServices {
                     .customers()
                     .find_by_id(&session.tenant_id, &id)
                     .await?
-                    .ok_or_else(|| CoreError::NotFound("Cliente não encontrado.".to_string()))?;
+                    .ok_or_else(|| CoreError::NotFound("Cadastro não encontrado.".to_string()))?;
+
+                if existing.customer.is_customer && !session.has_permission(PERM_CUSTOMER_MANAGE) {
+                    return Err(CoreError::Forbidden(
+                        "Acesso negado: permissão 'customer:manage' necessária.".to_string(),
+                    ));
+                }
+                if existing.customer.is_supplier && !session.has_permission(PERM_SUPPLIER_MANAGE) {
+                    return Err(CoreError::Forbidden(
+                        "Acesso negado: permissão 'supplier:manage' necessária.".to_string(),
+                    ));
+                }
 
                 stores
                     .customers()

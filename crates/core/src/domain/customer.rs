@@ -11,6 +11,66 @@ use base64::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SupplierCategory {
+    Sublocacao,
+    Manutencao,
+    Transporte,
+    Compras,
+    Servicos,
+    Outros,
+}
+
+impl SupplierCategory {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Sublocacao => "sublocacao",
+            Self::Manutencao => "manutencao",
+            Self::Transporte => "transporte",
+            Self::Compras => "compras",
+            Self::Servicos => "servicos",
+            Self::Outros => "outros",
+        }
+    }
+}
+
+impl std::fmt::Display for SupplierCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for SupplierCategory {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "sublocacao" => Ok(Self::Sublocacao),
+            "manutencao" => Ok(Self::Manutencao),
+            "transporte" => Ok(Self::Transporte),
+            "compras" => Ok(Self::Compras),
+            "servicos" => Ok(Self::Servicos),
+            "outros" => Ok(Self::Outros),
+            other => Err(format!("Categoria de fornecedor inválida: '{other}'")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CustomerRoleFilter {
+    Customer,
+    Supplier,
+    Both,
+    #[default]
+    All,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PersonType {
@@ -52,6 +112,10 @@ pub struct Customer {
     pub municipal_registration: Option<String>,
     pub notes: Option<String>,
     pub active: bool,
+    #[serde(default = "default_true")]
+    pub is_customer: bool,
+    #[serde(default)]
+    pub is_supplier: bool,
     pub search_text: String,
     pub name_sort: String,
     pub created_at: String,
@@ -102,6 +166,8 @@ pub struct CustomerWithDetails {
     pub customer: Customer,
     pub contacts: Vec<CustomerContact>,
     pub addresses: Vec<CustomerAddress>,
+    #[serde(default)]
+    pub supplier_categories: Vec<SupplierCategory>,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -146,6 +212,12 @@ pub struct CreateCustomerInput {
     pub state_registration: Option<String>,
     pub municipal_registration: Option<String>,
     pub notes: Option<String>,
+    #[serde(default = "default_true")]
+    pub is_customer: bool,
+    #[serde(default)]
+    pub is_supplier: bool,
+    #[serde(default)]
+    pub supplier_categories: Vec<SupplierCategory>,
     #[serde(default)]
     pub contacts: Vec<CreateContactInput>,
     #[serde(default)]
@@ -163,6 +235,12 @@ pub struct UpdateCustomerInput {
     pub state_registration: Option<String>,
     pub municipal_registration: Option<String>,
     pub notes: Option<String>,
+    #[serde(default = "default_true")]
+    pub is_customer: bool,
+    #[serde(default)]
+    pub is_supplier: bool,
+    #[serde(default)]
+    pub supplier_categories: Vec<SupplierCategory>,
     #[serde(default)]
     pub contacts: Vec<CreateContactInput>,
     #[serde(default)]
@@ -174,6 +252,8 @@ pub struct UpdateCustomerInput {
 pub struct CustomerFilter {
     pub query: Option<String>,
     pub person_type: Option<PersonType>,
+    #[serde(default)]
+    pub role_filter: CustomerRoleFilter,
     pub cursor: Option<String>,
     pub limit: Option<u32>,
 }
@@ -305,6 +385,30 @@ fn reject_control_chars(value: &str, field_label: &str) -> CoreResult<()> {
         )));
     }
     Ok(())
+}
+
+pub fn validate_roles_and_categories(
+    is_customer: bool,
+    is_supplier: bool,
+    categories: &[SupplierCategory],
+) -> CoreResult<Vec<SupplierCategory>> {
+    if !is_customer && !is_supplier {
+        return Err(CoreError::Validation(
+            "Selecione pelo menos um papel: Cliente ou Fornecedor.".to_string(),
+        ));
+    }
+    if !is_supplier && !categories.is_empty() {
+        return Err(CoreError::Validation(
+            "Categorias de fornecimento só podem ser informadas quando o papel Fornecedor estiver marcado.".to_string(),
+        ));
+    }
+    let mut unique = Vec::new();
+    for &cat in categories {
+        if !unique.contains(&cat) {
+            unique.push(cat);
+        }
+    }
+    Ok(unique)
 }
 
 pub fn validate_customer_common_fields(
