@@ -3553,4 +3553,213 @@ mod unit_tests {
             serde_json::to_string_pretty(&expected_json).unwrap_or_default()
         );
     }
+
+    #[test]
+    fn test_venue_domain_validations_and_limits() {
+        use crate::domain::{
+            validate_allocation_settings, validate_venue_contacts, validate_venue_fields,
+            validate_venue_spaces, UpdateAllocationSettingsInput, VenueContact, VenueContactInput,
+            VenueSpaceInput, MAX_INTERNAL_TRANSFER_MINUTES, MAX_VENUE_CONTACTS, MAX_VENUE_NAME_LEN,
+            MAX_VENUE_SPACES, MAX_VENUE_SPACE_NAME_LEN,
+        };
+        use crate::error::CoreError;
+
+        assert!(matches!(
+            validate_venue_fields(
+                "   ", None, None, None, None, None, None, None, "BR", None, None, None, None
+            ),
+            Err(CoreError::Validation(_))
+        ));
+        let long_name = "A".repeat(MAX_VENUE_NAME_LEN + 1);
+        assert!(matches!(
+            validate_venue_fields(
+                &long_name, None, None, None, None, None, None, None, "BR", None, None, None, None
+            ),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            validate_venue_fields(
+                "Local\nQuebra",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                "BR",
+                None,
+                None,
+                None,
+                None
+            ),
+            Err(CoreError::Validation(_))
+        ));
+
+        assert!(validate_venue_fields(
+            "Riocentro",
+            None,
+            None,
+            None,
+            None,
+            Some("Rio de Janeiro".to_string()),
+            Some("RJ".to_string()),
+            Some("22783115".to_string()),
+            "BR",
+            Some("Estacionamento A\nPortão 3".to_string()),
+            None,
+            None,
+            None,
+        )
+        .is_ok());
+
+        let mut dup_spaces = vec![
+            VenueSpaceInput {
+                id: None,
+                name: "Pavilhão 1".to_string(),
+                capacity_people: Some(1000),
+                area_sqm: None,
+                ceiling_height_m: None,
+                power_available: None,
+                loading_access: None,
+                rigging_points: None,
+                acoustics_notes: None,
+                internal_transfer_minutes: 15,
+                notes: None,
+                active: true,
+                sort_order: 0,
+            },
+            VenueSpaceInput {
+                id: None,
+                name: "pavilhao 1".to_string(),
+                capacity_people: None,
+                area_sqm: None,
+                ceiling_height_m: None,
+                power_available: None,
+                loading_access: None,
+                rigging_points: None,
+                acoustics_notes: None,
+                internal_transfer_minutes: 0,
+                notes: None,
+                active: true,
+                sort_order: 1,
+            },
+        ];
+        assert!(matches!(
+            validate_venue_spaces(&mut dup_spaces),
+            Err(CoreError::Validation(_))
+        ));
+
+        let mut bad_transfer = vec![VenueSpaceInput {
+            id: None,
+            name: "Auditório".to_string(),
+            capacity_people: None,
+            area_sqm: None,
+            ceiling_height_m: None,
+            power_available: None,
+            loading_access: None,
+            rigging_points: None,
+            acoustics_notes: None,
+            internal_transfer_minutes: MAX_INTERNAL_TRANSFER_MINUTES + 1,
+            notes: None,
+            active: true,
+            sort_order: 0,
+        }];
+        assert!(matches!(
+            validate_venue_spaces(&mut bad_transfer),
+            Err(CoreError::Validation(_))
+        ));
+
+        let mut too_many_spaces: Vec<VenueSpaceInput> = (0..=MAX_VENUE_SPACES)
+            .map(|i| VenueSpaceInput {
+                id: None,
+                name: format!("Sala {i}"),
+                capacity_people: None,
+                area_sqm: None,
+                ceiling_height_m: None,
+                power_available: None,
+                loading_access: None,
+                rigging_points: None,
+                acoustics_notes: None,
+                internal_transfer_minutes: 0,
+                notes: None,
+                active: true,
+                sort_order: i as i64,
+            })
+            .collect();
+        assert!(matches!(
+            validate_venue_spaces(&mut too_many_spaces),
+            Err(CoreError::Validation(_))
+        ));
+
+        let mut long_space_name = vec![VenueSpaceInput {
+            id: None,
+            name: "X".repeat(MAX_VENUE_SPACE_NAME_LEN + 1),
+            capacity_people: None,
+            area_sqm: None,
+            ceiling_height_m: None,
+            power_available: None,
+            loading_access: None,
+            rigging_points: None,
+            acoustics_notes: None,
+            internal_transfer_minutes: 0,
+            notes: None,
+            active: true,
+            sort_order: 0,
+        }];
+        assert!(matches!(
+            validate_venue_spaces(&mut long_space_name),
+            Err(CoreError::Validation(_))
+        ));
+
+        let mut too_many_contacts: Vec<VenueContactInput> = (0..=MAX_VENUE_CONTACTS)
+            .map(|i| VenueContactInput {
+                id: None,
+                name: format!("Contato {i}"),
+                email: Some(format!("c{i}@local.com")),
+                phone: None,
+                role: None,
+                is_primary: false,
+            })
+            .collect();
+        assert!(matches!(
+            validate_venue_contacts(&mut too_many_contacts, "BR"),
+            Err(CoreError::Validation(_))
+        ));
+
+        let masked = VenueContact {
+            id: "vc-1".to_string(),
+            tenant_id: "t-1".to_string(),
+            venue_id: "v-1".to_string(),
+            name: "Carlos Portaria".to_string(),
+            email: Some("portaria.secreta@riocentro.com.br".to_string()),
+            phone: Some("+5521999887766".to_string()),
+            role: Some("Portaria".to_string()),
+            is_primary: true,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            deleted_at: None,
+            created_by: None,
+        };
+        let debug_str = format!("{masked:?}");
+        assert!(!debug_str.contains("portaria.secreta@riocentro.com.br"));
+        assert!(!debug_str.contains("999887766"));
+
+        assert!(
+            validate_allocation_settings(&UpdateAllocationSettingsInput {
+                default_setup_minutes: 0,
+                default_teardown_minutes: 240,
+                default_turnover_buffer_minutes: 60,
+            })
+            .is_ok()
+        );
+        assert!(matches!(
+            validate_allocation_settings(&UpdateAllocationSettingsInput {
+                default_setup_minutes: -1,
+                default_teardown_minutes: 20,
+                default_turnover_buffer_minutes: 60,
+            }),
+            Err(CoreError::Validation(_))
+        ));
+    }
 }

@@ -50,11 +50,11 @@
   });
 
   function parseMinutes(
-    raw: string,
+    raw: string | number,
     key: string,
     label: string,
   ): number | null {
-    const trimmed = raw.trim();
+    const trimmed = String(raw ?? "").trim();
     if (!/^\d+$/.test(trimmed)) {
       fieldErrors[key] = `${label} deve ser um número inteiro.`;
       return null;

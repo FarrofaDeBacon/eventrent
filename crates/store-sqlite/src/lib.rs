@@ -4846,4 +4846,416 @@ mod tests {
             "FK composta deve impedir categoria com tenant diferente do cliente"
         );
     }
+
+    #[tokio::test]
+    async fn test_store_venues_fk_unique_spaces_contacts_and_isolation() {
+        use eventrent_core::domain::{
+            CreateVenueInput, SessionInfo, UpdateVenueInput, VenueContactInput, VenueFilter,
+            VenueSpaceInput,
+        };
+
+        let pool = init_memory_db().await.unwrap();
+        let store = SqliteStore::new(pool.clone()).into_bundle();
+        let services = CoreServices::new(store.clone());
+        let now = Utc::now().to_rfc3339();
+
+        // Cria dois tenants distintos
+        for tid in ["tenant-v1", "tenant-v2"] {
+            store
+                .tenants
+                .create(&Tenant {
+                    id: tid.to_string(),
+                    tenant_id: tid.to_string(),
+                    name: format!("Empresa {tid}"),
+                    slug: tid.to_string(),
+                    document_number: None,
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                    deleted_at: None,
+                    created_by: None,
+                })
+                .await
+                .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO role (id, tenant_id, name, slug, is_system, created_at, updated_at) VALUES ('role-owner-v1', 'tenant-v1', 'Proprietário', 'owner', 1, ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO app_user (id, tenant_id, role_id, name, email, password_hash, active, created_at, updated_at) VALUES ('user-owner-v1', 'tenant-v1', 'role-owner-v1', 'Owner V1', 'owner@v1.com', 'hash', 1, ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let owner_session_t1 = SessionInfo {
+            user_id: "user-owner-v1".to_string(),
+            tenant_id: "tenant-v1".to_string(),
+            name: "Owner V1".to_string(),
+            email: "owner@v1.com".to_string(),
+            role_id: "role-owner".to_string(),
+            role_name: "Proprietário".to_string(),
+            role_slug: "owner".to_string(),
+            permissions: vec!["venue:read".to_string(), "venue:manage".to_string()],
+            authenticated_at: now.clone(),
+            last_activity_at: now.clone(),
+            inactivity_timeout_minutes: 30,
+        };
+
+        let tech_session_t1 = SessionInfo {
+            permissions: vec!["venue:read".to_string()],
+            role_slug: "technician".to_string(),
+            ..owner_session_t1.clone()
+        };
+
+        let owner_session_t2 = SessionInfo {
+            tenant_id: "tenant-v2".to_string(),
+            ..owner_session_t1.clone()
+        };
+
+        // 1. Técnico não pode criar local (Forbidden)
+        let created_by_tech = services
+            .create_venue(
+                &tech_session_t1,
+                &CreateVenueInput {
+                    name: "Bloqueado".to_string(),
+                    street: None,
+                    number: None,
+                    complement: None,
+                    neighborhood: None,
+                    city: None,
+                    state: None,
+                    postal_code: None,
+                    country: "BR".to_string(),
+                    parking_notes: None,
+                    loading_dock_notes: None,
+                    access_hours: None,
+                    notes: None,
+                    spaces: vec![],
+                    contacts: vec![],
+                },
+            )
+            .await;
+        assert!(matches!(created_by_tech, Err(CoreError::Forbidden(_))));
+
+        // 2. Cria Riocentro com 2 espaços e 1 contato
+        let created = services
+            .create_venue(
+                &owner_session_t1,
+                &CreateVenueInput {
+                    name: "Riocentro".to_string(),
+                    street: Some("Av. Salvador Allende".to_string()),
+                    number: Some("6555".to_string()),
+                    complement: None,
+                    neighborhood: Some("Barra da Tijuca".to_string()),
+                    city: Some("Rio de Janeiro".to_string()),
+                    state: Some("RJ".to_string()),
+                    postal_code: Some("22783115".to_string()),
+                    country: "BR".to_string(),
+                    parking_notes: None,
+                    loading_dock_notes: None,
+                    access_hours: None,
+                    notes: None,
+                    spaces: vec![
+                        VenueSpaceInput {
+                            id: Some("id-forjado".to_string()),
+                            name: "Pavilhão 1".to_string(),
+                            capacity_people: Some(3000),
+                            area_sqm: Some(12000.0),
+                            ceiling_height_m: Some(12.0),
+                            power_available: Some("380V".to_string()),
+                            loading_access: None,
+                            rigging_points: None,
+                            acoustics_notes: None,
+                            internal_transfer_minutes: 10,
+                            notes: None,
+                            active: true,
+                            sort_order: 0,
+                        },
+                        VenueSpaceInput {
+                            id: None,
+                            name: "Pavilhão 2".to_string(),
+                            capacity_people: Some(5000),
+                            area_sqm: None,
+                            ceiling_height_m: None,
+                            power_available: None,
+                            loading_access: None,
+                            rigging_points: None,
+                            acoustics_notes: None,
+                            internal_transfer_minutes: 25,
+                            notes: None,
+                            active: true,
+                            sort_order: 1,
+                        },
+                    ],
+                    contacts: vec![VenueContactInput {
+                        id: None,
+                        name: "Marcos Doca".to_string(),
+                        email: Some("doca@riocentro.com.br".to_string()),
+                        phone: Some("21999887766".to_string()),
+                        role: Some("Operações".to_string()),
+                        is_primary: false,
+                    }],
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(created.spaces.len(), 2);
+        assert_ne!(
+            created.spaces[0].id, "id-forjado",
+            "ID enviado na criação deve ser ignorado"
+        );
+        assert!(created.contacts[0].is_primary);
+        assert_eq!(created.contacts[0].phone.as_deref(), Some("+5521999887766"));
+
+        let p1_id = created.spaces[0].id.clone();
+
+        // 3. Técnico pode ler e listar
+        let read_by_tech = services
+            .get_venue(&tech_session_t1, &created.venue.id)
+            .await
+            .unwrap();
+        assert_eq!(read_by_tech.spaces.len(), 2);
+
+        // 4. Atualização preserva ID estável de Pavilhão 1, remove Pavilhão 2 e adiciona Pavilhão 3
+        let updated = services
+            .update_venue(
+                &owner_session_t1,
+                &UpdateVenueInput {
+                    id: created.venue.id.clone(),
+                    name: "Riocentro".to_string(),
+                    street: created.venue.street.clone(),
+                    number: created.venue.number.clone(),
+                    complement: None,
+                    neighborhood: created.venue.neighborhood.clone(),
+                    city: created.venue.city.clone(),
+                    state: created.venue.state.clone(),
+                    postal_code: created.venue.postal_code.clone(),
+                    country: "BR".to_string(),
+                    parking_notes: None,
+                    loading_dock_notes: None,
+                    access_hours: None,
+                    notes: None,
+                    spaces: vec![
+                        VenueSpaceInput {
+                            id: Some(p1_id.clone()),
+                            name: "Pavilhão 1 Atualizado".to_string(),
+                            capacity_people: Some(3500),
+                            area_sqm: None,
+                            ceiling_height_m: None,
+                            power_available: None,
+                            loading_access: None,
+                            rigging_points: None,
+                            acoustics_notes: None,
+                            internal_transfer_minutes: 15,
+                            notes: None,
+                            active: true,
+                            sort_order: 0,
+                        },
+                        VenueSpaceInput {
+                            id: None,
+                            name: "Pavilhão 3".to_string(),
+                            capacity_people: Some(2000),
+                            area_sqm: None,
+                            ceiling_height_m: None,
+                            power_available: None,
+                            loading_access: None,
+                            rigging_points: None,
+                            acoustics_notes: None,
+                            internal_transfer_minutes: 30,
+                            notes: None,
+                            active: true,
+                            sort_order: 1,
+                        },
+                    ],
+                    contacts: vec![],
+                    expected_updated_at: created.venue.updated_at.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.spaces[0].id, p1_id);
+        assert_eq!(updated.spaces[0].name, "Pavilhão 1 Atualizado");
+        assert_eq!(updated.spaces.len(), 2);
+
+        // Concorrência otimista: usar updated_at antigo deve retornar Conflict
+        let conflict = services
+            .update_venue(
+                &owner_session_t1,
+                &UpdateVenueInput {
+                    id: created.venue.id.clone(),
+                    name: "Riocentro".to_string(),
+                    street: None,
+                    number: None,
+                    complement: None,
+                    neighborhood: None,
+                    city: None,
+                    state: None,
+                    postal_code: None,
+                    country: "BR".to_string(),
+                    parking_notes: None,
+                    loading_dock_notes: None,
+                    access_hours: None,
+                    notes: None,
+                    spaces: vec![],
+                    contacts: vec![],
+                    expected_updated_at: created.venue.updated_at.clone(),
+                },
+            )
+            .await;
+        assert!(matches!(conflict, Err(CoreError::Conflict(_))));
+
+        // 5. Isolamento multi-tenant
+        assert!(matches!(
+            services
+                .get_venue(&owner_session_t2, &created.venue.id)
+                .await,
+            Err(CoreError::NotFound(_))
+        ));
+        let t2_list = services
+            .list_venues(&owner_session_t2, &VenueFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(t2_list.items.len(), 0);
+
+        // 6. FK composta no banco impede venue_space / venue_contact com tenant divergente
+        let fk_space_err = sqlx::query(
+            "INSERT INTO venue_space (id, tenant_id, venue_id, name, name_normalized, internal_transfer_minutes, active, sort_order, created_at, updated_at) VALUES ('sp-cross', 'tenant-v2', ?, 'Invasor', 'invasor', 0, 1, 0, ?, ?)",
+        )
+        .bind(&created.venue.id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await;
+        assert!(fk_space_err.is_err());
+
+        let fk_contact_err = sqlx::query(
+            "INSERT INTO venue_contact (id, tenant_id, venue_id, name, is_primary, created_at, updated_at) VALUES ('ct-cross', 'tenant-v2', ?, 'Invasor', 0, ?, ?)",
+        )
+        .bind(&created.venue.id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await;
+        assert!(fk_contact_err.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_store_allocation_settings_idempotent_and_rbac() {
+        use eventrent_core::domain::{SessionInfo, UpdateAllocationSettingsInput};
+
+        let pool = init_memory_db().await.unwrap();
+        let store = SqliteStore::new(pool.clone()).into_bundle();
+        let services = CoreServices::new(store.clone());
+        let now = Utc::now().to_rfc3339();
+
+        store
+            .tenants
+            .create(&Tenant {
+                id: "tenant-set-1".to_string(),
+                tenant_id: "tenant-set-1".to_string(),
+                name: "Empresa Config".to_string(),
+                slug: "empresa-config".to_string(),
+                document_number: None,
+                created_at: now.clone(),
+                updated_at: now.clone(),
+                deleted_at: None,
+                created_by: None,
+            })
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO role (id, tenant_id, name, slug, is_system, created_at, updated_at) VALUES ('role-owner-set1', 'tenant-set-1', 'Proprietário', 'owner', 1, ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO app_user (id, tenant_id, role_id, name, email, password_hash, active, created_at, updated_at) VALUES ('user-set-1', 'tenant-set-1', 'role-owner-set1', 'Owner', 'owner@set.com', 'hash', 1, ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let owner_session = SessionInfo {
+            user_id: "user-set-1".to_string(),
+            tenant_id: "tenant-set-1".to_string(),
+            name: "Owner".to_string(),
+            email: "owner@set.com".to_string(),
+            role_id: "role-owner".to_string(),
+            role_name: "Proprietário".to_string(),
+            role_slug: "owner".to_string(),
+            permissions: vec!["settings:read".to_string(), "settings:manage".to_string()],
+            authenticated_at: now.clone(),
+            last_activity_at: now.clone(),
+            inactivity_timeout_minutes: 30,
+        };
+
+        let readonly_session = SessionInfo {
+            permissions: vec!["settings:read".to_string()],
+            ..owner_session.clone()
+        };
+
+        // 1. Primeira leitura garante defaults idempotentes (30, 20, 60)
+        let s1 = services
+            .get_allocation_settings(&readonly_session)
+            .await
+            .unwrap();
+        assert_eq!(s1.default_setup_minutes, 30);
+        assert_eq!(s1.default_teardown_minutes, 20);
+        assert_eq!(s1.default_turnover_buffer_minutes, 60);
+
+        // Segunda chamada idempotente não falha
+        let s2 = services
+            .get_allocation_settings(&readonly_session)
+            .await
+            .unwrap();
+        assert_eq!(s1, s2);
+
+        // 2. Sem settings:manage não pode alterar
+        let forbidden = services
+            .update_allocation_settings(
+                &readonly_session,
+                &UpdateAllocationSettingsInput {
+                    default_setup_minutes: 45,
+                    default_teardown_minutes: 30,
+                    default_turnover_buffer_minutes: 90,
+                },
+            )
+            .await;
+        assert!(matches!(forbidden, Err(CoreError::Forbidden(_))));
+
+        // 3. Com settings:manage atualiza e persiste
+        let updated = services
+            .update_allocation_settings(
+                &owner_session,
+                &UpdateAllocationSettingsInput {
+                    default_setup_minutes: 45,
+                    default_teardown_minutes: 30,
+                    default_turnover_buffer_minutes: 90,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.default_setup_minutes, 45);
+        assert_eq!(updated.default_teardown_minutes, 30);
+        assert_eq!(updated.default_turnover_buffer_minutes, 90);
+
+        let reloaded = services
+            .get_allocation_settings(&readonly_session)
+            .await
+            .unwrap();
+        assert_eq!(reloaded, updated);
+    }
 }

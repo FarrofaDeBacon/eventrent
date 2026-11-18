@@ -216,15 +216,17 @@
     }));
   }
 
-  function parseOptionalInt(raw: string): number | null {
-    const t = raw.trim();
+  function parseOptionalInt(raw: string | number): number | null {
+    const t = String(raw ?? "").trim();
     if (!t) return null;
     const n = Number.parseInt(t, 10);
     return Number.isNaN(n) ? null : n;
   }
 
-  function parseOptionalFloat(raw: string): number | null {
-    const t = raw.trim().replace(",", ".");
+  function parseOptionalFloat(raw: string | number): number | null {
+    const t = String(raw ?? "")
+      .trim()
+      .replace(",", ".");
     if (!t) return null;
     const n = Number.parseFloat(t);
     return Number.isNaN(n) ? null : n;
