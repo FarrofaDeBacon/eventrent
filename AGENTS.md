@@ -70,6 +70,7 @@ Este documento estabelece as diretrizes arquiteturais, de qualidade de código, 
     - Nunca comitar segredos, chaves de API, arquivos de banco local (`*.db`) ou variáveis `.env`.
 11. **Unicidade com Exclusão Lógica**:
     - Usar índices únicos parciais `WHERE deleted_at IS NULL`, em migração nova; nunca `UNIQUE` simples em tabela com `deleted_at`.
+    - **Exceção documentada (`tenant_setting`)**: A tabela `tenant_setting` armazena pares chave-valor de configuração por tenant e não possui `created_at` nem exclusão lógica (`deleted_at`), utilizando `UNIQUE (tenant_id, setting_key)`. Todo histórico de alterações é preservado em `audit_log` na mesma transação.
 12. **Escopo de Migrações**:
     - Migrações contêm apenas estrutura, nunca dados de negócio. Dados iniciais do ambiente desktop (como o tenant padrão) são garantidos via código idempotente na inicialização.
 13. **Imutabilidade e Congelamento de Migrações (Fase 1B.0+)**:

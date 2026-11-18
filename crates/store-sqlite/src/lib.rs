@@ -5288,5 +5288,18 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(reloaded, updated);
+
+        // 4. Toda alteração em update_allocation_settings gera audit_log na mesma transação
+        let audit_rows = sqlx::query(
+            "SELECT action, entity_type, entity_id, summary FROM audit_log WHERE tenant_id = ? AND action = 'settings.allocation_updated'",
+        )
+        .bind("tenant-set-1")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(audit_rows.len(), 1);
+        let summary: String = audit_rows[0].get("summary");
+        assert!(summary.contains("montagem=45min"));
+        assert!(summary.contains("deslocamento=25min"));
     }
 }
