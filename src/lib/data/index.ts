@@ -1,8 +1,10 @@
 import type { AuthRepository } from "./auth-repository";
 import type { BrandingRepository } from "./branding-repository";
+import type { CatalogRepository } from "./catalog-repository";
 import type { CustomerRepository } from "./customer-repository";
 import { MockAuthRepository } from "./mock-auth-repository";
 import { MockBrandingRepository } from "./mock-branding-repository";
+import { MockCatalogRepository } from "./mock-catalog-repository";
 import { MockCustomerRepository } from "./mock-customer-repository";
 import { MockSettingsRepository } from "./mock-settings-repository";
 import { MockUserRepository } from "./mock-user-repository";
@@ -10,6 +12,7 @@ import { MockVenueRepository } from "./mock-venue-repository";
 import type { SettingsRepository } from "./settings-repository";
 import { TauriAuthRepository } from "./tauri-auth-repository";
 import { TauriBrandingRepository } from "./tauri-branding-repository";
+import { TauriCatalogRepository } from "./tauri-catalog-repository";
 import { TauriCustomerRepository } from "./tauri-customer-repository";
 import { TauriSettingsRepository } from "./tauri-settings-repository";
 import { TauriUserRepository } from "./tauri-user-repository";
@@ -20,9 +23,11 @@ import type { VenueRepository } from "./venue-repository";
 
 export * from "./auth-repository";
 export * from "./branding-repository";
+export * from "./catalog-repository";
 export * from "./customer-repository";
 export * from "./mock-auth-repository";
 export * from "./mock-branding-repository";
+export * from "./mock-catalog-repository";
 export * from "./mock-customer-repository";
 export * from "./mock-settings-repository";
 export * from "./mock-user-repository";
@@ -31,6 +36,7 @@ export * from "./session.svelte";
 export * from "./settings-repository";
 export * from "./tauri-auth-repository";
 export * from "./tauri-branding-repository";
+export * from "./tauri-catalog-repository";
 export * from "./tauri-customer-repository";
 export * from "./tauri-settings-repository";
 export * from "./tauri-user-repository";
@@ -45,6 +51,7 @@ let cachedUserRepository: UserRepository | null = null;
 let cachedCustomerRepository: CustomerRepository | null = null;
 let cachedSettingsRepository: SettingsRepository | null = null;
 let cachedVenueRepository: VenueRepository | null = null;
+let cachedCatalogRepository: CatalogRepository | null = null;
 
 function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -166,6 +173,12 @@ export function canAccessRoute(
   if (pathname.startsWith("/venues")) {
     return hasPermission(session, PERMISSIONS.VENUE_READ);
   }
+  if (pathname.startsWith("/catalog/new")) {
+    return hasPermission(session, PERMISSIONS.CATALOG_MANAGE);
+  }
+  if (pathname.startsWith("/catalog")) {
+    return hasPermission(session, PERMISSIONS.CATALOG_READ);
+  }
 
   // Rota raiz: qualquer sessão autenticada tem acesso
   return true;
@@ -195,4 +208,17 @@ export function getVenueRepository(): VenueRepository {
 
 export function setVenueRepository(repo: VenueRepository): void {
   cachedVenueRepository = repo;
+}
+
+export function getCatalogRepository(): CatalogRepository {
+  if (!cachedCatalogRepository) {
+    cachedCatalogRepository = isTauriRuntime()
+      ? new TauriCatalogRepository()
+      : new MockCatalogRepository();
+  }
+  return cachedCatalogRepository;
+}
+
+export function setCatalogRepository(repo: CatalogRepository): void {
+  cachedCatalogRepository = repo;
 }

@@ -5,6 +5,8 @@
   import {
     Search,
     LayoutDashboard,
+    Speaker,
+    FolderTree,
     Users,
     Truck,
     MapPin,
@@ -101,6 +103,39 @@
       action: () => {
         open = false;
         goto("/venues");
+      },
+    },
+    {
+      id: "catalog",
+      labelKey: "command.goToCatalog",
+      categoryKey: "command.navigation",
+      icon: Speaker,
+      permission: PERMISSIONS.CATALOG_READ,
+      action: () => {
+        open = false;
+        goto("/catalog");
+      },
+    },
+    {
+      id: "catalog-categories",
+      labelKey: "command.goToCatalogCategories",
+      categoryKey: "command.navigation",
+      icon: FolderTree,
+      permission: PERMISSIONS.CATALOG_READ,
+      action: () => {
+        open = false;
+        goto("/catalog/categories");
+      },
+    },
+    {
+      id: "new-equipment-model",
+      labelKey: "command.newEquipmentModel",
+      categoryKey: "command.actions",
+      icon: Speaker,
+      permission: PERMISSIONS.CATALOG_MANAGE,
+      action: () => {
+        open = false;
+        goto("/catalog/new");
       },
     },
     {

@@ -64,9 +64,9 @@
     },
     {
       labelKey: "nav.catalog",
-      href: "#catalog",
+      href: "/catalog",
       icon: Speaker,
-      disabled: true,
+      permission: PERMISSIONS.CATALOG_READ,
     },
     {
       labelKey: "nav.customers",
