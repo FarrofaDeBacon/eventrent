@@ -334,3 +334,137 @@ export interface UpdateAllocationSettingsInput {
   default_teardown_minutes: number;
   default_turnover_buffer_minutes: number;
 }
+
+export interface Venue {
+  id: string;
+  tenant_id: string;
+  name: string;
+  street?: string | null;
+  number?: string | null;
+  complement?: string | null;
+  neighborhood?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country: string;
+  parking_notes?: string | null;
+  loading_dock_notes?: string | null;
+  access_hours?: string | null;
+  notes?: string | null;
+  active: boolean;
+  search_text: string;
+  name_sort: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+  created_by?: string | null;
+}
+
+export interface VenueSpace {
+  id: string;
+  tenant_id: string;
+  venue_id: string;
+  name: string;
+  name_normalized: string;
+  capacity_people?: number | null;
+  area_sqm?: number | null;
+  ceiling_height_m?: number | null;
+  power_available?: string | null;
+  loading_access?: string | null;
+  rigging_points?: string | null;
+  acoustics_notes?: string | null;
+  internal_transfer_minutes: number;
+  notes?: string | null;
+  active: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+  created_by?: string | null;
+}
+
+export interface VenueContact {
+  id: string;
+  tenant_id: string;
+  venue_id: string;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  role?: string | null;
+  is_primary: boolean;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+  created_by?: string | null;
+}
+
+export interface VenueWithDetails extends Venue {
+  spaces: VenueSpace[];
+  contacts: VenueContact[];
+}
+
+export interface VenueListItem extends Venue {
+  spaces_count: number;
+}
+
+export interface VenuePage {
+  items: VenueListItem[];
+  next_cursor?: string | null;
+  has_more: boolean;
+  total_count?: number | null;
+}
+
+export interface VenueFilter {
+  query?: string;
+  active_only?: boolean;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface VenueSpaceInput {
+  id?: string | null;
+  name: string;
+  capacity_people?: number | null;
+  area_sqm?: number | null;
+  ceiling_height_m?: number | null;
+  power_available?: string | null;
+  loading_access?: string | null;
+  rigging_points?: string | null;
+  acoustics_notes?: string | null;
+  internal_transfer_minutes: number;
+  notes?: string | null;
+  active?: boolean;
+  sort_order?: number;
+}
+
+export interface VenueContactInput {
+  id?: string | null;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  role?: string | null;
+  is_primary: boolean;
+}
+
+export interface CreateVenueInput {
+  name: string;
+  street?: string | null;
+  number?: string | null;
+  complement?: string | null;
+  neighborhood?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country: string;
+  parking_notes?: string | null;
+  loading_dock_notes?: string | null;
+  access_hours?: string | null;
+  notes?: string | null;
+  spaces: VenueSpaceInput[];
+  contacts: VenueContactInput[];
+}
+
+export interface UpdateVenueInput extends CreateVenueInput {
+  id: string;
+  expected_updated_at: string;
+}

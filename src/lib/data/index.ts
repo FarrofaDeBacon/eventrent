@@ -6,14 +6,17 @@ import { MockBrandingRepository } from "./mock-branding-repository";
 import { MockCustomerRepository } from "./mock-customer-repository";
 import { MockSettingsRepository } from "./mock-settings-repository";
 import { MockUserRepository } from "./mock-user-repository";
+import { MockVenueRepository } from "./mock-venue-repository";
 import type { SettingsRepository } from "./settings-repository";
 import { TauriAuthRepository } from "./tauri-auth-repository";
 import { TauriBrandingRepository } from "./tauri-branding-repository";
 import { TauriCustomerRepository } from "./tauri-customer-repository";
 import { TauriSettingsRepository } from "./tauri-settings-repository";
 import { TauriUserRepository } from "./tauri-user-repository";
+import { TauriVenueRepository } from "./tauri-venue-repository";
 import { PERMISSIONS, type SessionInfo } from "./types";
 import type { UserRepository } from "./user-repository";
+import type { VenueRepository } from "./venue-repository";
 
 export * from "./auth-repository";
 export * from "./branding-repository";
@@ -23,6 +26,7 @@ export * from "./mock-branding-repository";
 export * from "./mock-customer-repository";
 export * from "./mock-settings-repository";
 export * from "./mock-user-repository";
+export * from "./mock-venue-repository";
 export * from "./session.svelte";
 export * from "./settings-repository";
 export * from "./tauri-auth-repository";
@@ -30,14 +34,17 @@ export * from "./tauri-branding-repository";
 export * from "./tauri-customer-repository";
 export * from "./tauri-settings-repository";
 export * from "./tauri-user-repository";
+export * from "./tauri-venue-repository";
 export * from "./types";
 export * from "./user-repository";
+export * from "./venue-repository";
 
 let cachedBrandingRepository: BrandingRepository | null = null;
 let cachedAuthRepository: AuthRepository | null = null;
 let cachedUserRepository: UserRepository | null = null;
 let cachedCustomerRepository: CustomerRepository | null = null;
 let cachedSettingsRepository: SettingsRepository | null = null;
+let cachedVenueRepository: VenueRepository | null = null;
 
 function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -153,6 +160,12 @@ export function canAccessRoute(
   if (pathname.startsWith("/settings/operation")) {
     return hasPermission(session, PERMISSIONS.SETTINGS_READ);
   }
+  if (pathname.startsWith("/venues/new")) {
+    return hasPermission(session, PERMISSIONS.VENUE_MANAGE);
+  }
+  if (pathname.startsWith("/venues")) {
+    return hasPermission(session, PERMISSIONS.VENUE_READ);
+  }
 
   // Rota raiz: qualquer sessão autenticada tem acesso
   return true;
@@ -169,4 +182,17 @@ export function getSettingsRepository(): SettingsRepository {
 
 export function setSettingsRepository(repo: SettingsRepository): void {
   cachedSettingsRepository = repo;
+}
+
+export function getVenueRepository(): VenueRepository {
+  if (!cachedVenueRepository) {
+    cachedVenueRepository = isTauriRuntime()
+      ? new TauriVenueRepository()
+      : new MockVenueRepository();
+  }
+  return cachedVenueRepository;
+}
+
+export function setVenueRepository(repo: VenueRepository): void {
+  cachedVenueRepository = repo;
 }

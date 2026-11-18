@@ -6,6 +6,7 @@
     Speaker,
     Users,
     Truck,
+    MapPin,
     UserCog,
     Shield,
     Palette,
@@ -78,6 +79,12 @@
       href: "/suppliers",
       icon: Truck,
       permission: PERMISSIONS.SUPPLIER_READ,
+    },
+    {
+      labelKey: "nav.venues",
+      href: "/venues",
+      icon: MapPin,
+      permission: PERMISSIONS.VENUE_READ,
     },
     {
       labelKey: "nav.users",
