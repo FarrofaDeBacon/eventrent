@@ -1,8 +1,8 @@
 use crate::domain::{
     AuditLogEntry, Customer, CustomerAddress, CustomerContact, CustomerFilter, CustomerPage,
     CustomerWithDetails, DocumentType, Role, RoleWithPermissions, SupplierCategory, Tenant,
-    TenantBranding, UpdateBrandingInput, UserRecord, UserWithRole, Venue, VenueContact,
-    VenueFilter, VenuePage, VenueSpace, VenueWithDetails,
+    TenantBranding, TenantSetting, UpdateBrandingInput, UserRecord, UserWithRole, Venue,
+    VenueContact, VenueFilter, VenuePage, VenueSpace, VenueWithDetails,
 };
 use crate::error::{CoreError, Result};
 use async_trait::async_trait;
@@ -199,6 +199,20 @@ pub trait VenueStore: Send + Sync {
     async fn count_active(&self, tenant_id: &str) -> Result<u64>;
 }
 
+#[async_trait]
+pub trait TenantSettingStore: Send + Sync {
+    async fn get_many(&self, tenant_id: &str, keys: &[&str]) -> Result<Vec<TenantSetting>>;
+    async fn upsert(&self, setting: &TenantSetting) -> Result<()>;
+    async fn ensure_default_if_missing(
+        &self,
+        tenant_id: &str,
+        id: &str,
+        key: &str,
+        value: &str,
+        now: &str,
+    ) -> Result<()>;
+}
+
 #[derive(Clone)]
 pub struct StoreBundle {
     pub tenants: Arc<dyn TenantStore>,
@@ -208,6 +222,7 @@ pub struct StoreBundle {
     pub audit: Arc<dyn AuditStore>,
     pub customers: Arc<dyn CustomerStore>,
     pub venues: Arc<dyn VenueStore>,
+    pub settings: Arc<dyn TenantSettingStore>,
     pub tx_manager: Option<Arc<dyn TransactionManager>>,
 }
 
@@ -221,6 +236,7 @@ impl StoreBundle {
         audit: Arc<dyn AuditStore>,
         customers: Arc<dyn CustomerStore>,
         venues: Arc<dyn VenueStore>,
+        settings: Arc<dyn TenantSettingStore>,
         tx_manager: Option<Arc<dyn TransactionManager>>,
     ) -> Result<Self> {
         let Some(tx) = tx_manager else {
@@ -236,6 +252,7 @@ impl StoreBundle {
             audit,
             customers,
             venues,
+            settings,
             tx_manager: Some(tx),
         })
     }
@@ -255,6 +272,7 @@ pub trait TxStoreBundle: Send + Sync {
     fn audit(&self) -> &dyn AuditStore;
     fn customers(&self) -> &dyn CustomerStore;
     fn venues(&self) -> &dyn VenueStore;
+    fn settings(&self) -> &dyn TenantSettingStore;
 
     async fn commit(self: Box<Self>) -> Result<()>;
     async fn rollback(self: Box<Self>) -> Result<()>;

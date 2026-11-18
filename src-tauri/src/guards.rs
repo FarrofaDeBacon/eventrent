@@ -129,6 +129,14 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
         name: "check_venue_duplicate_name_city",
         is_public: false,
     },
+    CommandDefinition {
+        name: "get_allocation_settings",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "update_allocation_settings",
+        is_public: false,
+    },
 ];
 
 /// Guarda central de autenticação para comandos protegidos do Tauri.

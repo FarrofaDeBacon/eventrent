@@ -11,6 +11,7 @@
     UserCog,
     Shield,
     Palette,
+    SlidersHorizontal,
     SunMoon,
     LogOut,
     ArrowRight,
@@ -143,6 +144,17 @@
       action: () => {
         open = false;
         goto("/settings/appearance");
+      },
+    },
+    {
+      id: "operation",
+      labelKey: "command.goToOperation",
+      categoryKey: "command.navigation",
+      icon: SlidersHorizontal,
+      permission: PERMISSIONS.SETTINGS_READ,
+      action: () => {
+        open = false;
+        goto("/settings/operation");
       },
     },
     {

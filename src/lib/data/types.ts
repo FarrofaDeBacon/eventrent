@@ -322,3 +322,15 @@ export interface CustomerPage {
   has_more: boolean;
   total_count?: number | null;
 }
+
+export interface AllocationSettings {
+  default_setup_minutes: number;
+  default_teardown_minutes: number;
+  default_turnover_buffer_minutes: number;
+}
+
+export interface UpdateAllocationSettingsInput {
+  default_setup_minutes: number;
+  default_teardown_minutes: number;
+  default_turnover_buffer_minutes: number;
+}

@@ -394,6 +394,8 @@ pub fn run() {
             commands::venues::set_venue_active,
             commands::venues::delete_venue,
             commands::venues::check_venue_duplicate_name_city,
+            commands::settings::get_allocation_settings,
+            commands::settings::update_allocation_settings,
         ])
         .run(tauri::generate_context!());
 

@@ -4,22 +4,25 @@ use crate::domain::{
     parse_document_with_type, validate_addresses, validate_contacts,
     validate_customer_common_fields, validate_email, validate_roles_and_categories,
     validate_user_name, validate_venue_contacts, validate_venue_fields, validate_venue_spaces,
-    AuditLogEntry, BrandingValidator, CreateCustomerInput, CreateUserInput, CreateVenueInput,
-    Customer, CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter, CustomerPage,
-    CustomerRole, CustomerRoleFilter, CustomerWithDetails, DocumentType, InitialSetupInput,
-    InitialSetupResult, LoginInput, LoginPolicy, OperationMode, PersonType, PublicBranding,
-    RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput, Role, RoleWithPermissions,
-    SessionInfo, Tenant, TenantBranding, UpdateBrandingInput, UpdateCustomerInput, UpdateUserInput,
+    AllocationSettings, AuditLogEntry, BrandingValidator, CreateCustomerInput, CreateUserInput,
+    CreateVenueInput, Customer, CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter,
+    CustomerPage, CustomerRole, CustomerRoleFilter, CustomerWithDetails, DocumentType,
+    InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode, PersonType,
+    PublicBranding, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput, Role,
+    RoleWithPermissions, SessionInfo, Tenant, TenantBranding, TenantSetting,
+    UpdateAllocationSettingsInput, UpdateBrandingInput, UpdateCustomerInput, UpdateUserInput,
     UpdateVenueInput, UserRecord, UserWithRole, Venue, VenueContact, VenueCursor, VenueFilter,
-    VenuePage, VenueSpace, VenueWithDetails, PERM_BRANDING_MANAGE, PERM_BRANDING_READ,
-    PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_SUPPLIER_MANAGE,
-    PERM_SUPPLIER_READ, PERM_USER_MANAGE, PERM_USER_READ, PERM_VENUE_MANAGE, PERM_VENUE_READ,
-    ROLE_SLUG_OWNER, SYSTEM_ROLES,
+    VenuePage, VenueSpace, VenueWithDetails, DEFAULT_SETUP_MINUTES, DEFAULT_TEARDOWN_MINUTES,
+    DEFAULT_TURNOVER_BUFFER_MINUTES, PERM_BRANDING_MANAGE, PERM_BRANDING_READ,
+    PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_SETTINGS_MANAGE,
+    PERM_SETTINGS_READ, PERM_SUPPLIER_MANAGE, PERM_SUPPLIER_READ, PERM_USER_MANAGE, PERM_USER_READ,
+    PERM_VENUE_MANAGE, PERM_VENUE_READ, ROLE_SLUG_OWNER, SETTING_DEFAULT_SETUP_MINUTES,
+    SETTING_DEFAULT_TEARDOWN_MINUTES, SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES, SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
-    run_in_tx, BrandingStore, RoleStore, StoreBundle, TenantStore, TransactionPolicy, TxBoxFuture,
-    TxStoreBundle, VenueStore,
+    run_in_tx, BrandingStore, RoleStore, StoreBundle, TenantSettingStore, TenantStore,
+    TransactionPolicy, TxBoxFuture, TxStoreBundle, VenueStore,
 };
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
@@ -295,6 +298,9 @@ impl<'a> TxStoreBundle for PassthroughTxStoreBundle<'a> {
     }
     fn venues(&self) -> &dyn VenueStore {
         self.stores.venues.as_ref()
+    }
+    fn settings(&self) -> &dyn TenantSettingStore {
+        self.stores.settings.as_ref()
     }
     async fn commit(self: Box<Self>) -> Result<()> {
         Ok(())
@@ -2922,6 +2928,157 @@ impl CoreServices {
                     .await?;
 
                 Ok(())
+            })
+        })
+        .await
+    }
+
+    // -----------------------------------------------------------------------
+    // Configurações Operacionais / Alocação (Fase 1D / ADR-0012)
+    // -----------------------------------------------------------------------
+
+    pub async fn get_allocation_settings(
+        &self,
+        session: &SessionInfo,
+    ) -> Result<AllocationSettings> {
+        self.check_session_and_permission(session, PERM_SETTINGS_READ)?;
+        let session_clone = session.clone();
+        let now = Utc::now().to_rfc3339();
+
+        self.run_transaction(|stores| {
+            let session = session_clone.clone();
+            let now = now.clone();
+            Box::pin(async move {
+                let defaults = [
+                    (
+                        SETTING_DEFAULT_SETUP_MINUTES,
+                        DEFAULT_SETUP_MINUTES.to_string(),
+                    ),
+                    (
+                        SETTING_DEFAULT_TEARDOWN_MINUTES,
+                        DEFAULT_TEARDOWN_MINUTES.to_string(),
+                    ),
+                    (
+                        SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
+                        DEFAULT_TURNOVER_BUFFER_MINUTES.to_string(),
+                    ),
+                ];
+
+                for (key, val) in &defaults {
+                    stores
+                        .settings()
+                        .ensure_default_if_missing(
+                            &session.tenant_id,
+                            &Uuid::now_v7().to_string(),
+                            key,
+                            val,
+                            &now,
+                        )
+                        .await?;
+                }
+
+                let rows = stores
+                    .settings()
+                    .get_many(
+                        &session.tenant_id,
+                        &[
+                            SETTING_DEFAULT_SETUP_MINUTES,
+                            SETTING_DEFAULT_TEARDOWN_MINUTES,
+                            SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
+                        ],
+                    )
+                    .await?;
+
+                let mut result = AllocationSettings::default();
+                for row in rows {
+                    if let Ok(parsed) = row.setting_value.trim().parse::<i64>() {
+                        match row.setting_key.as_str() {
+                            SETTING_DEFAULT_SETUP_MINUTES => result.default_setup_minutes = parsed,
+                            SETTING_DEFAULT_TEARDOWN_MINUTES => {
+                                result.default_teardown_minutes = parsed
+                            }
+                            SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES => {
+                                result.default_turnover_buffer_minutes = parsed
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Ok(result)
+            })
+        })
+        .await
+    }
+
+    pub async fn update_allocation_settings(
+        &self,
+        session: &SessionInfo,
+        input: &UpdateAllocationSettingsInput,
+    ) -> Result<AllocationSettings> {
+        self.check_session_and_permission(session, PERM_SETTINGS_MANAGE)?;
+        crate::domain::validate_allocation_settings(input)?;
+
+        let session_clone = session.clone();
+        let input_clone = input.clone();
+        let now = Utc::now().to_rfc3339();
+
+        self.run_transaction(|stores| {
+            let session = session_clone.clone();
+            let input = input_clone.clone();
+            let now = now.clone();
+            Box::pin(async move {
+                let pairs = [
+                    (
+                        SETTING_DEFAULT_SETUP_MINUTES,
+                        input.default_setup_minutes.to_string(),
+                    ),
+                    (
+                        SETTING_DEFAULT_TEARDOWN_MINUTES,
+                        input.default_teardown_minutes.to_string(),
+                    ),
+                    (
+                        SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
+                        input.default_turnover_buffer_minutes.to_string(),
+                    ),
+                ];
+
+                for (key, val) in pairs {
+                    stores
+                        .settings()
+                        .upsert(&TenantSetting {
+                            id: Uuid::now_v7().to_string(),
+                            tenant_id: session.tenant_id.clone(),
+                            setting_key: key.to_string(),
+                            setting_value: val,
+                            updated_at: now.clone(),
+                            updated_by: Some(session.user_id.clone()),
+                        })
+                        .await?;
+                }
+
+                let detail = format!(
+                    "Configurações de alocação atualizadas: montagem={}min, desmontagem={}min, giro={}min",
+                    input.default_setup_minutes,
+                    input.default_teardown_minutes,
+                    input.default_turnover_buffer_minutes
+                );
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &session.tenant_id,
+                        Some(&session.user_id),
+                        "settings.allocation_updated",
+                        "tenant_setting",
+                        &session.tenant_id,
+                        &detail,
+                    ))
+                    .await?;
+
+                Ok(AllocationSettings {
+                    default_setup_minutes: input.default_setup_minutes,
+                    default_teardown_minutes: input.default_teardown_minutes,
+                    default_turnover_buffer_minutes: input.default_turnover_buffer_minutes,
+                })
             })
         })
         .await

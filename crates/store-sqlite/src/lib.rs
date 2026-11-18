@@ -4,9 +4,10 @@ use eventrent_core::{
     normalize_for_search, run_in_tx, AuditLogEntry, AuditStore, BrandingStore, CoreError, Customer,
     CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter, CustomerPage, CustomerStore,
     CustomerWithDetails, DocumentType, Result, Role, RoleStore, RoleWithPermissions, StoreBundle,
-    Tenant, TenantBranding, TenantStore, TransactionManager, TransactionPolicy, TxStoreBundle,
-    UpdateBrandingInput, UserRecord, UserStore, UserWithRole, Venue, VenueContact, VenueCursor,
-    VenueFilter, VenueListItem, VenuePage, VenueSpace, VenueStore, VenueWithDetails,
+    Tenant, TenantBranding, TenantSetting, TenantSettingStore, TenantStore, TransactionManager,
+    TransactionPolicy, TxStoreBundle, UpdateBrandingInput, UserRecord, UserStore, UserWithRole,
+    Venue, VenueContact, VenueCursor, VenueFilter, VenueListItem, VenuePage, VenueSpace,
+    VenueStore, VenueWithDetails,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, Row, Sqlite};
@@ -208,7 +209,8 @@ impl TransactionManager for SqliteTxManager {
             users: arc.clone(),
             audit: arc.clone(),
             customers: arc.clone(),
-            venues: arc,
+            venues: arc.clone(),
+            settings: arc,
         }))
     }
 }
@@ -222,6 +224,7 @@ pub struct SqliteTxStoreBundle {
     pub audit: Arc<dyn AuditStore>,
     pub customers: Arc<dyn CustomerStore>,
     pub venues: Arc<dyn VenueStore>,
+    pub settings: Arc<dyn TenantSettingStore>,
 }
 
 #[async_trait]
@@ -252,6 +255,10 @@ impl TxStoreBundle for SqliteTxStoreBundle {
 
     fn venues(&self) -> &dyn VenueStore {
         self.venues.as_ref()
+    }
+
+    fn settings(&self) -> &dyn TenantSettingStore {
+        self.settings.as_ref()
     }
 
     async fn commit(self: Box<Self>) -> Result<()> {
@@ -311,7 +318,8 @@ impl SqliteStore {
             users: arc.clone(),
             audit: arc.clone(),
             customers: arc.clone(),
-            venues: arc,
+            venues: arc.clone(),
+            settings: arc,
             tx_manager,
         }
     }
@@ -2821,6 +2829,85 @@ impl VenueStore for SqliteStore {
     }
 }
 
+#[async_trait]
+impl TenantSettingStore for SqliteStore {
+    async fn get_many(&self, tenant_id: &str, keys: &[&str]) -> Result<Vec<TenantSetting>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = vec!["?"; keys.len()].join(", ");
+        let sql = format!(
+            "SELECT id, tenant_id, setting_key, setting_value, updated_at, updated_by \
+             FROM tenant_setting WHERE tenant_id = ? AND setting_key IN ({placeholders})"
+        );
+        let mut q = sqlx::query(&sql).bind(tenant_id);
+        for key in keys {
+            q = q.bind(*key);
+        }
+        let rows = self.fetch_all(q).await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| TenantSetting {
+                id: r.get("id"),
+                tenant_id: r.get("tenant_id"),
+                setting_key: r.get("setting_key"),
+                setting_value: r.get("setting_value"),
+                updated_at: r.get("updated_at"),
+                updated_by: r.get("updated_by"),
+            })
+            .collect())
+    }
+
+    async fn upsert(&self, setting: &TenantSetting) -> Result<()> {
+        self.execute(
+            sqlx::query(
+                r#"
+                INSERT INTO tenant_setting (id, tenant_id, setting_key, setting_value, updated_at, updated_by)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(tenant_id, setting_key) DO UPDATE SET
+                    setting_value = excluded.setting_value,
+                    updated_at = excluded.updated_at,
+                    updated_by = excluded.updated_by
+                "#,
+            )
+            .bind(&setting.id)
+            .bind(&setting.tenant_id)
+            .bind(&setting.setting_key)
+            .bind(&setting.setting_value)
+            .bind(&setting.updated_at)
+            .bind(&setting.updated_by),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn ensure_default_if_missing(
+        &self,
+        tenant_id: &str,
+        id: &str,
+        key: &str,
+        value: &str,
+        now: &str,
+    ) -> Result<()> {
+        self.execute(
+            sqlx::query(
+                r#"
+                INSERT INTO tenant_setting (id, tenant_id, setting_key, setting_value, updated_at, updated_by)
+                VALUES (?, ?, ?, ?, ?, NULL)
+                ON CONFLICT(tenant_id, setting_key) DO NOTHING
+                "#,
+            )
+            .bind(id)
+            .bind(tenant_id)
+            .bind(key)
+            .bind(value)
+            .bind(now),
+        )
+        .await?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3105,7 +3192,8 @@ mod tests {
                 users: store.clone(),
                 audit: failing_audit,
                 customers: store.clone(),
-                venues: store,
+                venues: store.clone(),
+                settings: store,
             }))
         }
     }
@@ -3129,6 +3217,7 @@ mod tests {
             audit: Arc::new(normal_store.clone()),
             customers: Arc::new(normal_store.clone()),
             venues: Arc::new(normal_store.clone()),
+            settings: Arc::new(normal_store.clone()),
             tx_manager: Some(tx_manager),
         };
         let services = CoreServices::new(bundle.clone());
@@ -3668,6 +3757,7 @@ mod tests {
             audit: store.clone(),
             customers: store.clone(),
             venues: store.clone(),
+            settings: store.clone(),
             tx_manager: None,
         };
 

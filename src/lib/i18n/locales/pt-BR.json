@@ -18,6 +18,7 @@
     "roles": "Perfis de Acesso",
     "settings": "Configurações",
     "appearance": "Aparência",
+    "operation": "Operação",
     "collapse": "Recolher barra lateral",
     "expand": "Expandir barra lateral",
     "soonBadge": "Breve"
@@ -43,6 +44,7 @@
     "goToUsers": "Gerenciar Usuários e Contas",
     "goToRoles": "Consultar Perfis e Permissões",
     "goToAppearance": "Configurações de Aparência & Cores",
+    "goToOperation": "Configurações de Operação & Alocação",
     "logout": "Sair da Conta (Encerrar Sessão)",
     "shortcutLabel": "Ctrl+K",
     "hintArrows": "Navegue com as setas ↑ ↓",

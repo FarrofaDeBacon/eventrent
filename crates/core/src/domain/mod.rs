@@ -5,6 +5,7 @@ pub mod customer;
 pub mod document;
 pub mod permission;
 pub mod role;
+pub mod settings;
 pub mod tenant;
 pub mod user;
 pub mod validation;
@@ -29,6 +30,12 @@ pub use document::{
 };
 pub use permission::*;
 pub use role::{Role, RoleWithPermissions};
+pub use settings::{
+    validate_allocation_settings, AllocationSettings, TenantSetting, UpdateAllocationSettingsInput,
+    DEFAULT_SETUP_MINUTES, DEFAULT_TEARDOWN_MINUTES, DEFAULT_TURNOVER_BUFFER_MINUTES,
+    MAX_ALLOCATION_MINUTES, SETTING_DEFAULT_SETUP_MINUTES, SETTING_DEFAULT_TEARDOWN_MINUTES,
+    SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
+};
 pub use tenant::Tenant;
 pub use user::{
     CreateUserInput, LoginInput, LoginPolicy, RecoverPasswordInput, RecoverPasswordResult,

@@ -2636,9 +2636,33 @@ mod unit_tests {
                 unreachable!()
             }
         }
+        #[async_trait::async_trait]
+        impl crate::store::TenantSettingStore for DummyStore {
+            async fn get_many(
+                &self,
+                _: &str,
+                _: &[&str],
+            ) -> crate::error::Result<Vec<crate::domain::TenantSetting>> {
+                unreachable!()
+            }
+            async fn upsert(&self, _: &crate::domain::TenantSetting) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn ensure_default_if_missing(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+        }
 
         let dummy = Arc::new(DummyStore);
         let res = StoreBundle::new(
+            dummy.clone(),
             dummy.clone(),
             dummy.clone(),
             dummy.clone(),
@@ -2720,6 +2744,9 @@ mod unit_tests {
                 unreachable!()
             }
             fn venues(&self) -> &dyn crate::store::VenueStore {
+                unreachable!()
+            }
+            fn settings(&self) -> &dyn crate::store::TenantSettingStore {
                 unreachable!()
             }
             async fn commit(self: Box<Self>) -> Result<()> {
@@ -2852,6 +2879,9 @@ mod unit_tests {
                 unreachable!()
             }
             fn venues(&self) -> &dyn crate::store::VenueStore {
+                unreachable!()
+            }
+            fn settings(&self) -> &dyn crate::store::TenantSettingStore {
                 unreachable!()
             }
             async fn commit(self: Box<Self>) -> Result<()> {

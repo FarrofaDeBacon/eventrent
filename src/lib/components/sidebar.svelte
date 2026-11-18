@@ -9,6 +9,7 @@
     UserCog,
     Shield,
     Palette,
+    SlidersHorizontal,
     ChevronLeft,
     ChevronRight,
   } from "lucide-svelte";
@@ -95,6 +96,12 @@
       href: "/settings/appearance",
       icon: Palette,
       permission: PERMISSIONS.BRANDING_READ,
+    },
+    {
+      labelKey: "nav.operation",
+      href: "/settings/operation",
+      icon: SlidersHorizontal,
+      permission: PERMISSIONS.SETTINGS_READ,
     },
   ];
 

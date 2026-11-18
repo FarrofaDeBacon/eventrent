@@ -4,10 +4,13 @@ import type { CustomerRepository } from "./customer-repository";
 import { MockAuthRepository } from "./mock-auth-repository";
 import { MockBrandingRepository } from "./mock-branding-repository";
 import { MockCustomerRepository } from "./mock-customer-repository";
+import { MockSettingsRepository } from "./mock-settings-repository";
 import { MockUserRepository } from "./mock-user-repository";
+import type { SettingsRepository } from "./settings-repository";
 import { TauriAuthRepository } from "./tauri-auth-repository";
 import { TauriBrandingRepository } from "./tauri-branding-repository";
 import { TauriCustomerRepository } from "./tauri-customer-repository";
+import { TauriSettingsRepository } from "./tauri-settings-repository";
 import { TauriUserRepository } from "./tauri-user-repository";
 import { PERMISSIONS, type SessionInfo } from "./types";
 import type { UserRepository } from "./user-repository";
@@ -18,11 +21,14 @@ export * from "./customer-repository";
 export * from "./mock-auth-repository";
 export * from "./mock-branding-repository";
 export * from "./mock-customer-repository";
+export * from "./mock-settings-repository";
 export * from "./mock-user-repository";
 export * from "./session.svelte";
+export * from "./settings-repository";
 export * from "./tauri-auth-repository";
 export * from "./tauri-branding-repository";
 export * from "./tauri-customer-repository";
+export * from "./tauri-settings-repository";
 export * from "./tauri-user-repository";
 export * from "./types";
 export * from "./user-repository";
@@ -31,6 +37,7 @@ let cachedBrandingRepository: BrandingRepository | null = null;
 let cachedAuthRepository: AuthRepository | null = null;
 let cachedUserRepository: UserRepository | null = null;
 let cachedCustomerRepository: CustomerRepository | null = null;
+let cachedSettingsRepository: SettingsRepository | null = null;
 
 function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -143,7 +150,23 @@ export function canAccessRoute(
   if (pathname.startsWith("/settings/appearance")) {
     return hasPermission(session, PERMISSIONS.BRANDING_READ);
   }
+  if (pathname.startsWith("/settings/operation")) {
+    return hasPermission(session, PERMISSIONS.SETTINGS_READ);
+  }
 
   // Rota raiz: qualquer sessão autenticada tem acesso
   return true;
+}
+
+export function getSettingsRepository(): SettingsRepository {
+  if (!cachedSettingsRepository) {
+    cachedSettingsRepository = isTauriRuntime()
+      ? new TauriSettingsRepository()
+      : new MockSettingsRepository();
+  }
+  return cachedSettingsRepository;
+}
+
+export function setSettingsRepository(repo: SettingsRepository): void {
+  cachedSettingsRepository = repo;
 }
