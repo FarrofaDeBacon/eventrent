@@ -157,3 +157,19 @@ Criados de forma idempotente por `ensure_system_roles` para cada tenant:
 - **Autorização (RBAC) de Locais**:
   - `venue:read`: **Proprietário**, **Comercial**, **Estoque**, **Técnico**, **Financeiro**.
   - `venue:manage`: **Proprietário**, **Comercial**, **Estoque**.
+
+---
+
+### Catálogo de Equipamentos, Categorias e Atributos (Fase 2A)
+
+- **Hierarquia e Ciclos**: Árvore de categorias limitada a **4 níveis** de profundidade, com bloqueio de auto-referência e ciclos. Exclusão bloqueada se houver subcategorias ou modelos vinculados.
+- **Herança de Campos Técnicos**: Modelos herdam automaticamente os atributos configurados em todas as categorias ancestrais até sua categoria. Máximo de **50 atributos** por categoria.
+- **Validações Técnicas e Fiscais**:
+  - `ean`: aceita 8, 12, 13 ou 14 dígitos numéricos com validação obrigatória do dígito verificador GS1.
+  - `ncm`: exatamente 8 dígitos numéricos.
+  - Pesos, dimensões e corrente positivos (`> 0`); potência e valores monetários em centavos não negativos (`>= 0`).
+- **Carga Sugerida Idempotente**: Ação explícita no serviço/UI (`load_suggested_catalog_categories`) cria árvore audiovisual inicial sem duplicar registros em execuções repetidas.
+- **Matriz de Permissões do Catálogo**:
+  - `catalog:read`: **Proprietário**, **Estoque**, **Comercial**, **Técnico**.
+  - `catalog:manage`: **Proprietário**, **Estoque**.
+  - **Financeiro**: sem acesso ao catálogo.
