@@ -8,6 +8,8 @@ pub const PERM_CUSTOMER_READ: &str = "customer:read";
 pub const PERM_CUSTOMER_MANAGE: &str = "customer:manage";
 pub const PERM_SUPPLIER_READ: &str = "supplier:read";
 pub const PERM_SUPPLIER_MANAGE: &str = "supplier:manage";
+pub const PERM_VENUE_READ: &str = "venue:read";
+pub const PERM_VENUE_MANAGE: &str = "venue:manage";
 pub const PERM_CATALOG_READ: &str = "catalog:read";
 pub const PERM_CATALOG_MANAGE: &str = "catalog:manage";
 pub const PERM_RESERVATION_READ: &str = "reservation:read";
@@ -39,6 +41,8 @@ pub const ALL_PERMISSIONS: &[&str] = &[
     PERM_CUSTOMER_MANAGE,
     PERM_SUPPLIER_READ,
     PERM_SUPPLIER_MANAGE,
+    PERM_VENUE_READ,
+    PERM_VENUE_MANAGE,
     PERM_CATALOG_READ,
     PERM_CATALOG_MANAGE,
     PERM_RESERVATION_READ,
@@ -78,6 +82,8 @@ pub const SYSTEM_ROLES: &[SystemRoleSpec] = &[
             PERM_CUSTOMER_READ,
             PERM_CUSTOMER_MANAGE,
             PERM_SUPPLIER_READ,
+            PERM_VENUE_READ,
+            PERM_VENUE_MANAGE,
             PERM_CATALOG_READ,
             PERM_RESERVATION_READ,
             PERM_RESERVATION_MANAGE,
@@ -93,6 +99,8 @@ pub const SYSTEM_ROLES: &[SystemRoleSpec] = &[
         permissions: &[
             PERM_SUPPLIER_READ,
             PERM_SUPPLIER_MANAGE,
+            PERM_VENUE_READ,
+            PERM_VENUE_MANAGE,
             PERM_CATALOG_READ,
             PERM_CATALOG_MANAGE,
             PERM_RESERVATION_READ,
@@ -107,6 +115,7 @@ pub const SYSTEM_ROLES: &[SystemRoleSpec] = &[
         description:
             "Operação de conferência de carga, leitura QR, manutenção e consulta de eventos.",
         permissions: &[
+            PERM_VENUE_READ,
             PERM_CATALOG_READ,
             PERM_RESERVATION_READ,
             PERM_WAREHOUSE_READ,
@@ -122,6 +131,7 @@ pub const SYSTEM_ROLES: &[SystemRoleSpec] = &[
             PERM_CUSTOMER_READ,
             PERM_SUPPLIER_READ,
             PERM_SUPPLIER_MANAGE,
+            PERM_VENUE_READ,
             PERM_QUOTE_READ,
             PERM_RESERVATION_READ,
             PERM_FINANCE_READ,
