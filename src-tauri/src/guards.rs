@@ -101,6 +101,34 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
         name: "add_customer_role",
         is_public: false,
     },
+    CommandDefinition {
+        name: "list_venues",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "get_venue",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "create_venue",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "update_venue",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "set_venue_active",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "delete_venue",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "check_venue_duplicate_name_city",
+        is_public: false,
+    },
 ];
 
 /// Guarda central de autenticação para comandos protegidos do Tauri.

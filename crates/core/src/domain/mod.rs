@@ -8,6 +8,7 @@ pub mod role;
 pub mod tenant;
 pub mod user;
 pub mod validation;
+pub mod venue;
 
 pub use audit::AuditLogEntry;
 pub use branding::{BrandingValidator, PublicBranding, TenantBranding, UpdateBrandingInput};
@@ -36,4 +37,12 @@ pub use user::{
 pub use validation::{
     normalize_and_validate_phone, normalize_and_validate_postal_code, validate_brazilian_state,
     validate_country_code, validate_email, validate_user_name, BRAZILIAN_STATES,
+};
+pub use venue::{
+    build_venue_name_sort, build_venue_search_text, validate_venue_contacts, validate_venue_fields,
+    validate_venue_spaces, CreateVenueInput, UpdateVenueInput, ValidatedVenueFields, Venue,
+    VenueContact, VenueContactInput, VenueCursor, VenueFilter, VenueListItem, VenuePage,
+    VenueSpace, VenueSpaceInput, VenueWithDetails, MAX_INTERNAL_TRANSFER_MINUTES,
+    MAX_VENUE_CONTACTS, MAX_VENUE_NAME_LEN, MAX_VENUE_SPACES, MAX_VENUE_SPACE_NAME_LEN,
+    MAX_VENUE_TECH_FIELD_LEN,
 };

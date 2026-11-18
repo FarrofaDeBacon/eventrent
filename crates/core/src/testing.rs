@@ -2579,9 +2579,67 @@ mod unit_tests {
                 unreachable!()
             }
         }
+        #[async_trait::async_trait]
+        impl crate::store::VenueStore for DummyStore {
+            async fn find_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::VenueWithDetails>> {
+                unreachable!()
+            }
+            async fn list(
+                &self,
+                _: &str,
+                _: &crate::domain::VenueFilter,
+            ) -> crate::error::Result<crate::domain::VenuePage> {
+                unreachable!()
+            }
+            async fn exists_by_name_and_city(
+                &self,
+                _: &str,
+                _: &str,
+                _: Option<&str>,
+                _: Option<&str>,
+            ) -> crate::error::Result<bool> {
+                unreachable!()
+            }
+            async fn create(
+                &self,
+                _: &crate::domain::Venue,
+                _: &[crate::domain::VenueSpace],
+                _: &[crate::domain::VenueContact],
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update(
+                &self,
+                _: &crate::domain::Venue,
+                _: &[crate::domain::VenueSpace],
+                _: &[crate::domain::VenueContact],
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn set_active(
+                &self,
+                _: &str,
+                _: &str,
+                _: bool,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn soft_delete(&self, _: &str, _: &str, _: &str) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn count_active(&self, _: &str) -> crate::error::Result<u64> {
+                unreachable!()
+            }
+        }
 
         let dummy = Arc::new(DummyStore);
         let res = StoreBundle::new(
+            dummy.clone(),
             dummy.clone(),
             dummy.clone(),
             dummy.clone(),
@@ -2659,6 +2717,9 @@ mod unit_tests {
                 unreachable!()
             }
             fn customers(&self) -> &dyn CustomerStore {
+                unreachable!()
+            }
+            fn venues(&self) -> &dyn crate::store::VenueStore {
                 unreachable!()
             }
             async fn commit(self: Box<Self>) -> Result<()> {
@@ -2788,6 +2849,9 @@ mod unit_tests {
                 unreachable!()
             }
             fn customers(&self) -> &dyn CustomerStore {
+                unreachable!()
+            }
+            fn venues(&self) -> &dyn crate::store::VenueStore {
                 unreachable!()
             }
             async fn commit(self: Box<Self>) -> Result<()> {

@@ -5,7 +5,8 @@ use eventrent_core::{
     CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter, CustomerPage, CustomerStore,
     CustomerWithDetails, DocumentType, Result, Role, RoleStore, RoleWithPermissions, StoreBundle,
     Tenant, TenantBranding, TenantStore, TransactionManager, TransactionPolicy, TxStoreBundle,
-    UpdateBrandingInput, UserRecord, UserStore, UserWithRole,
+    UpdateBrandingInput, UserRecord, UserStore, UserWithRole, Venue, VenueContact, VenueCursor,
+    VenueFilter, VenueListItem, VenuePage, VenueSpace, VenueStore, VenueWithDetails,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, Row, Sqlite};
@@ -206,7 +207,8 @@ impl TransactionManager for SqliteTxManager {
             roles: arc.clone(),
             users: arc.clone(),
             audit: arc.clone(),
-            customers: arc,
+            customers: arc.clone(),
+            venues: arc,
         }))
     }
 }
@@ -219,6 +221,7 @@ pub struct SqliteTxStoreBundle {
     pub users: Arc<dyn UserStore>,
     pub audit: Arc<dyn AuditStore>,
     pub customers: Arc<dyn CustomerStore>,
+    pub venues: Arc<dyn VenueStore>,
 }
 
 #[async_trait]
@@ -245,6 +248,10 @@ impl TxStoreBundle for SqliteTxStoreBundle {
 
     fn customers(&self) -> &dyn CustomerStore {
         self.customers.as_ref()
+    }
+
+    fn venues(&self) -> &dyn VenueStore {
+        self.venues.as_ref()
     }
 
     async fn commit(self: Box<Self>) -> Result<()> {
@@ -303,7 +310,8 @@ impl SqliteStore {
             roles: arc.clone(),
             users: arc.clone(),
             audit: arc.clone(),
-            customers: arc,
+            customers: arc.clone(),
+            venues: arc,
             tx_manager,
         }
     }
@@ -2157,6 +2165,662 @@ impl CustomerStore for SqliteStore {
     }
 }
 
+fn row_to_venue(r: &sqlx::sqlite::SqliteRow) -> Venue {
+    let active_int: i64 = r.get("active");
+    Venue {
+        id: r.get("id"),
+        tenant_id: r.get("tenant_id"),
+        name: r.get("name"),
+        street: r.get("street"),
+        number: r.get("number"),
+        complement: r.get("complement"),
+        neighborhood: r.get("neighborhood"),
+        city: r.get("city"),
+        state: r.get("state"),
+        postal_code: r.get("postal_code"),
+        country: r.get("country"),
+        parking_notes: r.get("parking_notes"),
+        loading_dock_notes: r.get("loading_dock_notes"),
+        access_hours: r.get("access_hours"),
+        notes: r.get("notes"),
+        active: active_int != 0,
+        search_text: r.get("search_text"),
+        name_sort: r.get("name_sort"),
+        created_at: r.get("created_at"),
+        updated_at: r.get("updated_at"),
+        deleted_at: r.get("deleted_at"),
+        created_by: r.get("created_by"),
+    }
+}
+
+fn row_to_venue_space(r: &sqlx::sqlite::SqliteRow) -> VenueSpace {
+    let active_int: i64 = r.get("active");
+    VenueSpace {
+        id: r.get("id"),
+        tenant_id: r.get("tenant_id"),
+        venue_id: r.get("venue_id"),
+        name: r.get("name"),
+        name_normalized: r.get("name_normalized"),
+        capacity_people: r.get("capacity_people"),
+        area_sqm: r.get("area_sqm"),
+        ceiling_height_m: r.get("ceiling_height_m"),
+        power_available: r.get("power_available"),
+        loading_access: r.get("loading_access"),
+        rigging_points: r.get("rigging_points"),
+        acoustics_notes: r.get("acoustics_notes"),
+        internal_transfer_minutes: r.get("internal_transfer_minutes"),
+        notes: r.get("notes"),
+        active: active_int != 0,
+        sort_order: r.get("sort_order"),
+        created_at: r.get("created_at"),
+        updated_at: r.get("updated_at"),
+        deleted_at: r.get("deleted_at"),
+        created_by: r.get("created_by"),
+    }
+}
+
+fn row_to_venue_contact(r: &sqlx::sqlite::SqliteRow) -> VenueContact {
+    let is_primary_int: i64 = r.get("is_primary");
+    VenueContact {
+        id: r.get("id"),
+        tenant_id: r.get("tenant_id"),
+        venue_id: r.get("venue_id"),
+        name: r.get("name"),
+        email: r.get("email"),
+        phone: r.get("phone"),
+        role: r.get("role"),
+        is_primary: is_primary_int != 0,
+        created_at: r.get("created_at"),
+        updated_at: r.get("updated_at"),
+        deleted_at: r.get("deleted_at"),
+        created_by: r.get("created_by"),
+    }
+}
+
+#[async_trait]
+impl VenueStore for SqliteStore {
+    async fn find_by_id(&self, tenant_id: &str, id: &str) -> Result<Option<VenueWithDetails>> {
+        let row = self
+            .fetch_optional(
+                sqlx::query(
+                    r#"
+                    SELECT id, tenant_id, name, street, number, complement, neighborhood,
+                           city, state, postal_code, country, parking_notes, loading_dock_notes,
+                           access_hours, notes, active, search_text, name_sort,
+                           created_at, updated_at, deleted_at, created_by
+                    FROM venue
+                    WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+                    LIMIT 1
+                    "#,
+                )
+                .bind(tenant_id)
+                .bind(id),
+            )
+            .await?;
+
+        let venue = match row {
+            Some(ref r) => row_to_venue(r),
+            None => return Ok(None),
+        };
+
+        let space_rows = self
+            .fetch_all(
+                sqlx::query(
+                    r#"
+                    SELECT id, tenant_id, venue_id, name, name_normalized, capacity_people,
+                           area_sqm, ceiling_height_m, power_available, loading_access,
+                           rigging_points, acoustics_notes, internal_transfer_minutes, notes,
+                           active, sort_order, created_at, updated_at, deleted_at, created_by
+                    FROM venue_space
+                    WHERE tenant_id = ? AND venue_id = ? AND deleted_at IS NULL
+                    ORDER BY sort_order ASC, name ASC
+                    "#,
+                )
+                .bind(tenant_id)
+                .bind(id),
+            )
+            .await?;
+
+        let spaces = space_rows.iter().map(row_to_venue_space).collect();
+
+        let contact_rows = self
+            .fetch_all(
+                sqlx::query(
+                    r#"
+                    SELECT id, tenant_id, venue_id, name, email, phone, role, is_primary,
+                           created_at, updated_at, deleted_at, created_by
+                    FROM venue_contact
+                    WHERE tenant_id = ? AND venue_id = ? AND deleted_at IS NULL
+                    ORDER BY is_primary DESC, name ASC
+                    "#,
+                )
+                .bind(tenant_id)
+                .bind(id),
+            )
+            .await?;
+
+        let contacts = contact_rows.iter().map(row_to_venue_contact).collect();
+
+        Ok(Some(VenueWithDetails {
+            venue,
+            spaces,
+            contacts,
+        }))
+    }
+
+    async fn list(&self, tenant_id: &str, filter: &VenueFilter) -> Result<VenuePage> {
+        let limit = filter.limit.unwrap_or(50).clamp(1, 100) as i64;
+        let fetch_limit = limit + 1;
+
+        let cursor = match filter.cursor {
+            Some(ref c) => Some(VenueCursor::decode(c)?),
+            None => None,
+        };
+
+        let search_pattern = filter.query.as_ref().map(|q| {
+            let escaped = q
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            format!("%{escaped}%")
+        });
+
+        let mut sql = String::from(
+            r#"
+            SELECT v.id, v.tenant_id, v.name, v.street, v.number, v.complement, v.neighborhood,
+                   v.city, v.state, v.postal_code, v.country, v.parking_notes, v.loading_dock_notes,
+                   v.access_hours, v.notes, v.active, v.search_text, v.name_sort,
+                   v.created_at, v.updated_at, v.deleted_at, v.created_by,
+                   (SELECT COUNT(*) FROM venue_space vs
+                    WHERE vs.tenant_id = v.tenant_id AND vs.venue_id = v.id AND vs.deleted_at IS NULL) AS spaces_count
+            FROM venue v
+            WHERE v.tenant_id = ? AND v.deleted_at IS NULL
+            "#,
+        );
+
+        if filter.active_only == Some(true) {
+            sql.push_str(" AND v.active = 1 ");
+        } else if filter.active_only == Some(false) {
+            sql.push_str(" AND v.active = 0 ");
+        }
+        if search_pattern.is_some() {
+            sql.push_str(" AND v.search_text LIKE ? ESCAPE '\\' ");
+        }
+        if cursor.is_some() {
+            sql.push_str(" AND (v.name_sort > ? OR (v.name_sort = ? AND v.id > ?)) ");
+        }
+        sql.push_str(" ORDER BY v.name_sort ASC, v.id ASC LIMIT ? ");
+
+        let mut q = sqlx::query(&sql).bind(tenant_id);
+        if let Some(ref pat) = search_pattern {
+            q = q.bind(pat);
+        }
+        if let Some(ref cur) = cursor {
+            q = q.bind(&cur.name_sort).bind(&cur.name_sort).bind(&cur.id);
+        }
+        q = q.bind(fetch_limit);
+
+        let rows = self.fetch_all(q).await?;
+        let has_more = rows.len() as i64 > limit;
+        let items: Vec<VenueListItem> = rows
+            .into_iter()
+            .take(limit as usize)
+            .map(|r| {
+                let spaces_count: i64 = r.get("spaces_count");
+                VenueListItem {
+                    venue: row_to_venue(&r),
+                    spaces_count: spaces_count as u64,
+                }
+            })
+            .collect();
+
+        let next_cursor = if has_more {
+            items
+                .last()
+                .map(|last| VenueCursor::new(&last.venue.name_sort, &last.venue.id).encode())
+        } else {
+            None
+        };
+
+        let mut count_sql = String::from(
+            "SELECT COUNT(*) as total FROM venue WHERE tenant_id = ? AND deleted_at IS NULL",
+        );
+        if filter.active_only == Some(true) {
+            count_sql.push_str(" AND active = 1 ");
+        } else if filter.active_only == Some(false) {
+            count_sql.push_str(" AND active = 0 ");
+        }
+        if search_pattern.is_some() {
+            count_sql.push_str(" AND search_text LIKE ? ESCAPE '\\' ");
+        }
+        let mut cq = sqlx::query(&count_sql).bind(tenant_id);
+        if let Some(ref pat) = search_pattern {
+            cq = cq.bind(pat);
+        }
+        let count_row = self.fetch_one(cq).await?;
+        let total_count: i64 = count_row.get("total");
+
+        Ok(VenuePage {
+            items,
+            next_cursor,
+            has_more,
+            total_count: Some(total_count as u64),
+        })
+    }
+
+    async fn exists_by_name_and_city(
+        &self,
+        tenant_id: &str,
+        name_normalized: &str,
+        city_normalized: Option<&str>,
+        exclude_id: Option<&str>,
+    ) -> Result<bool> {
+        let rows = self
+            .fetch_all(
+                sqlx::query(
+                    r#"
+                    SELECT id, name, city
+                    FROM venue
+                    WHERE tenant_id = ? AND deleted_at IS NULL
+                    "#,
+                )
+                .bind(tenant_id),
+            )
+            .await?;
+
+        for row in rows {
+            let id: String = row.get("id");
+            if exclude_id == Some(id.as_str()) {
+                continue;
+            }
+            let row_name: String = row.get("name");
+            if normalize_for_search(&row_name) != name_normalized {
+                continue;
+            }
+            let row_city: Option<String> = row.get("city");
+            let row_city_norm = row_city
+                .as_deref()
+                .map(normalize_for_search)
+                .filter(|s| !s.is_empty());
+            if row_city_norm.as_deref() == city_normalized {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    async fn create(
+        &self,
+        venue: &Venue,
+        spaces: &[VenueSpace],
+        contacts: &[VenueContact],
+    ) -> Result<()> {
+        self.execute(
+            sqlx::query(
+                r#"
+                INSERT INTO venue (
+                    id, tenant_id, name, street, number, complement, neighborhood, city, state,
+                    postal_code, country, parking_notes, loading_dock_notes, access_hours, notes,
+                    active, search_text, name_sort, created_at, updated_at, deleted_at, created_by
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&venue.id)
+            .bind(&venue.tenant_id)
+            .bind(&venue.name)
+            .bind(&venue.street)
+            .bind(&venue.number)
+            .bind(&venue.complement)
+            .bind(&venue.neighborhood)
+            .bind(&venue.city)
+            .bind(&venue.state)
+            .bind(&venue.postal_code)
+            .bind(&venue.country)
+            .bind(&venue.parking_notes)
+            .bind(&venue.loading_dock_notes)
+            .bind(&venue.access_hours)
+            .bind(&venue.notes)
+            .bind(if venue.active { 1 } else { 0 })
+            .bind(&venue.search_text)
+            .bind(&venue.name_sort)
+            .bind(&venue.created_at)
+            .bind(&venue.updated_at)
+            .bind(&venue.deleted_at)
+            .bind(&venue.created_by),
+        )
+        .await?;
+
+        for sp in spaces {
+            self.execute(
+                sqlx::query(
+                    r#"
+                    INSERT INTO venue_space (
+                        id, tenant_id, venue_id, name, name_normalized, capacity_people, area_sqm,
+                        ceiling_height_m, power_available, loading_access, rigging_points,
+                        acoustics_notes, internal_transfer_minutes, notes, active, sort_order,
+                        created_at, updated_at, deleted_at, created_by
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&sp.id)
+                .bind(&sp.tenant_id)
+                .bind(&sp.venue_id)
+                .bind(&sp.name)
+                .bind(&sp.name_normalized)
+                .bind(sp.capacity_people)
+                .bind(sp.area_sqm)
+                .bind(sp.ceiling_height_m)
+                .bind(&sp.power_available)
+                .bind(&sp.loading_access)
+                .bind(&sp.rigging_points)
+                .bind(&sp.acoustics_notes)
+                .bind(sp.internal_transfer_minutes)
+                .bind(&sp.notes)
+                .bind(if sp.active { 1 } else { 0 })
+                .bind(sp.sort_order)
+                .bind(&sp.created_at)
+                .bind(&sp.updated_at)
+                .bind(&sp.deleted_at)
+                .bind(&sp.created_by),
+            )
+            .await?;
+        }
+
+        for ct in contacts {
+            self.execute(
+                sqlx::query(
+                    r#"
+                    INSERT INTO venue_contact (
+                        id, tenant_id, venue_id, name, email, phone, role, is_primary,
+                        created_at, updated_at, deleted_at, created_by
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&ct.id)
+                .bind(&ct.tenant_id)
+                .bind(&ct.venue_id)
+                .bind(&ct.name)
+                .bind(&ct.email)
+                .bind(&ct.phone)
+                .bind(&ct.role)
+                .bind(if ct.is_primary { 1 } else { 0 })
+                .bind(&ct.created_at)
+                .bind(&ct.updated_at)
+                .bind(&ct.deleted_at)
+                .bind(&ct.created_by),
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn update(
+        &self,
+        venue: &Venue,
+        spaces: &[VenueSpace],
+        contacts: &[VenueContact],
+    ) -> Result<()> {
+        self.execute(
+            sqlx::query(
+                r#"
+                UPDATE venue
+                SET name = ?, street = ?, number = ?, complement = ?, neighborhood = ?,
+                    city = ?, state = ?, postal_code = ?, country = ?, parking_notes = ?,
+                    loading_dock_notes = ?, access_hours = ?, notes = ?, active = ?,
+                    search_text = ?, name_sort = ?, updated_at = ?
+                WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+                "#,
+            )
+            .bind(&venue.name)
+            .bind(&venue.street)
+            .bind(&venue.number)
+            .bind(&venue.complement)
+            .bind(&venue.neighborhood)
+            .bind(&venue.city)
+            .bind(&venue.state)
+            .bind(&venue.postal_code)
+            .bind(&venue.country)
+            .bind(&venue.parking_notes)
+            .bind(&venue.loading_dock_notes)
+            .bind(&venue.access_hours)
+            .bind(&venue.notes)
+            .bind(if venue.active { 1 } else { 0 })
+            .bind(&venue.search_text)
+            .bind(&venue.name_sort)
+            .bind(&venue.updated_at)
+            .bind(&venue.tenant_id)
+            .bind(&venue.id),
+        )
+        .await?;
+
+        // Soft-delete espaços removidos antes do upsert para liberar idx_venue_space_name_active
+        if !spaces.is_empty() {
+            let placeholders = vec!["?"; spaces.len()].join(", ");
+            let sql_soft_del = format!(
+                "UPDATE venue_space SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND venue_id = ? AND deleted_at IS NULL AND id NOT IN ({placeholders})"
+            );
+            let mut q = sqlx::query(&sql_soft_del)
+                .bind(&venue.updated_at)
+                .bind(&venue.updated_at)
+                .bind(&venue.tenant_id)
+                .bind(&venue.id);
+            for sp in spaces {
+                q = q.bind(&sp.id);
+            }
+            self.execute(q).await?;
+        } else {
+            self.execute(
+                sqlx::query(
+                    "UPDATE venue_space SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND venue_id = ? AND deleted_at IS NULL",
+                )
+                .bind(&venue.updated_at)
+                .bind(&venue.updated_at)
+                .bind(&venue.tenant_id)
+                .bind(&venue.id),
+            )
+            .await?;
+        }
+
+        for sp in spaces {
+            self.execute(
+                sqlx::query(
+                    r#"
+                    INSERT INTO venue_space (
+                        id, tenant_id, venue_id, name, name_normalized, capacity_people, area_sqm,
+                        ceiling_height_m, power_available, loading_access, rigging_points,
+                        acoustics_notes, internal_transfer_minutes, notes, active, sort_order,
+                        created_at, updated_at, deleted_at, created_by
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        name = excluded.name,
+                        name_normalized = excluded.name_normalized,
+                        capacity_people = excluded.capacity_people,
+                        area_sqm = excluded.area_sqm,
+                        ceiling_height_m = excluded.ceiling_height_m,
+                        power_available = excluded.power_available,
+                        loading_access = excluded.loading_access,
+                        rigging_points = excluded.rigging_points,
+                        acoustics_notes = excluded.acoustics_notes,
+                        internal_transfer_minutes = excluded.internal_transfer_minutes,
+                        notes = excluded.notes,
+                        active = excluded.active,
+                        sort_order = excluded.sort_order,
+                        updated_at = excluded.updated_at,
+                        deleted_at = NULL
+                    "#,
+                )
+                .bind(&sp.id)
+                .bind(&sp.tenant_id)
+                .bind(&sp.venue_id)
+                .bind(&sp.name)
+                .bind(&sp.name_normalized)
+                .bind(sp.capacity_people)
+                .bind(sp.area_sqm)
+                .bind(sp.ceiling_height_m)
+                .bind(&sp.power_available)
+                .bind(&sp.loading_access)
+                .bind(&sp.rigging_points)
+                .bind(&sp.acoustics_notes)
+                .bind(sp.internal_transfer_minutes)
+                .bind(&sp.notes)
+                .bind(if sp.active { 1 } else { 0 })
+                .bind(sp.sort_order)
+                .bind(&sp.created_at)
+                .bind(&sp.updated_at)
+                .bind(&sp.deleted_at)
+                .bind(&sp.created_by),
+            )
+            .await?;
+        }
+
+        // Reseta is_primary antes de sincronizar contatos para evitar colisão em idx_venue_contact_primary_active
+        self.execute(
+            sqlx::query(
+                "UPDATE venue_contact SET is_primary = 0 WHERE tenant_id = ? AND venue_id = ? AND deleted_at IS NULL",
+            )
+            .bind(&venue.tenant_id)
+            .bind(&venue.id),
+        )
+        .await?;
+
+        if !contacts.is_empty() {
+            let placeholders = vec!["?"; contacts.len()].join(", ");
+            let sql_soft_del = format!(
+                "UPDATE venue_contact SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND venue_id = ? AND deleted_at IS NULL AND id NOT IN ({placeholders})"
+            );
+            let mut q = sqlx::query(&sql_soft_del)
+                .bind(&venue.updated_at)
+                .bind(&venue.updated_at)
+                .bind(&venue.tenant_id)
+                .bind(&venue.id);
+            for ct in contacts {
+                q = q.bind(&ct.id);
+            }
+            self.execute(q).await?;
+        } else {
+            self.execute(
+                sqlx::query(
+                    "UPDATE venue_contact SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND venue_id = ? AND deleted_at IS NULL",
+                )
+                .bind(&venue.updated_at)
+                .bind(&venue.updated_at)
+                .bind(&venue.tenant_id)
+                .bind(&venue.id),
+            )
+            .await?;
+        }
+
+        for ct in contacts {
+            self.execute(
+                sqlx::query(
+                    r#"
+                    INSERT INTO venue_contact (
+                        id, tenant_id, venue_id, name, email, phone, role, is_primary,
+                        created_at, updated_at, deleted_at, created_by
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        name = excluded.name,
+                        email = excluded.email,
+                        phone = excluded.phone,
+                        role = excluded.role,
+                        is_primary = excluded.is_primary,
+                        updated_at = excluded.updated_at,
+                        deleted_at = NULL
+                    "#,
+                )
+                .bind(&ct.id)
+                .bind(&ct.tenant_id)
+                .bind(&ct.venue_id)
+                .bind(&ct.name)
+                .bind(&ct.email)
+                .bind(&ct.phone)
+                .bind(&ct.role)
+                .bind(if ct.is_primary { 1 } else { 0 })
+                .bind(&ct.created_at)
+                .bind(&ct.updated_at)
+                .bind(&ct.deleted_at)
+                .bind(&ct.created_by),
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn set_active(
+        &self,
+        tenant_id: &str,
+        id: &str,
+        active: bool,
+        updated_at: &str,
+    ) -> Result<()> {
+        self.execute(
+            sqlx::query(
+                "UPDATE venue SET active = ?, updated_at = ? WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL",
+            )
+            .bind(if active { 1 } else { 0 })
+            .bind(updated_at)
+            .bind(tenant_id)
+            .bind(id),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn soft_delete(&self, tenant_id: &str, id: &str, deleted_at: &str) -> Result<()> {
+        self.execute(
+            sqlx::query(
+                "UPDATE venue SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL",
+            )
+            .bind(deleted_at)
+            .bind(deleted_at)
+            .bind(tenant_id)
+            .bind(id),
+        )
+        .await?;
+        self.execute(
+            sqlx::query(
+                "UPDATE venue_space SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND venue_id = ? AND deleted_at IS NULL",
+            )
+            .bind(deleted_at)
+            .bind(deleted_at)
+            .bind(tenant_id)
+            .bind(id),
+        )
+        .await?;
+        self.execute(
+            sqlx::query(
+                "UPDATE venue_contact SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND venue_id = ? AND deleted_at IS NULL",
+            )
+            .bind(deleted_at)
+            .bind(deleted_at)
+            .bind(tenant_id)
+            .bind(id),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn count_active(&self, tenant_id: &str) -> Result<u64> {
+        let row = self
+            .fetch_one(
+                sqlx::query(
+                    "SELECT COUNT(*) as count FROM venue WHERE tenant_id = ? AND deleted_at IS NULL",
+                )
+                .bind(tenant_id),
+            )
+            .await?;
+        let count: i64 = row.get("count");
+        Ok(count as u64)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2441,6 +3105,7 @@ mod tests {
                 users: store.clone(),
                 audit: failing_audit,
                 customers: store.clone(),
+                venues: store,
             }))
         }
     }
@@ -2463,6 +3128,7 @@ mod tests {
             users: Arc::new(normal_store.clone()),
             audit: Arc::new(normal_store.clone()),
             customers: Arc::new(normal_store.clone()),
+            venues: Arc::new(normal_store.clone()),
             tx_manager: Some(tx_manager),
         };
         let services = CoreServices::new(bundle.clone());
@@ -3001,6 +3667,7 @@ mod tests {
             users: store.clone(),
             audit: store.clone(),
             customers: store.clone(),
+            venues: store.clone(),
             tx_manager: None,
         };
 

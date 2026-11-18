@@ -387,6 +387,13 @@ pub fn run() {
             commands::customers::set_customer_active,
             commands::customers::delete_customer,
             commands::customers::add_customer_role,
+            commands::venues::list_venues,
+            commands::venues::get_venue,
+            commands::venues::create_venue,
+            commands::venues::update_venue,
+            commands::venues::set_venue_active,
+            commands::venues::delete_venue,
+            commands::venues::check_venue_duplicate_name_city,
         ])
         .run(tauri::generate_context!());
 
