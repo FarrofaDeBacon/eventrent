@@ -133,6 +133,9 @@ pub struct VenueSpace {
     pub loading_access: Option<String>,
     pub rigging_points: Option<String>,
     pub acoustics_notes: Option<String>,
+    pub setup_hours_notes: Option<String>,
+    pub noise_restrictions_notes: Option<String>,
+    pub load_dimensions_notes: Option<String>,
     pub notes: Option<String>,
     pub active: bool,
     pub sort_order: i64,
@@ -215,6 +218,9 @@ pub struct VenueSpaceInput {
     pub loading_access: Option<String>,
     pub rigging_points: Option<String>,
     pub acoustics_notes: Option<String>,
+    pub setup_hours_notes: Option<String>,
+    pub noise_restrictions_notes: Option<String>,
+    pub load_dimensions_notes: Option<String>,
     pub notes: Option<String>,
     #[serde(default = "default_true")]
     pub active: bool,
@@ -421,16 +427,16 @@ pub fn validate_venue_spaces(spaces: &mut [VenueSpaceInput]) -> CoreResult<()> {
             }
         }
         if let Some(area) = space.area_sqm {
-            if !area.is_finite() || !(0.0..=10_000_000.0).contains(&area) {
+            if !area.is_finite() || area <= 0.0 || area > 1_000_000.0 {
                 return Err(CoreError::Validation(
-                    "Área (m²) deve ser um número válido entre 0 e 10.000.000.".to_string(),
+                    "Área (m²) deve ser maior que 0 e no máximo 1.000.000.".to_string(),
                 ));
             }
         }
         if let Some(height) = space.ceiling_height_m {
-            if !height.is_finite() || !(0.0..=500.0).contains(&height) {
+            if !height.is_finite() || height <= 0.0 || height > 100.0 {
                 return Err(CoreError::Validation(
-                    "Pé-direito (m) deve ser um número válido entre 0 e 500.".to_string(),
+                    "Pé-direito (m) deve ser maior que 0 e no máximo 100.".to_string(),
                 ));
             }
         }
@@ -455,6 +461,24 @@ pub fn validate_venue_spaces(spaces: &mut [VenueSpaceInput]) -> CoreResult<()> {
         space.acoustics_notes = validate_optional_text(
             space.acoustics_notes.take(),
             "Acústica",
+            MAX_VENUE_TECH_FIELD_LEN,
+            true,
+        )?;
+        space.setup_hours_notes = validate_optional_text(
+            space.setup_hours_notes.take(),
+            "Horários de montagem",
+            MAX_VENUE_TECH_FIELD_LEN,
+            true,
+        )?;
+        space.noise_restrictions_notes = validate_optional_text(
+            space.noise_restrictions_notes.take(),
+            "Restrições de ruído",
+            MAX_VENUE_TECH_FIELD_LEN,
+            true,
+        )?;
+        space.load_dimensions_notes = validate_optional_text(
+            space.load_dimensions_notes.take(),
+            "Dimensões de acesso de carga",
             MAX_VENUE_TECH_FIELD_LEN,
             true,
         )?;

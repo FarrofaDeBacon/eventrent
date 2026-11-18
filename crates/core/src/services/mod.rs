@@ -2448,6 +2448,9 @@ impl CoreServices {
                 loading_access: sp.loading_access,
                 rigging_points: sp.rigging_points,
                 acoustics_notes: sp.acoustics_notes,
+                setup_hours_notes: sp.setup_hours_notes,
+                noise_restrictions_notes: sp.noise_restrictions_notes,
+                load_dimensions_notes: sp.load_dimensions_notes,
                 notes: sp.notes,
                 active: sp.active,
                 sort_order: if sp.sort_order == 0 {
@@ -2646,6 +2649,9 @@ impl CoreServices {
                         loading_access: sp.loading_access,
                         rigging_points: sp.rigging_points,
                         acoustics_notes: sp.acoustics_notes,
+                        setup_hours_notes: sp.setup_hours_notes,
+                        noise_restrictions_notes: sp.noise_restrictions_notes,
+                        load_dimensions_notes: sp.load_dimensions_notes,
                         notes: sp.notes,
                         active: sp.active,
                         sort_order: if sp.sort_order == 0 {

@@ -376,6 +376,9 @@ export interface VenueSpace {
   loading_access?: string | null;
   rigging_points?: string | null;
   acoustics_notes?: string | null;
+  setup_hours_notes?: string | null;
+  noise_restrictions_notes?: string | null;
+  load_dimensions_notes?: string | null;
   notes?: string | null;
   active: boolean;
   sort_order: number;
@@ -433,6 +436,9 @@ export interface VenueSpaceInput {
   loading_access?: string | null;
   rigging_points?: string | null;
   acoustics_notes?: string | null;
+  setup_hours_notes?: string | null;
+  noise_restrictions_notes?: string | null;
+  load_dimensions_notes?: string | null;
   notes?: string | null;
   active?: boolean;
   sort_order?: number;

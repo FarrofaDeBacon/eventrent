@@ -93,6 +93,9 @@
     loading_access: string;
     rigging_points: string;
     acoustics_notes: string;
+    setup_hours_notes: string;
+    noise_restrictions_notes: string;
+    load_dimensions_notes: string;
     notes: string;
     active: boolean;
     techExpanded: boolean;
@@ -134,6 +137,9 @@
       loading_access: sp.loading_access ?? "",
       rigging_points: sp.rigging_points ?? "",
       acoustics_notes: sp.acoustics_notes ?? "",
+      setup_hours_notes: sp.setup_hours_notes ?? "",
+      noise_restrictions_notes: sp.noise_restrictions_notes ?? "",
+      load_dimensions_notes: sp.load_dimensions_notes ?? "",
       notes: sp.notes ?? "",
       active: sp.active,
       techExpanded: false,
@@ -187,6 +193,9 @@
         loading_access: "",
         rigging_points: "",
         acoustics_notes: "",
+        setup_hours_notes: "",
+        noise_restrictions_notes: "",
+        load_dimensions_notes: "",
         notes: "",
         active: true,
         techExpanded: false,
@@ -292,6 +301,9 @@
         loading_access: sp.loading_access.trim() || null,
         rigging_points: sp.rigging_points.trim() || null,
         acoustics_notes: sp.acoustics_notes.trim() || null,
+        setup_hours_notes: sp.setup_hours_notes.trim() || null,
+        noise_restrictions_notes: sp.noise_restrictions_notes.trim() || null,
+        load_dimensions_notes: sp.load_dimensions_notes.trim() || null,
         notes: sp.notes.trim() || null,
         active: sp.active,
         sort_order: i,
@@ -797,6 +809,57 @@
                       rows={2}
                       disabled={readOnly}
                       bind:value={sp.acoustics_notes}
+                      class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+                    ></textarea>
+                  </div>
+
+                  <div class="space-y-1.5">
+                    <label
+                      for={`sp-setup-hours-${sp.localKey}`}
+                      class="text-sm font-medium"
+                    >
+                      Horários de montagem
+                    </label>
+                    <textarea
+                      id={`sp-setup-hours-${sp.localKey}`}
+                      rows={2}
+                      placeholder="Ex.: Montagem noturna 22h-06h"
+                      disabled={readOnly}
+                      bind:value={sp.setup_hours_notes}
+                      class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+                    ></textarea>
+                  </div>
+
+                  <div class="space-y-1.5">
+                    <label
+                      for={`sp-noise-${sp.localKey}`}
+                      class="text-sm font-medium"
+                    >
+                      Restrições de ruído
+                    </label>
+                    <textarea
+                      id={`sp-noise-${sp.localKey}`}
+                      rows={2}
+                      placeholder="Ex.: Limite de 85 dB após 22h"
+                      disabled={readOnly}
+                      bind:value={sp.noise_restrictions_notes}
+                      class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+                    ></textarea>
+                  </div>
+
+                  <div class="space-y-1.5 sm:col-span-2">
+                    <label
+                      for={`sp-load-dim-${sp.localKey}`}
+                      class="text-sm font-medium"
+                    >
+                      Dimensões de acesso da carga
+                    </label>
+                    <textarea
+                      id={`sp-load-dim-${sp.localKey}`}
+                      rows={2}
+                      placeholder="Ex.: Porta 3,20m x 4,00m; elevador carga 2.000 kg"
+                      disabled={readOnly}
+                      bind:value={sp.load_dimensions_notes}
                       class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
                     ></textarea>
                   </div>

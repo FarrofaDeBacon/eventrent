@@ -3662,6 +3662,9 @@ mod unit_tests {
                 loading_access: None,
                 rigging_points: None,
                 acoustics_notes: None,
+                setup_hours_notes: None,
+                noise_restrictions_notes: None,
+                load_dimensions_notes: None,
                 notes: None,
                 active: true,
                 sort_order: 0,
@@ -3676,6 +3679,9 @@ mod unit_tests {
                 loading_access: None,
                 rigging_points: None,
                 acoustics_notes: None,
+                setup_hours_notes: None,
+                noise_restrictions_notes: None,
+                load_dimensions_notes: None,
                 notes: None,
                 active: true,
                 sort_order: 1,
@@ -3697,6 +3703,9 @@ mod unit_tests {
                 loading_access: None,
                 rigging_points: None,
                 acoustics_notes: None,
+                setup_hours_notes: None,
+                noise_restrictions_notes: None,
+                load_dimensions_notes: None,
                 notes: None,
                 active: true,
                 sort_order: i as i64,
@@ -3717,6 +3726,9 @@ mod unit_tests {
             loading_access: None,
             rigging_points: None,
             acoustics_notes: None,
+            setup_hours_notes: None,
+            noise_restrictions_notes: None,
+            load_dimensions_notes: None,
             notes: None,
             active: true,
             sort_order: 0,
@@ -3725,6 +3737,56 @@ mod unit_tests {
             validate_venue_spaces(&mut long_space_name),
             Err(CoreError::Validation(_))
         ));
+
+        // Limites de area_sqm (0 < area <= 1_000_000), ceiling_height_m (0 < h <= 100) e notas técnicas (<= 2000)
+        let base_space = VenueSpaceInput {
+            id: None,
+            name: "Salão Principal".to_string(),
+            capacity_people: Some(500),
+            area_sqm: Some(1_000_000.0),
+            ceiling_height_m: Some(100.0),
+            power_available: None,
+            loading_access: None,
+            rigging_points: None,
+            acoustics_notes: None,
+            setup_hours_notes: Some("08h às 18h".to_string()),
+            noise_restrictions_notes: Some("85 dB".to_string()),
+            load_dimensions_notes: Some("3,2m x 4,0m".to_string()),
+            notes: None,
+            active: true,
+            sort_order: 0,
+        };
+        assert!(validate_venue_spaces(&mut [base_space.clone()]).is_ok());
+
+        for bad_area in [0.0, -5.0, 1_000_000.1] {
+            let mut s = base_space.clone();
+            s.area_sqm = Some(bad_area);
+            assert!(matches!(
+                validate_venue_spaces(&mut [s]),
+                Err(CoreError::Validation(_))
+            ));
+        }
+        for bad_height in [0.0, -1.0, 100.1] {
+            let mut s = base_space.clone();
+            s.ceiling_height_m = Some(bad_height);
+            assert!(matches!(
+                validate_venue_spaces(&mut [s]),
+                Err(CoreError::Validation(_))
+            ));
+        }
+        let too_long_note = "N".repeat(crate::domain::MAX_VENUE_TECH_FIELD_LEN + 1);
+        for field_idx in 0..3 {
+            let mut s = base_space.clone();
+            match field_idx {
+                0 => s.setup_hours_notes = Some(too_long_note.clone()),
+                1 => s.noise_restrictions_notes = Some(too_long_note.clone()),
+                _ => s.load_dimensions_notes = Some(too_long_note.clone()),
+            }
+            assert!(matches!(
+                validate_venue_spaces(&mut [s]),
+                Err(CoreError::Validation(_))
+            ));
+        }
 
         let mut too_many_contacts: Vec<VenueContactInput> = (0..=MAX_VENUE_CONTACTS)
             .map(|i| VenueContactInput {

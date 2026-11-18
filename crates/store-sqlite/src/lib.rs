@@ -2217,6 +2217,9 @@ fn row_to_venue_space(r: &sqlx::sqlite::SqliteRow) -> VenueSpace {
         loading_access: r.get("loading_access"),
         rigging_points: r.get("rigging_points"),
         acoustics_notes: r.get("acoustics_notes"),
+        setup_hours_notes: r.get("setup_hours_notes"),
+        noise_restrictions_notes: r.get("noise_restrictions_notes"),
+        load_dimensions_notes: r.get("load_dimensions_notes"),
         notes: r.get("notes"),
         active: active_int != 0,
         sort_order: r.get("sort_order"),
@@ -2277,7 +2280,8 @@ impl VenueStore for SqliteStore {
                     r#"
                     SELECT id, tenant_id, venue_id, name, name_normalized, capacity_people,
                            area_sqm, ceiling_height_m, power_available, loading_access,
-                           rigging_points, acoustics_notes, notes,
+                           rigging_points, acoustics_notes, setup_hours_notes,
+                           noise_restrictions_notes, load_dimensions_notes, notes,
                            active, sort_order, created_at, updated_at, deleted_at, created_by
                     FROM venue_space
                     WHERE tenant_id = ? AND venue_id = ? AND deleted_at IS NULL
@@ -2508,10 +2512,11 @@ impl VenueStore for SqliteStore {
                     INSERT INTO venue_space (
                         id, tenant_id, venue_id, name, name_normalized, capacity_people, area_sqm,
                         ceiling_height_m, power_available, loading_access, rigging_points,
-                        acoustics_notes, notes, active, sort_order,
+                        acoustics_notes, setup_hours_notes, noise_restrictions_notes,
+                        load_dimensions_notes, notes, active, sort_order,
                         created_at, updated_at, deleted_at, created_by
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     "#,
                 )
                 .bind(&sp.id)
@@ -2526,6 +2531,9 @@ impl VenueStore for SqliteStore {
                 .bind(&sp.loading_access)
                 .bind(&sp.rigging_points)
                 .bind(&sp.acoustics_notes)
+                .bind(&sp.setup_hours_notes)
+                .bind(&sp.noise_restrictions_notes)
+                .bind(&sp.load_dimensions_notes)
                 .bind(&sp.notes)
                 .bind(if sp.active { 1 } else { 0 })
                 .bind(sp.sort_order)
@@ -2642,10 +2650,11 @@ impl VenueStore for SqliteStore {
                     INSERT INTO venue_space (
                         id, tenant_id, venue_id, name, name_normalized, capacity_people, area_sqm,
                         ceiling_height_m, power_available, loading_access, rigging_points,
-                        acoustics_notes, notes, active, sort_order,
+                        acoustics_notes, setup_hours_notes, noise_restrictions_notes,
+                        load_dimensions_notes, notes, active, sort_order,
                         created_at, updated_at, deleted_at, created_by
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         name = excluded.name,
                         name_normalized = excluded.name_normalized,
@@ -2656,6 +2665,9 @@ impl VenueStore for SqliteStore {
                         loading_access = excluded.loading_access,
                         rigging_points = excluded.rigging_points,
                         acoustics_notes = excluded.acoustics_notes,
+                        setup_hours_notes = excluded.setup_hours_notes,
+                        noise_restrictions_notes = excluded.noise_restrictions_notes,
+                        load_dimensions_notes = excluded.load_dimensions_notes,
                         notes = excluded.notes,
                         active = excluded.active,
                         sort_order = excluded.sort_order,
@@ -2675,6 +2687,9 @@ impl VenueStore for SqliteStore {
                 .bind(&sp.loading_access)
                 .bind(&sp.rigging_points)
                 .bind(&sp.acoustics_notes)
+                .bind(&sp.setup_hours_notes)
+                .bind(&sp.noise_restrictions_notes)
+                .bind(&sp.load_dimensions_notes)
                 .bind(&sp.notes)
                 .bind(if sp.active { 1 } else { 0 })
                 .bind(sp.sort_order)
@@ -4975,6 +4990,9 @@ mod tests {
                             loading_access: None,
                             rigging_points: None,
                             acoustics_notes: None,
+                            setup_hours_notes: None,
+                            noise_restrictions_notes: None,
+                            load_dimensions_notes: None,
                             notes: None,
                             active: true,
                             sort_order: 0,
@@ -4989,6 +5007,9 @@ mod tests {
                             loading_access: None,
                             rigging_points: None,
                             acoustics_notes: None,
+                            setup_hours_notes: None,
+                            noise_restrictions_notes: None,
+                            load_dimensions_notes: None,
                             notes: None,
                             active: true,
                             sort_order: 1,
@@ -5055,6 +5076,9 @@ mod tests {
                             loading_access: None,
                             rigging_points: None,
                             acoustics_notes: None,
+                            setup_hours_notes: None,
+                            noise_restrictions_notes: None,
+                            load_dimensions_notes: None,
                             notes: None,
                             active: true,
                             sort_order: 0,
@@ -5069,6 +5093,9 @@ mod tests {
                             loading_access: None,
                             rigging_points: None,
                             acoustics_notes: None,
+                            setup_hours_notes: None,
+                            noise_restrictions_notes: None,
+                            load_dimensions_notes: None,
                             notes: None,
                             active: true,
                             sort_order: 1,
