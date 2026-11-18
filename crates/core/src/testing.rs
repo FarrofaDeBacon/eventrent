@@ -2647,16 +2647,6 @@ mod unit_tests {
             async fn upsert(&self, _: &crate::domain::TenantSetting) -> crate::error::Result<()> {
                 unreachable!()
             }
-            async fn ensure_default_if_missing(
-                &self,
-                _: &str,
-                _: &str,
-                _: &str,
-                _: &str,
-                _: &str,
-            ) -> crate::error::Result<()> {
-                unreachable!()
-            }
         }
 
         let dummy = Arc::new(DummyStore);

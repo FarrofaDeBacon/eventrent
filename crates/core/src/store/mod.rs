@@ -203,14 +203,6 @@ pub trait VenueStore: Send + Sync {
 pub trait TenantSettingStore: Send + Sync {
     async fn get_many(&self, tenant_id: &str, keys: &[&str]) -> Result<Vec<TenantSetting>>;
     async fn upsert(&self, setting: &TenantSetting) -> Result<()>;
-    async fn ensure_default_if_missing(
-        &self,
-        tenant_id: &str,
-        id: &str,
-        key: &str,
-        value: &str,
-        now: &str,
-    ) -> Result<()>;
 }
 
 #[derive(Clone)]

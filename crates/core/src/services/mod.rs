@@ -12,12 +12,11 @@ use crate::domain::{
     RoleWithPermissions, SessionInfo, Tenant, TenantBranding, TenantSetting,
     UpdateAllocationSettingsInput, UpdateBrandingInput, UpdateCustomerInput, UpdateUserInput,
     UpdateVenueInput, UserRecord, UserWithRole, Venue, VenueContact, VenueCursor, VenueFilter,
-    VenuePage, VenueSpace, VenueWithDetails, DEFAULT_INTERNAL_TRANSFER_MINUTES,
-    DEFAULT_SETUP_MINUTES, DEFAULT_TEARDOWN_MINUTES, DEFAULT_TURNOVER_BUFFER_MINUTES,
-    PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ,
-    PERM_ROLE_READ, PERM_SETTINGS_MANAGE, PERM_SETTINGS_READ, PERM_SUPPLIER_MANAGE,
-    PERM_SUPPLIER_READ, PERM_USER_MANAGE, PERM_USER_READ, PERM_VENUE_MANAGE, PERM_VENUE_READ,
-    ROLE_SLUG_OWNER, SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES, SETTING_DEFAULT_SETUP_MINUTES,
+    VenuePage, VenueSpace, VenueWithDetails, MAX_ALLOCATION_MINUTES, PERM_BRANDING_MANAGE,
+    PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ,
+    PERM_SETTINGS_MANAGE, PERM_SETTINGS_READ, PERM_SUPPLIER_MANAGE, PERM_SUPPLIER_READ,
+    PERM_USER_MANAGE, PERM_USER_READ, PERM_VENUE_MANAGE, PERM_VENUE_READ, ROLE_SLUG_OWNER,
+    SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES, SETTING_DEFAULT_SETUP_MINUTES,
     SETTING_DEFAULT_TEARDOWN_MINUTES, SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES, SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
@@ -2952,80 +2951,63 @@ impl CoreServices {
         session: &SessionInfo,
     ) -> Result<AllocationSettings> {
         self.check_session_and_permission(session, PERM_SETTINGS_READ)?;
-        let session_clone = session.clone();
-        let now = Utc::now().to_rfc3339();
+        self.get_allocation_settings_for_tenant(&session.tenant_id)
+            .await
+    }
 
-        self.run_transaction(|stores| {
-            let session = session_clone.clone();
-            let now = now.clone();
-            Box::pin(async move {
-                let defaults = [
-                    (
-                        SETTING_DEFAULT_SETUP_MINUTES,
-                        DEFAULT_SETUP_MINUTES.to_string(),
-                    ),
-                    (
-                        SETTING_DEFAULT_TEARDOWN_MINUTES,
-                        DEFAULT_TEARDOWN_MINUTES.to_string(),
-                    ),
-                    (
-                        SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
-                        DEFAULT_TURNOVER_BUFFER_MINUTES.to_string(),
-                    ),
-                    (
-                        SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES,
-                        DEFAULT_INTERNAL_TRANSFER_MINUTES.to_string(),
-                    ),
-                ];
+    /// Leitura interna sem sessão (utilizada pelo motor de disponibilidade da Fase 3).
+    /// Nunca grava no banco: quando a chave não existe ou tem valor inválido,
+    /// devolve o padrão em memória (registrando aviso no log no caso inválido).
+    pub async fn get_allocation_settings_for_tenant(
+        &self,
+        tenant_id: &str,
+    ) -> Result<AllocationSettings> {
+        let rows = self
+            .stores
+            .settings
+            .get_many(
+                tenant_id,
+                &[
+                    SETTING_DEFAULT_SETUP_MINUTES,
+                    SETTING_DEFAULT_TEARDOWN_MINUTES,
+                    SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
+                    SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES,
+                ],
+            )
+            .await?;
 
-                for (key, val) in &defaults {
-                    stores
-                        .settings()
-                        .ensure_default_if_missing(
-                            &session.tenant_id,
-                            &Uuid::now_v7().to_string(),
-                            key,
-                            val,
-                            &now,
-                        )
-                        .await?;
+        let mut result = AllocationSettings::default();
+        for row in rows {
+            let parsed_opt = row
+                .setting_value
+                .trim()
+                .parse::<i64>()
+                .ok()
+                .filter(|v| (0..=MAX_ALLOCATION_MINUTES).contains(v));
+
+            let Some(parsed) = parsed_opt else {
+                tracing::warn!(
+                    tenant_id = %tenant_id,
+                    setting_key = %row.setting_key,
+                    raw_value = %row.setting_value,
+                    "Valor inválido em tenant_setting; usando padrão em memória."
+                );
+                continue;
+            };
+
+            match row.setting_key.as_str() {
+                SETTING_DEFAULT_SETUP_MINUTES => result.default_setup_minutes = parsed,
+                SETTING_DEFAULT_TEARDOWN_MINUTES => result.default_teardown_minutes = parsed,
+                SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES => {
+                    result.default_turnover_buffer_minutes = parsed
                 }
-
-                let rows = stores
-                    .settings()
-                    .get_many(
-                        &session.tenant_id,
-                        &[
-                            SETTING_DEFAULT_SETUP_MINUTES,
-                            SETTING_DEFAULT_TEARDOWN_MINUTES,
-                            SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
-                            SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES,
-                        ],
-                    )
-                    .await?;
-
-                let mut result = AllocationSettings::default();
-                for row in rows {
-                    if let Ok(parsed) = row.setting_value.trim().parse::<i64>() {
-                        match row.setting_key.as_str() {
-                            SETTING_DEFAULT_SETUP_MINUTES => result.default_setup_minutes = parsed,
-                            SETTING_DEFAULT_TEARDOWN_MINUTES => {
-                                result.default_teardown_minutes = parsed
-                            }
-                            SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES => {
-                                result.default_turnover_buffer_minutes = parsed
-                            }
-                            SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES => {
-                                result.default_internal_transfer_minutes = parsed
-                            }
-                            _ => {}
-                        }
-                    }
+                SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES => {
+                    result.default_internal_transfer_minutes = parsed
                 }
-                Ok(result)
-            })
-        })
-        .await
+                _ => {}
+            }
+        }
+        Ok(result)
     }
 
     pub async fn update_allocation_settings(

@@ -2895,32 +2895,6 @@ impl TenantSettingStore for SqliteStore {
         .await?;
         Ok(())
     }
-
-    async fn ensure_default_if_missing(
-        &self,
-        tenant_id: &str,
-        id: &str,
-        key: &str,
-        value: &str,
-        now: &str,
-    ) -> Result<()> {
-        self.execute(
-            sqlx::query(
-                r#"
-                INSERT INTO tenant_setting (id, tenant_id, setting_key, setting_value, updated_at, updated_by)
-                VALUES (?, ?, ?, ?, ?, NULL)
-                ON CONFLICT(tenant_id, setting_key) DO NOTHING
-                "#,
-            )
-            .bind(id)
-            .bind(tenant_id)
-            .bind(key)
-            .bind(value)
-            .bind(now),
-        )
-        .await?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -5234,7 +5208,7 @@ mod tests {
             ..owner_session.clone()
         };
 
-        // 1. Primeira leitura garante defaults idempotentes (30, 20, 60)
+        // 1. Primeira leitura devolve defaults em memória SEM gravar nada no banco
         let s1 = services
             .get_allocation_settings(&readonly_session)
             .await
@@ -5244,12 +5218,24 @@ mod tests {
         assert_eq!(s1.default_turnover_buffer_minutes, 60);
         assert_eq!(s1.default_internal_transfer_minutes, 20);
 
-        // Segunda chamada idempotente não falha
-        let s2 = services
-            .get_allocation_settings(&readonly_session)
+        let count_after_read: i64 =
+            sqlx::query("SELECT COUNT(*) as total FROM tenant_setting WHERE tenant_id = ?")
+                .bind("tenant-set-1")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .get("total");
+        assert_eq!(
+            count_after_read, 0,
+            "get_allocation_settings não pode gravar no banco quando chave está ausente"
+        );
+
+        // Leitura interna sem sessão devolve o mesmo padrão
+        let internal_s1 = services
+            .get_allocation_settings_for_tenant("tenant-set-1")
             .await
             .unwrap();
-        assert_eq!(s1, s2);
+        assert_eq!(s1, internal_s1);
 
         // 2. Sem settings:manage não pode alterar
         let forbidden = services
@@ -5301,5 +5287,30 @@ mod tests {
         let summary: String = audit_rows[0].get("summary");
         assert!(summary.contains("montagem=45min"));
         assert!(summary.contains("deslocamento=25min"));
+
+        // 5. Valor inválido no banco (não numérico ou > 240) cai para o padrão em memória com aviso no log
+        sqlx::query(
+            "UPDATE tenant_setting SET setting_value = 'nao-numerico' WHERE tenant_id = ? AND setting_key = 'allocation.default_setup_minutes'",
+        )
+        .bind("tenant-set-1")
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE tenant_setting SET setting_value = '999' WHERE tenant_id = ? AND setting_key = 'allocation.default_internal_transfer_minutes'",
+        )
+        .bind("tenant-set-1")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let fallback = services
+            .get_allocation_settings_for_tenant("tenant-set-1")
+            .await
+            .unwrap();
+        assert_eq!(fallback.default_setup_minutes, 30);
+        assert_eq!(fallback.default_teardown_minutes, 30);
+        assert_eq!(fallback.default_turnover_buffer_minutes, 90);
+        assert_eq!(fallback.default_internal_transfer_minutes, 20);
     }
 }
