@@ -141,3 +141,19 @@ Criados de forma idempotente por `ensure_system_roles` para cada tenant:
 - **Telefones em E.164 e Seletor de DDI**:
   - Todo telefone é normalizado e armazenado em formato **E.164 com prefixo `+`** (`+55...` para Brasil; `+DDI...` com 8 a 15 dígitos para outros países).
   - No `core`, qualquer telefone informado **sem `+`** é tratado como número brasileiro (ganha `+55` e exige 10 ou 11 dígitos). Por isso, o frontend disponibiliza seletor de DDI (padrão `+55`) em todos os campos de telefone e envia números de outros países sempre em E.164 com `+`.
+
+## 6. Locais de Evento, Espaços e Configurações de Alocação (Fase 1D)
+
+- **Locais e Espaços**:
+  - Um local (`venue`) pode ter até **100 espaços** (`venue_space`) e **20 contatos** (`venue_contact`).
+  - Nomes de espaços são únicos dentro do mesmo local (comparação normalizada sem acentos e sem distinção de maiúsculas).
+  - Na atualização de um local (`update_venue`), o backend preserva os `id`s estáveis dos espaços existentes informados pelo cliente (rejeitando `id` desconhecido ou pertencente a outro local).
+  - **Regra Obrigatória da Fase 4 (Eventos e Contratos)**: Espaços já referenciados por eventos/orçamentos/contratos **não poderão ser excluídos** na atualização do local nem o local poderá sofrer exclusão lógica; o usuário deverá utilizar a desativação (`active = false`).
+  - Duplicidade de `nome + cidade` dentro do mesmo tenant gera **aviso não bloqueante** na interface para permitir múltiplas unidades quando necessário.
+- **Tempos Operacionais e Configurações do Tenant (`tenant_setting`)**:
+  - Chaves padrão: `allocation.default_setup_minutes` (padrão `30`), `allocation.default_teardown_minutes` (padrão `20`) e `allocation.default_turnover_buffer_minutes` (padrão `60`).
+  - Todos os tempos operacionais (`setup`, `teardown`, `turnover_buffer` e `internal_transfer_minutes` por espaço) aceitam valores inteiros entre `0` e `240` minutos.
+  - Leitura exige `settings:read` e alteração exige `settings:manage` com registro em `audit_log`.
+- **Autorização (RBAC) de Locais**:
+  - `venue:read`: **Proprietário**, **Comercial**, **Estoque**, **Técnico**, **Financeiro**.
+  - `venue:manage`: **Proprietário**, **Comercial**, **Estoque**.

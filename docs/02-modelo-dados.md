@@ -259,3 +259,12 @@ Toda migração já incorporada à branch principal (`main`) torna-se **estritam
 A Fase 1B.2-rev adicionou a migração incremental `crates/store-sqlite/migrations/0005_customers_rev.sql`, que passará automaticamente a integrar o conjunto congelado após o merge na `main`.
 Qualquer alteração de esquema estrutural no banco de dados (novas tabelas, novas colunas, índices ou triggers) deve obrigatoriamente ser adicionada como uma nova migração incremental sequencial (`0006_...`, etc.).
 O pipeline de CI (`.github/workflows/ci.yml`) executa `node scripts/check-migrations.js` comparando contra `origin/main` e bloqueia a execução caso qualquer arquivo de migração preexistente na `main` seja modificado, removido ou renomeado.
+
+## 8. Locais de Evento, Espaços, Contatos e Configurações (Fase 1D — Migração `0007`)
+
+A migração `0007_venues_and_settings.sql` introduz:
+
+- `venue`: cadastro de locais de evento por `tenant_id`, com endereço estruturado opcional (`country` padrão `BR`), notas operacionais (`parking_notes`, `loading_dock_notes`, `access_hours`, `notes`), `search_text`, `name_sort`, `active`, `deleted_at` e `UNIQUE (tenant_id, id)`.
+- `venue_space`: espaços/pavilhões internos do local com FK composta `FOREIGN KEY (tenant_id, venue_id) REFERENCES venue(tenant_id, id) ON DELETE CASCADE`, ficha técnica opcional (`capacity_people`, `area_sqm`, `ceiling_height_m`, `power_available`, `loading_access`, `rigging_points`, `acoustics_notes`), `internal_transfer_minutes` (`0..=240`, padrão `0`) e índice único parcial `idx_venue_space_name_active` em `(tenant_id, venue_id, name_normalized) WHERE deleted_at IS NULL`.
+- `venue_contact`: contatos do local com FK composta `(tenant_id, venue_id)` e índice único parcial `idx_venue_contact_primary_active` (`WHERE is_primary = 1 AND deleted_at IS NULL`).
+- `tenant_setting`: par chave-valor `(tenant_id, setting_key)` com `UNIQUE (tenant_id, setting_key)` para configurações operacionais do tenant. Nenhum registro é inserido pela migração; defaults são garantidos de forma idempotente pelo código.
