@@ -5,9 +5,11 @@ pub mod customer;
 pub mod document;
 pub mod permission;
 pub mod role;
+pub mod settings;
 pub mod tenant;
 pub mod user;
 pub mod validation;
+pub mod venue;
 
 pub use audit::AuditLogEntry;
 pub use branding::{BrandingValidator, PublicBranding, TenantBranding, UpdateBrandingInput};
@@ -17,8 +19,8 @@ pub use customer::{
     validate_addresses, validate_contacts, validate_customer_common_fields,
     validate_roles_and_categories, CreateAddressInput, CreateContactInput, CreateCustomerInput,
     Customer, CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter, CustomerPage,
-    CustomerRoleFilter, CustomerWithDetails, PersonType, SupplierCategory, UpdateAddressInput,
-    UpdateContactInput, UpdateCustomerInput,
+    CustomerRole, CustomerRoleFilter, CustomerWithDetails, PersonType, SupplierCategory,
+    UpdateAddressInput, UpdateContactInput, UpdateCustomerInput,
 };
 pub use document::{
     format_cnpj, format_cpf, mask_document_for_audit, mask_email_for_audit,
@@ -28,6 +30,13 @@ pub use document::{
 };
 pub use permission::*;
 pub use role::{Role, RoleWithPermissions};
+pub use settings::{
+    validate_allocation_settings, AllocationSettings, TenantSetting, UpdateAllocationSettingsInput,
+    DEFAULT_INTERNAL_TRANSFER_MINUTES, DEFAULT_SETUP_MINUTES, DEFAULT_TEARDOWN_MINUTES,
+    DEFAULT_TURNOVER_BUFFER_MINUTES, MAX_ALLOCATION_MINUTES,
+    SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES, SETTING_DEFAULT_SETUP_MINUTES,
+    SETTING_DEFAULT_TEARDOWN_MINUTES, SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
+};
 pub use tenant::Tenant;
 pub use user::{
     CreateUserInput, LoginInput, LoginPolicy, RecoverPasswordInput, RecoverPasswordResult,
@@ -36,4 +45,12 @@ pub use user::{
 pub use validation::{
     normalize_and_validate_phone, normalize_and_validate_postal_code, validate_brazilian_state,
     validate_country_code, validate_email, validate_user_name, BRAZILIAN_STATES,
+};
+pub use venue::{
+    build_venue_name_sort, build_venue_search_text, resolve_venue_internal_transfer_minutes,
+    validate_venue_contacts, validate_venue_fields, validate_venue_spaces, CreateVenueInput,
+    UpdateVenueInput, ValidatedVenueFields, Venue, VenueContact, VenueContactInput, VenueCursor,
+    VenueFilter, VenueListItem, VenuePage, VenueSpace, VenueSpaceInput, VenueWithDetails,
+    MAX_INTERNAL_TRANSFER_MINUTES, MAX_VENUE_CONTACTS, MAX_VENUE_NAME_LEN, MAX_VENUE_SPACES,
+    MAX_VENUE_SPACE_NAME_LEN, MAX_VENUE_TECH_FIELD_LEN,
 };

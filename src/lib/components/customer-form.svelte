@@ -13,13 +13,13 @@
     maskCep,
     maskCnpj,
     maskCpf,
-    maskPhone,
     normalizeDocument,
     validateCnpj,
     validateCpf,
     validateForeignDocument,
   } from "$lib/utils/document";
   import { customerFormSchema } from "$lib/utils/customer-schema";
+  import PhoneInput from "$lib/components/phone-input.svelte";
   import { Badge } from "$lib/ui/badge";
   import { Button } from "$lib/ui/button";
   import {
@@ -163,7 +163,7 @@
         id: c.id ?? null,
         name: c.name,
         email: c.email ?? "",
-        phone: c.phone ? maskPhone(c.phone) : "",
+        phone: c.phone ?? "",
         role: c.role ?? "",
         is_primary: c.is_primary,
       })),
@@ -249,13 +249,6 @@
           ? maskCnpj(input.value)
           : normalizeDocument(input.value).slice(0, 30);
     form.document_number = masked;
-    input.value = masked;
-  }
-
-  function handlePhoneInput(index: number, event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    const masked = maskPhone(input.value);
-    form.contacts[index].phone = masked;
     input.value = masked;
   }
 
@@ -808,12 +801,10 @@
                 >
                   {$_("customers.contactPhoneLabel")}
                 </label>
-                <Input
+                <PhoneInput
                   id={`contact-phone-${idx}`}
-                  value={contact.phone}
-                  oninput={(e) => handlePhoneInput(idx, e)}
+                  bind:value={contact.phone}
                   disabled={readonly}
-                  placeholder="(11) 99999-9999"
                 />
                 {#if fieldErrors[`contacts.${idx}.phone`]}
                   <p class="text-xs text-destructive">

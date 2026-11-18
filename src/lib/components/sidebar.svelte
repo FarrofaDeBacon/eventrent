@@ -6,9 +6,11 @@
     Speaker,
     Users,
     Truck,
+    MapPin,
     UserCog,
     Shield,
     Palette,
+    SlidersHorizontal,
     ChevronLeft,
     ChevronRight,
   } from "lucide-svelte";
@@ -79,6 +81,12 @@
       permission: PERMISSIONS.SUPPLIER_READ,
     },
     {
+      labelKey: "nav.venues",
+      href: "/venues",
+      icon: MapPin,
+      permission: PERMISSIONS.VENUE_READ,
+    },
+    {
       labelKey: "nav.users",
       href: "/settings/users",
       icon: UserCog,
@@ -95,6 +103,12 @@
       href: "/settings/appearance",
       icon: Palette,
       permission: PERMISSIONS.BRANDING_READ,
+    },
+    {
+      labelKey: "nav.operation",
+      href: "/settings/operation",
+      icon: SlidersHorizontal,
+      permission: PERMISSIONS.SETTINGS_READ,
     },
   ];
 

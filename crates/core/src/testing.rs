@@ -1506,6 +1506,163 @@ pub async fn contract_supplier_rbac_and_dual_roles(
         )
         .await;
     assert!(matches!(warehouse_edit_dual, Err(CoreError::Forbidden(_))));
+
+    // 7. add_customer_role + anti-vazamento na criação por documento duplicado
+    use crate::domain::CustomerRole;
+    let shared_cpf = "77712345694".to_string();
+    let cust_only = services
+        .create_customer(
+            &commercial_session,
+            &CreateCustomerInput {
+                person_type: PersonType::Individual,
+                name: "Cliente CPF Compartilhado".to_string(),
+                trade_name: None,
+                document_type: DocumentType::Cpf,
+                document_number: Some(shared_cpf.clone()),
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: true,
+                is_supplier: false,
+                supplier_categories: vec![],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Contato".to_string(),
+                    email: Some("cpf@compartilhado.com.br".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+            },
+        )
+        .await
+        .expect("Comercial cria cliente com CPF");
+
+    // Estoque NÃO pode ler cliente puro: ao tentar criar fornecedor com mesmo CPF, NÃO vaza o id
+    let err_warehouse_dup = services
+        .create_customer(
+            &warehouse_session,
+            &CreateCustomerInput {
+                person_type: PersonType::Individual,
+                name: "Tentativa Fornecedor".to_string(),
+                trade_name: None,
+                document_type: DocumentType::Cpf,
+                document_number: Some(shared_cpf.clone()),
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: false,
+                is_supplier: true,
+                supplier_categories: vec![],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Contato".to_string(),
+                    email: Some("cpf2@compartilhado.com.br".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+            },
+        )
+        .await;
+    match err_warehouse_dup {
+        Err(CoreError::Conflict(msg)) => {
+            assert!(msg.contains("Este documento já está cadastrado"));
+            assert!(!msg.contains(&cust_only.customer.id));
+        }
+        other => panic!("Esperava Conflict anti-vazamento, obteve {other:?}"),
+    }
+
+    // Proprietário (pode ler) recebe o id do cadastro existente
+    let err_owner_dup = services
+        .create_customer(
+            owner_session,
+            &CreateCustomerInput {
+                person_type: PersonType::Individual,
+                name: "Tentativa Owner".to_string(),
+                trade_name: None,
+                document_type: DocumentType::Cpf,
+                document_number: Some(shared_cpf),
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: true,
+                is_supplier: false,
+                supplier_categories: vec![],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Contato".to_string(),
+                    email: Some("cpf3@compartilhado.com.br".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+            },
+        )
+        .await;
+    match err_owner_dup {
+        Err(CoreError::Conflict(msg)) => assert!(msg.contains(&cust_only.customer.id)),
+        other => panic!("Esperava Conflict com id, obteve {other:?}"),
+    }
+
+    // Permissões de add_customer_role:
+    // - Técnico (nenhum): bloqueado
+    assert!(matches!(
+        services
+            .add_customer_role(
+                &tech_session,
+                &cust_only.customer.id,
+                CustomerRole::Supplier
+            )
+            .await,
+        Err(CoreError::Forbidden(_))
+    ));
+    // - Comercial (só leitura em fornecedor): bloqueado para adicionar Supplier
+    assert!(matches!(
+        services
+            .add_customer_role(
+                &commercial_session,
+                &cust_only.customer.id,
+                CustomerRole::Supplier
+            )
+            .await,
+        Err(CoreError::Forbidden(_))
+    ));
+    // - Estoque (só supplier:manage): bloqueado para adicionar Customer em supplier_only
+    assert!(matches!(
+        services
+            .add_customer_role(
+                &warehouse_session,
+                &supplier_only.customer.id,
+                CustomerRole::Customer
+            )
+            .await,
+        Err(CoreError::Forbidden(_))
+    ));
+    // - Estoque (só supplier:manage): CONSEGUE adicionar Supplier ao cliente existente
+    let promoted = services
+        .add_customer_role(
+            &warehouse_session,
+            &cust_only.customer.id,
+            CustomerRole::Supplier,
+        )
+        .await
+        .expect("Estoque adiciona papel Fornecedor em cadastro existente");
+    assert!(promoted.customer.is_customer && promoted.customer.is_supplier);
+
+    // - Comercial (só customer:manage): CONSEGUE adicionar Customer ao fornecedor puro
+    let promoted_supplier = services
+        .add_customer_role(
+            &commercial_session,
+            &supplier_only.customer.id,
+            CustomerRole::Customer,
+        )
+        .await
+        .expect("Comercial adiciona papel Cliente em fornecedor existente");
+    assert!(promoted_supplier.customer.is_customer && promoted_supplier.customer.is_supplier);
 }
 
 #[cfg(test)]
@@ -2421,9 +2578,81 @@ mod unit_tests {
                 unreachable!()
             }
         }
+        #[async_trait::async_trait]
+        impl crate::store::VenueStore for DummyStore {
+            async fn find_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::VenueWithDetails>> {
+                unreachable!()
+            }
+            async fn list(
+                &self,
+                _: &str,
+                _: &crate::domain::VenueFilter,
+            ) -> crate::error::Result<crate::domain::VenuePage> {
+                unreachable!()
+            }
+            async fn exists_by_name_and_city(
+                &self,
+                _: &str,
+                _: &str,
+                _: Option<&str>,
+                _: Option<&str>,
+            ) -> crate::error::Result<bool> {
+                unreachable!()
+            }
+            async fn create(
+                &self,
+                _: &crate::domain::Venue,
+                _: &[crate::domain::VenueSpace],
+                _: &[crate::domain::VenueContact],
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update(
+                &self,
+                _: &crate::domain::Venue,
+                _: &[crate::domain::VenueSpace],
+                _: &[crate::domain::VenueContact],
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn set_active(
+                &self,
+                _: &str,
+                _: &str,
+                _: bool,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn soft_delete(&self, _: &str, _: &str, _: &str) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn count_active(&self, _: &str) -> crate::error::Result<u64> {
+                unreachable!()
+            }
+        }
+        #[async_trait::async_trait]
+        impl crate::store::TenantSettingStore for DummyStore {
+            async fn get_many(
+                &self,
+                _: &str,
+                _: &[&str],
+            ) -> crate::error::Result<Vec<crate::domain::TenantSetting>> {
+                unreachable!()
+            }
+            async fn upsert(&self, _: &crate::domain::TenantSetting) -> crate::error::Result<()> {
+                unreachable!()
+            }
+        }
 
         let dummy = Arc::new(DummyStore);
         let res = StoreBundle::new(
+            dummy.clone(),
+            dummy.clone(),
             dummy.clone(),
             dummy.clone(),
             dummy.clone(),
@@ -2501,6 +2730,12 @@ mod unit_tests {
                 unreachable!()
             }
             fn customers(&self) -> &dyn CustomerStore {
+                unreachable!()
+            }
+            fn venues(&self) -> &dyn crate::store::VenueStore {
+                unreachable!()
+            }
+            fn settings(&self) -> &dyn crate::store::TenantSettingStore {
                 unreachable!()
             }
             async fn commit(self: Box<Self>) -> Result<()> {
@@ -2630,6 +2865,12 @@ mod unit_tests {
                 unreachable!()
             }
             fn customers(&self) -> &dyn CustomerStore {
+                unreachable!()
+            }
+            fn venues(&self) -> &dyn crate::store::VenueStore {
+                unreachable!()
+            }
+            fn settings(&self) -> &dyn crate::store::TenantSettingStore {
                 unreachable!()
             }
             async fn commit(self: Box<Self>) -> Result<()> {
@@ -3299,6 +3540,336 @@ mod unit_tests {
             expected_json,
             "src/lib/data/fixtures/system-roles.json está desatualizado em relação a SYSTEM_ROLES do core! Esperado:\n{}",
             serde_json::to_string_pretty(&expected_json).unwrap_or_default()
+        );
+    }
+
+    #[test]
+    fn test_venue_domain_validations_and_limits() {
+        use crate::domain::{
+            validate_allocation_settings, validate_venue_contacts, validate_venue_fields,
+            validate_venue_spaces, UpdateAllocationSettingsInput, VenueContact, VenueContactInput,
+            VenueSpaceInput, MAX_INTERNAL_TRANSFER_MINUTES, MAX_VENUE_CONTACTS, MAX_VENUE_NAME_LEN,
+            MAX_VENUE_SPACES, MAX_VENUE_SPACE_NAME_LEN,
+        };
+        use crate::error::CoreError;
+
+        assert!(matches!(
+            validate_venue_fields(
+                "   ", None, None, None, None, None, None, None, "BR", None, None, None, None, None
+            ),
+            Err(CoreError::Validation(_))
+        ));
+        let long_name = "A".repeat(MAX_VENUE_NAME_LEN + 1);
+        assert!(matches!(
+            validate_venue_fields(
+                &long_name, None, None, None, None, None, None, None, "BR", None, None, None, None,
+                None
+            ),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            validate_venue_fields(
+                "Local\nQuebra",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                "BR",
+                None,
+                None,
+                None,
+                None,
+                None
+            ),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            validate_venue_fields(
+                "Riocentro",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                "BR",
+                None,
+                None,
+                None,
+                Some(MAX_INTERNAL_TRANSFER_MINUTES + 1),
+                None
+            ),
+            Err(CoreError::Validation(_))
+        ));
+
+        assert!(validate_venue_fields(
+            "Riocentro",
+            None,
+            None,
+            None,
+            None,
+            Some("Rio de Janeiro".to_string()),
+            Some("RJ".to_string()),
+            Some("22783115".to_string()),
+            "BR",
+            Some("Estacionamento A\nPortão 3".to_string()),
+            None,
+            None,
+            None,
+            None,
+        )
+        .is_ok());
+        assert!(validate_venue_fields(
+            "Riocentro",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "BR",
+            None,
+            None,
+            None,
+            Some(0),
+            None,
+        )
+        .is_ok());
+
+        let mut dup_spaces = vec![
+            VenueSpaceInput {
+                id: None,
+                name: "Pavilhão 1".to_string(),
+                capacity_people: Some(1000),
+                area_sqm: None,
+                ceiling_height_m: None,
+                power_available: None,
+                loading_access: None,
+                rigging_points: None,
+                acoustics_notes: None,
+                setup_hours_notes: None,
+                noise_restrictions_notes: None,
+                load_dimensions_notes: None,
+                notes: None,
+                active: true,
+                sort_order: 0,
+            },
+            VenueSpaceInput {
+                id: None,
+                name: "pavilhao 1".to_string(),
+                capacity_people: None,
+                area_sqm: None,
+                ceiling_height_m: None,
+                power_available: None,
+                loading_access: None,
+                rigging_points: None,
+                acoustics_notes: None,
+                setup_hours_notes: None,
+                noise_restrictions_notes: None,
+                load_dimensions_notes: None,
+                notes: None,
+                active: true,
+                sort_order: 1,
+            },
+        ];
+        assert!(matches!(
+            validate_venue_spaces(&mut dup_spaces),
+            Err(CoreError::Validation(_))
+        ));
+
+        let mut too_many_spaces: Vec<VenueSpaceInput> = (0..=MAX_VENUE_SPACES)
+            .map(|i| VenueSpaceInput {
+                id: None,
+                name: format!("Sala {i}"),
+                capacity_people: None,
+                area_sqm: None,
+                ceiling_height_m: None,
+                power_available: None,
+                loading_access: None,
+                rigging_points: None,
+                acoustics_notes: None,
+                setup_hours_notes: None,
+                noise_restrictions_notes: None,
+                load_dimensions_notes: None,
+                notes: None,
+                active: true,
+                sort_order: i as i64,
+            })
+            .collect();
+        assert!(matches!(
+            validate_venue_spaces(&mut too_many_spaces),
+            Err(CoreError::Validation(_))
+        ));
+
+        let mut long_space_name = vec![VenueSpaceInput {
+            id: None,
+            name: "X".repeat(MAX_VENUE_SPACE_NAME_LEN + 1),
+            capacity_people: None,
+            area_sqm: None,
+            ceiling_height_m: None,
+            power_available: None,
+            loading_access: None,
+            rigging_points: None,
+            acoustics_notes: None,
+            setup_hours_notes: None,
+            noise_restrictions_notes: None,
+            load_dimensions_notes: None,
+            notes: None,
+            active: true,
+            sort_order: 0,
+        }];
+        assert!(matches!(
+            validate_venue_spaces(&mut long_space_name),
+            Err(CoreError::Validation(_))
+        ));
+
+        // Limites de area_sqm (0 < area <= 1_000_000), ceiling_height_m (0 < h <= 100) e notas técnicas (<= 2000)
+        let base_space = VenueSpaceInput {
+            id: None,
+            name: "Salão Principal".to_string(),
+            capacity_people: Some(500),
+            area_sqm: Some(1_000_000.0),
+            ceiling_height_m: Some(100.0),
+            power_available: None,
+            loading_access: None,
+            rigging_points: None,
+            acoustics_notes: None,
+            setup_hours_notes: Some("08h às 18h".to_string()),
+            noise_restrictions_notes: Some("85 dB".to_string()),
+            load_dimensions_notes: Some("3,2m x 4,0m".to_string()),
+            notes: None,
+            active: true,
+            sort_order: 0,
+        };
+        assert!(validate_venue_spaces(&mut [base_space.clone()]).is_ok());
+
+        for bad_area in [0.0, -5.0, 1_000_000.1] {
+            let mut s = base_space.clone();
+            s.area_sqm = Some(bad_area);
+            assert!(matches!(
+                validate_venue_spaces(&mut [s]),
+                Err(CoreError::Validation(_))
+            ));
+        }
+        for bad_height in [0.0, -1.0, 100.1] {
+            let mut s = base_space.clone();
+            s.ceiling_height_m = Some(bad_height);
+            assert!(matches!(
+                validate_venue_spaces(&mut [s]),
+                Err(CoreError::Validation(_))
+            ));
+        }
+        let too_long_note = "N".repeat(crate::domain::MAX_VENUE_TECH_FIELD_LEN + 1);
+        for field_idx in 0..3 {
+            let mut s = base_space.clone();
+            match field_idx {
+                0 => s.setup_hours_notes = Some(too_long_note.clone()),
+                1 => s.noise_restrictions_notes = Some(too_long_note.clone()),
+                _ => s.load_dimensions_notes = Some(too_long_note.clone()),
+            }
+            assert!(matches!(
+                validate_venue_spaces(&mut [s]),
+                Err(CoreError::Validation(_))
+            ));
+        }
+
+        let mut too_many_contacts: Vec<VenueContactInput> = (0..=MAX_VENUE_CONTACTS)
+            .map(|i| VenueContactInput {
+                id: None,
+                name: format!("Contato {i}"),
+                email: Some(format!("c{i}@local.com")),
+                phone: None,
+                role: None,
+                is_primary: false,
+            })
+            .collect();
+        assert!(matches!(
+            validate_venue_contacts(&mut too_many_contacts, "BR"),
+            Err(CoreError::Validation(_))
+        ));
+
+        let masked = VenueContact {
+            id: "vc-1".to_string(),
+            tenant_id: "t-1".to_string(),
+            venue_id: "v-1".to_string(),
+            name: "Carlos Portaria".to_string(),
+            email: Some("portaria.secreta@riocentro.com.br".to_string()),
+            phone: Some("+5521999887766".to_string()),
+            role: Some("Portaria".to_string()),
+            is_primary: true,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            deleted_at: None,
+            created_by: None,
+        };
+        let debug_str = format!("{masked:?}");
+        assert!(!debug_str.contains("portaria.secreta@riocentro.com.br"));
+        assert!(!debug_str.contains("999887766"));
+
+        assert!(
+            validate_allocation_settings(&UpdateAllocationSettingsInput {
+                default_setup_minutes: 0,
+                default_teardown_minutes: 240,
+                default_turnover_buffer_minutes: 60,
+                default_internal_transfer_minutes: 20,
+            })
+            .is_ok()
+        );
+        assert!(matches!(
+            validate_allocation_settings(&UpdateAllocationSettingsInput {
+                default_setup_minutes: -1,
+                default_teardown_minutes: 20,
+                default_turnover_buffer_minutes: 60,
+                default_internal_transfer_minutes: 20,
+            }),
+            Err(CoreError::Validation(_))
+        ));
+
+        // Local sem internal_transfer_minutes usa padrão (20); local com 0 explícito usa 0
+        use crate::domain::{resolve_venue_internal_transfer_minutes, AllocationSettings, Venue};
+        let default_settings = AllocationSettings::default();
+        assert_eq!(default_settings.default_internal_transfer_minutes, 20);
+        let venue_null = Venue {
+            id: "v-1".to_string(),
+            tenant_id: "t-1".to_string(),
+            name: "Local Sem Tempo".to_string(),
+            street: None,
+            number: None,
+            complement: None,
+            neighborhood: None,
+            city: None,
+            state: None,
+            postal_code: None,
+            country: "BR".to_string(),
+            parking_notes: None,
+            loading_dock_notes: None,
+            access_hours: None,
+            internal_transfer_minutes: None,
+            notes: None,
+            active: true,
+            search_text: "local sem tempo".to_string(),
+            name_sort: "local sem tempo".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            deleted_at: None,
+            created_by: None,
+        };
+        assert_eq!(
+            resolve_venue_internal_transfer_minutes(&venue_null, &default_settings),
+            20
+        );
+        let venue_zero = Venue {
+            internal_transfer_minutes: Some(0),
+            ..venue_null
+        };
+        assert_eq!(
+            resolve_venue_internal_transfer_minutes(&venue_zero, &default_settings),
+            0
         );
     }
 }

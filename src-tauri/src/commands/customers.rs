@@ -1,7 +1,8 @@
 use crate::guards::require_session;
 use crate::AppState;
 use eventrent_core::{
-    CreateCustomerInput, CustomerFilter, CustomerPage, CustomerWithDetails, UpdateCustomerInput,
+    CreateCustomerInput, CustomerFilter, CustomerPage, CustomerRole, CustomerWithDetails,
+    UpdateCustomerInput,
 };
 use tauri::State;
 
@@ -78,6 +79,20 @@ pub async fn delete_customer(state: State<'_, AppState>, id: String) -> Result<(
     state
         .services
         .delete_customer(&session, &id)
+        .await
+        .map_err(crate::map_core_err)
+}
+
+#[tauri::command]
+pub async fn add_customer_role(
+    state: State<'_, AppState>,
+    id: String,
+    role: CustomerRole,
+) -> Result<CustomerWithDetails, String> {
+    let session = require_session(&state)?;
+    state
+        .services
+        .add_customer_role(&session, &id, role)
         .await
         .map_err(crate::map_core_err)
 }

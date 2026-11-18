@@ -1,17 +1,23 @@
 use crate::domain::{
-    build_customer_search_text, build_name_sort, mask_email_for_audit,
-    mask_individual_name_for_audit, parse_document_with_type, validate_addresses,
-    validate_contacts, validate_customer_common_fields, validate_email,
-    validate_roles_and_categories, validate_user_name, AuditLogEntry, BrandingValidator,
-    CreateCustomerInput, CreateUserInput, Customer, CustomerAddress, CustomerContact,
-    CustomerCursor, CustomerFilter, CustomerPage, CustomerRoleFilter, CustomerWithDetails,
-    DocumentType, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
-    PersonType, PublicBranding, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput,
-    Role, RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput,
-    UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole, PERM_BRANDING_MANAGE,
+    build_customer_search_text, build_name_sort, build_venue_name_sort, build_venue_search_text,
+    mask_email_for_audit, mask_individual_name_for_audit, normalize_for_search,
+    parse_document_with_type, validate_addresses, validate_contacts,
+    validate_customer_common_fields, validate_email, validate_roles_and_categories,
+    validate_user_name, validate_venue_contacts, validate_venue_fields, validate_venue_spaces,
+    AllocationSettings, AuditLogEntry, BrandingValidator, CreateCustomerInput, CreateUserInput,
+    CreateVenueInput, Customer, CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter,
+    CustomerPage, CustomerRole, CustomerRoleFilter, CustomerWithDetails, DocumentType,
+    InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode, PersonType,
+    PublicBranding, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput, Role,
+    RoleWithPermissions, SessionInfo, Tenant, TenantBranding, TenantSetting,
+    UpdateAllocationSettingsInput, UpdateBrandingInput, UpdateCustomerInput, UpdateUserInput,
+    UpdateVenueInput, UserRecord, UserWithRole, Venue, VenueContact, VenueCursor, VenueFilter,
+    VenuePage, VenueSpace, VenueWithDetails, MAX_ALLOCATION_MINUTES, PERM_BRANDING_MANAGE,
     PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ,
-    PERM_SUPPLIER_MANAGE, PERM_SUPPLIER_READ, PERM_USER_MANAGE, PERM_USER_READ, ROLE_SLUG_OWNER,
-    SYSTEM_ROLES,
+    PERM_SETTINGS_MANAGE, PERM_SETTINGS_READ, PERM_SUPPLIER_MANAGE, PERM_SUPPLIER_READ,
+    PERM_USER_MANAGE, PERM_USER_READ, PERM_VENUE_MANAGE, PERM_VENUE_READ, ROLE_SLUG_OWNER,
+    SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES, SETTING_DEFAULT_SETUP_MINUTES,
+    SETTING_DEFAULT_TEARDOWN_MINUTES, SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES, SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
@@ -289,6 +295,12 @@ impl<'a> TxStoreBundle for PassthroughTxStoreBundle<'a> {
     }
     fn customers(&self) -> &dyn crate::store::CustomerStore {
         self.stores.customers.as_ref()
+    }
+    fn venues(&self) -> &dyn crate::store::VenueStore {
+        self.stores.venues.as_ref()
+    }
+    fn settings(&self) -> &dyn crate::store::TenantSettingStore {
+        self.stores.settings.as_ref()
     }
     async fn commit(self: Box<Self>) -> Result<()> {
         Ok(())
@@ -1703,14 +1715,26 @@ impl CoreServices {
             Box::pin(async move {
                 // Leitura DENTRO da transação: unicidade do documento ativo ou inativo
                 if let Some(ref raw) = doc_raw {
-                    if stores
+                    if let Some(existing_doc) = stores
                         .customers()
                         .find_by_document(&session.tenant_id, customer.document_type, raw)
                         .await?
-                        .is_some()
                     {
+                        let can_read_cust = session.has_permission(PERM_CUSTOMER_READ)
+                            || session.has_permission(PERM_CUSTOMER_MANAGE);
+                        let can_read_supp = session.has_permission(PERM_SUPPLIER_READ)
+                            || session.has_permission(PERM_SUPPLIER_MANAGE);
+                        let can_read_existing = (existing_doc.is_customer && can_read_cust)
+                            || (existing_doc.is_supplier && can_read_supp);
+
+                        if can_read_existing {
+                            return Err(CoreError::Conflict(format!(
+                                "Já existe um cadastro com este documento (id: {}).",
+                                existing_doc.id
+                            )));
+                        }
                         return Err(CoreError::Conflict(
-                            "Já existe um cliente cadastrado com este documento (ativo ou inativo)."
+                            "Este documento já está cadastrado. Se precisar usá-lo neste papel, peça a quem gerencia o cadastro existente."
                                 .to_string(),
                         ));
                     }
@@ -2146,9 +2170,15 @@ impl CoreServices {
                 } else {
                     existing.customer.name.clone()
                 };
+                let role_label =
+                    match (existing.customer.is_customer, existing.customer.is_supplier) {
+                        (true, true) => "Cliente/Fornecedor",
+                        (false, true) => "Fornecedor",
+                        _ => "Cliente",
+                    };
                 let audit_detail = format!(
-                    "Cliente '{}' {} com sucesso (id: {})",
-                    masked_audit_name, status_label, existing.customer.id
+                    "{} '{}' {} com sucesso (id: {})",
+                    role_label, masked_audit_name, status_label, existing.customer.id
                 );
 
                 stores
@@ -2220,9 +2250,15 @@ impl CoreServices {
                 } else {
                     existing.customer.name.clone()
                 };
+                let role_label =
+                    match (existing.customer.is_customer, existing.customer.is_supplier) {
+                        (true, true) => "Cliente/Fornecedor",
+                        (false, true) => "Fornecedor",
+                        _ => "Cliente",
+                    };
                 let audit_detail = format!(
-                    "Cliente '{}' excluído logicamente (soft delete, id: {})",
-                    masked_audit_name, existing.customer.id
+                    "{} '{}' excluído logicamente (soft delete, id: {})",
+                    role_label, masked_audit_name, existing.customer.id
                 );
 
                 stores
@@ -2238,6 +2274,817 @@ impl CoreServices {
                     .await?;
 
                 Ok(())
+            })
+        })
+        .await
+    }
+
+    /// Ativa um papel (`Customer` ou `Supplier`) em um cadastro de terceiro já existente.
+    /// Exige `manage` SOMENTE do papel que está sendo adicionado.
+    pub async fn add_customer_role(
+        &self,
+        session: &SessionInfo,
+        id: &str,
+        role: CustomerRole,
+    ) -> Result<CustomerWithDetails> {
+        let required_perm = match role {
+            CustomerRole::Customer => PERM_CUSTOMER_MANAGE,
+            CustomerRole::Supplier => PERM_SUPPLIER_MANAGE,
+        };
+        self.check_session_and_permission(session, required_perm)?;
+
+        let session_clone = session.clone();
+        let id_str = id.to_string();
+        let now = Utc::now().to_rfc3339();
+
+        self.run_transaction(|stores| {
+            let session = session_clone.clone();
+            let id = id_str.clone();
+            let now = now.clone();
+
+            Box::pin(async move {
+                let mut existing = stores
+                    .customers()
+                    .find_by_id(&session.tenant_id, &id)
+                    .await?
+                    .ok_or_else(|| CoreError::NotFound("Cadastro não encontrado.".to_string()))?;
+
+                let already_has_role = match role {
+                    CustomerRole::Customer => existing.customer.is_customer,
+                    CustomerRole::Supplier => existing.customer.is_supplier,
+                };
+                if already_has_role {
+                    return Ok(existing);
+                }
+
+                match role {
+                    CustomerRole::Customer => existing.customer.is_customer = true,
+                    CustomerRole::Supplier => existing.customer.is_supplier = true,
+                }
+                existing.customer.updated_at = now;
+
+                stores
+                    .customers()
+                    .update(
+                        &existing.customer,
+                        &existing.contacts,
+                        &existing.addresses,
+                        &existing.supplier_categories,
+                    )
+                    .await?;
+
+                let masked_audit_name = if existing.customer.person_type == PersonType::Individual {
+                    mask_individual_name_for_audit(&existing.customer.name)
+                } else {
+                    existing.customer.name.clone()
+                };
+                let added_label = match role {
+                    CustomerRole::Customer => "Cliente",
+                    CustomerRole::Supplier => "Fornecedor",
+                };
+                let audit_detail = format!(
+                    "Papel '{added_label}' adicionado ao cadastro '{}' (id: {})",
+                    masked_audit_name, existing.customer.id
+                );
+
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &session.tenant_id,
+                        Some(&session.user_id),
+                        "customer.role_added",
+                        "customer",
+                        &existing.customer.id,
+                        &audit_detail,
+                    ))
+                    .await?;
+
+                Ok(existing)
+            })
+        })
+        .await
+    }
+
+    // -----------------------------------------------------------------------
+    // Locais de Evento, Espaços e Contatos (Fase 1D)
+    // -----------------------------------------------------------------------
+
+    pub async fn create_venue(
+        &self,
+        session: &SessionInfo,
+        input: &CreateVenueInput,
+    ) -> Result<VenueWithDetails> {
+        self.check_session_and_permission(session, PERM_VENUE_MANAGE)?;
+
+        let fields = validate_venue_fields(
+            &input.name,
+            input.street.clone(),
+            input.number.clone(),
+            input.complement.clone(),
+            input.neighborhood.clone(),
+            input.city.clone(),
+            input.state.clone(),
+            input.postal_code.clone(),
+            &input.country,
+            input.parking_notes.clone(),
+            input.loading_dock_notes.clone(),
+            input.access_hours.clone(),
+            input.internal_transfer_minutes,
+            input.notes.clone(),
+        )?;
+
+        let mut space_inputs = input.spaces.clone();
+        validate_venue_spaces(&mut space_inputs)?;
+
+        let mut contact_inputs = input.contacts.clone();
+        validate_venue_contacts(&mut contact_inputs, &fields.country)?;
+
+        let now = Utc::now().to_rfc3339();
+        let venue_id = Uuid::now_v7().to_string();
+        let search_text = build_venue_search_text(&fields, &space_inputs, &contact_inputs);
+        let name_sort = build_venue_name_sort(&fields.name);
+
+        let venue = Venue {
+            id: venue_id.clone(),
+            tenant_id: session.tenant_id.clone(),
+            name: fields.name,
+            street: fields.street,
+            number: fields.number,
+            complement: fields.complement,
+            neighborhood: fields.neighborhood,
+            city: fields.city,
+            state: fields.state,
+            postal_code: fields.postal_code,
+            country: fields.country,
+            parking_notes: fields.parking_notes,
+            loading_dock_notes: fields.loading_dock_notes,
+            access_hours: fields.access_hours,
+            internal_transfer_minutes: fields.internal_transfer_minutes,
+            notes: fields.notes,
+            active: true,
+            search_text,
+            name_sort,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            deleted_at: None,
+            created_by: Some(session.user_id.clone()),
+        };
+
+        let spaces: Vec<VenueSpace> = space_inputs
+            .into_iter()
+            .enumerate()
+            .map(|(idx, sp)| VenueSpace {
+                // Ignora qualquer ID enviado na criação para evitar enumeração/colisão
+                id: Uuid::now_v7().to_string(),
+                tenant_id: session.tenant_id.clone(),
+                venue_id: venue_id.clone(),
+                name_normalized: normalize_for_search(&sp.name),
+                name: sp.name,
+                capacity_people: sp.capacity_people,
+                area_sqm: sp.area_sqm,
+                ceiling_height_m: sp.ceiling_height_m,
+                power_available: sp.power_available,
+                loading_access: sp.loading_access,
+                rigging_points: sp.rigging_points,
+                acoustics_notes: sp.acoustics_notes,
+                setup_hours_notes: sp.setup_hours_notes,
+                noise_restrictions_notes: sp.noise_restrictions_notes,
+                load_dimensions_notes: sp.load_dimensions_notes,
+                notes: sp.notes,
+                active: sp.active,
+                sort_order: if sp.sort_order == 0 {
+                    idx as i64
+                } else {
+                    sp.sort_order
+                },
+                created_at: now.clone(),
+                updated_at: now.clone(),
+                deleted_at: None,
+                created_by: Some(session.user_id.clone()),
+            })
+            .collect();
+
+        let contacts: Vec<VenueContact> = contact_inputs
+            .into_iter()
+            .map(|ct| VenueContact {
+                // Ignora qualquer ID enviado na criação
+                id: Uuid::now_v7().to_string(),
+                tenant_id: session.tenant_id.clone(),
+                venue_id: venue_id.clone(),
+                name: ct.name,
+                email: ct.email,
+                phone: ct.phone,
+                role: ct.role,
+                is_primary: ct.is_primary,
+                created_at: now.clone(),
+                updated_at: now.clone(),
+                deleted_at: None,
+                created_by: Some(session.user_id.clone()),
+            })
+            .collect();
+
+        let session_clone = session.clone();
+        self.run_transaction(|stores| {
+            let session = session_clone.clone();
+            let venue = venue.clone();
+            let spaces = spaces.clone();
+            let contacts = contacts.clone();
+
+            Box::pin(async move {
+                stores.venues().create(&venue, &spaces, &contacts).await?;
+                let detail = format!(
+                    "Local de evento '{}' criado com {} espaço(s) e {} contato(s) (id: {})",
+                    venue.name,
+                    spaces.len(),
+                    contacts.len(),
+                    venue.id
+                );
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &session.tenant_id,
+                        Some(&session.user_id),
+                        "venue.created",
+                        "venue",
+                        &venue.id,
+                        &detail,
+                    ))
+                    .await?;
+                Ok(VenueWithDetails {
+                    venue,
+                    spaces,
+                    contacts,
+                })
+            })
+        })
+        .await
+    }
+
+    pub async fn update_venue(
+        &self,
+        session: &SessionInfo,
+        input: &UpdateVenueInput,
+    ) -> Result<VenueWithDetails> {
+        self.check_session_and_permission(session, PERM_VENUE_MANAGE)?;
+
+        if input.expected_updated_at.trim().is_empty() {
+            return Err(CoreError::Validation(
+                "expected_updated_at é obrigatório para atualização concorrente.".to_string(),
+            ));
+        }
+
+        let fields = validate_venue_fields(
+            &input.name,
+            input.street.clone(),
+            input.number.clone(),
+            input.complement.clone(),
+            input.neighborhood.clone(),
+            input.city.clone(),
+            input.state.clone(),
+            input.postal_code.clone(),
+            &input.country,
+            input.parking_notes.clone(),
+            input.loading_dock_notes.clone(),
+            input.access_hours.clone(),
+            input.internal_transfer_minutes,
+            input.notes.clone(),
+        )?;
+
+        let mut space_inputs = input.spaces.clone();
+        validate_venue_spaces(&mut space_inputs)?;
+
+        let mut contact_inputs = input.contacts.clone();
+        validate_venue_contacts(&mut contact_inputs, &fields.country)?;
+
+        let now = Utc::now().to_rfc3339();
+        let search_text = build_venue_search_text(&fields, &space_inputs, &contact_inputs);
+        let name_sort = build_venue_name_sort(&fields.name);
+
+        let session_clone = session.clone();
+        let id_str = input.id.clone();
+        let expected_updated_at = input.expected_updated_at.clone();
+
+        self.run_transaction(|stores| {
+            let session = session_clone.clone();
+            let id = id_str.clone();
+            let expected_updated_at = expected_updated_at.clone();
+            let now = now.clone();
+            let name = fields.name.clone();
+            let street = fields.street.clone();
+            let number = fields.number.clone();
+            let complement = fields.complement.clone();
+            let neighborhood = fields.neighborhood.clone();
+            let city = fields.city.clone();
+            let state = fields.state.clone();
+            let postal_code = fields.postal_code.clone();
+            let country = fields.country.clone();
+            let parking_notes = fields.parking_notes.clone();
+            let loading_dock_notes = fields.loading_dock_notes.clone();
+            let access_hours = fields.access_hours.clone();
+            let internal_transfer_minutes = fields.internal_transfer_minutes;
+            let notes = fields.notes.clone();
+            let search_text = search_text.clone();
+            let name_sort = name_sort.clone();
+            let space_inputs = space_inputs.clone();
+            let contact_inputs = contact_inputs.clone();
+
+            Box::pin(async move {
+                let existing = stores
+                    .venues()
+                    .find_by_id(&session.tenant_id, &id)
+                    .await?
+                    .ok_or_else(|| {
+                        CoreError::NotFound("Local de evento não encontrado.".to_string())
+                    })?;
+
+                if existing.venue.updated_at != expected_updated_at {
+                    return Err(CoreError::Conflict(
+                        "O cadastro do local foi alterado por outra pessoa. Recarregue os dados antes de salvar."
+                            .to_string(),
+                    ));
+                }
+
+                let existing_space_map: std::collections::HashMap<String, &VenueSpace> = existing
+                    .spaces
+                    .iter()
+                    .map(|s| (s.id.clone(), s))
+                    .collect();
+                let mut seen_space_ids = std::collections::HashSet::new();
+
+                let mut spaces = Vec::with_capacity(space_inputs.len());
+                for (idx, sp) in space_inputs.into_iter().enumerate() {
+                    let (space_id, created_at, created_by) = match sp.id {
+                        Some(ref raw_id) if !raw_id.trim().is_empty() => {
+                            let sid = raw_id.trim().to_string();
+                            if !seen_space_ids.insert(sid.clone()) {
+                                return Err(CoreError::Validation(
+                                    "IDs de espaço duplicados na atualização.".to_string(),
+                                ));
+                            }
+                            let prev = existing_space_map.get(&sid).ok_or_else(|| {
+                                CoreError::Validation(format!(
+                                    "O espaço informado (id: {sid}) não pertence a este local."
+                                ))
+                            })?;
+                            (sid, prev.created_at.clone(), prev.created_by.clone())
+                        }
+                        _ => (
+                            Uuid::now_v7().to_string(),
+                            now.clone(),
+                            Some(session.user_id.clone()),
+                        ),
+                    };
+
+                    spaces.push(VenueSpace {
+                        id: space_id,
+                        tenant_id: session.tenant_id.clone(),
+                        venue_id: existing.venue.id.clone(),
+                        name_normalized: normalize_for_search(&sp.name),
+                        name: sp.name,
+                        capacity_people: sp.capacity_people,
+                        area_sqm: sp.area_sqm,
+                        ceiling_height_m: sp.ceiling_height_m,
+                        power_available: sp.power_available,
+                        loading_access: sp.loading_access,
+                        rigging_points: sp.rigging_points,
+                        acoustics_notes: sp.acoustics_notes,
+                        setup_hours_notes: sp.setup_hours_notes,
+                        noise_restrictions_notes: sp.noise_restrictions_notes,
+                        load_dimensions_notes: sp.load_dimensions_notes,
+                        notes: sp.notes,
+                        active: sp.active,
+                        sort_order: if sp.sort_order == 0 {
+                            idx as i64
+                        } else {
+                            sp.sort_order
+                        },
+                        created_at,
+                        updated_at: now.clone(),
+                        deleted_at: None,
+                        created_by,
+                    });
+                }
+
+                let existing_contact_map: std::collections::HashMap<String, &VenueContact> =
+                    existing.contacts.iter().map(|c| (c.id.clone(), c)).collect();
+                let mut seen_contact_ids = std::collections::HashSet::new();
+
+                let mut contacts = Vec::with_capacity(contact_inputs.len());
+                for ct in contact_inputs {
+                    let (contact_id, created_at, created_by) = match ct.id {
+                        Some(ref raw_id) if !raw_id.trim().is_empty() => {
+                            let cid = raw_id.trim().to_string();
+                            if !seen_contact_ids.insert(cid.clone()) {
+                                return Err(CoreError::Validation(
+                                    "IDs de contato duplicados na atualização.".to_string(),
+                                ));
+                            }
+                            let prev = existing_contact_map.get(&cid).ok_or_else(|| {
+                                CoreError::Validation(format!(
+                                    "O contato informado (id: {cid}) não pertence a este local."
+                                ))
+                            })?;
+                            (cid, prev.created_at.clone(), prev.created_by.clone())
+                        }
+                        _ => (
+                            Uuid::now_v7().to_string(),
+                            now.clone(),
+                            Some(session.user_id.clone()),
+                        ),
+                    };
+
+                    contacts.push(VenueContact {
+                        id: contact_id,
+                        tenant_id: session.tenant_id.clone(),
+                        venue_id: existing.venue.id.clone(),
+                        name: ct.name,
+                        email: ct.email,
+                        phone: ct.phone,
+                        role: ct.role,
+                        is_primary: ct.is_primary,
+                        created_at,
+                        updated_at: now.clone(),
+                        deleted_at: None,
+                        created_by,
+                    });
+                }
+
+                let updated_venue = Venue {
+                    id: existing.venue.id.clone(),
+                    tenant_id: session.tenant_id.clone(),
+                    name,
+                    street,
+                    number,
+                    complement,
+                    neighborhood,
+                    city,
+                    state,
+                    postal_code,
+                    country,
+                    parking_notes,
+                    loading_dock_notes,
+                    access_hours,
+                    internal_transfer_minutes,
+                    notes,
+                    active: existing.venue.active,
+                    search_text,
+                    name_sort,
+                    created_at: existing.venue.created_at.clone(),
+                    updated_at: now,
+                    deleted_at: None,
+                    created_by: existing.venue.created_by.clone(),
+                };
+
+                stores
+                    .venues()
+                    .update(&updated_venue, &spaces, &contacts)
+                    .await?;
+
+                let detail = format!(
+                    "Local de evento '{}' atualizado ({} espaço(s), {} contato(s), id: {})",
+                    updated_venue.name,
+                    spaces.len(),
+                    contacts.len(),
+                    updated_venue.id
+                );
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &session.tenant_id,
+                        Some(&session.user_id),
+                        "venue.updated",
+                        "venue",
+                        &updated_venue.id,
+                        &detail,
+                    ))
+                    .await?;
+
+                Ok(VenueWithDetails {
+                    venue: updated_venue,
+                    spaces,
+                    contacts,
+                })
+            })
+        })
+        .await
+    }
+
+    pub async fn get_venue(&self, session: &SessionInfo, id: &str) -> Result<VenueWithDetails> {
+        self.check_session_and_permission(session, PERM_VENUE_READ)?;
+        self.stores
+            .venues
+            .find_by_id(&session.tenant_id, id)
+            .await?
+            .ok_or_else(|| CoreError::NotFound("Local de evento não encontrado.".to_string()))
+    }
+
+    pub async fn list_venues(
+        &self,
+        session: &SessionInfo,
+        filter: &VenueFilter,
+    ) -> Result<VenuePage> {
+        self.check_session_and_permission(session, PERM_VENUE_READ)?;
+
+        if let Some(ref cursor_str) = filter.cursor {
+            VenueCursor::decode(cursor_str)?;
+        }
+
+        let mut normalized_filter = filter.clone();
+        if let Some(ref q) = normalized_filter.query {
+            let trimmed = q.trim();
+            if trimmed.is_empty() {
+                normalized_filter.query = None;
+            } else {
+                normalized_filter.query = Some(normalize_for_search(trimmed));
+            }
+        }
+        if let Some(limit) = normalized_filter.limit {
+            normalized_filter.limit = Some(limit.clamp(1, 100));
+        } else {
+            normalized_filter.limit = Some(50);
+        }
+
+        self.stores
+            .venues
+            .list(&session.tenant_id, &normalized_filter)
+            .await
+    }
+
+    pub async fn check_venue_duplicate_name_city(
+        &self,
+        session: &SessionInfo,
+        name: &str,
+        city: Option<&str>,
+        exclude_id: Option<&str>,
+    ) -> Result<bool> {
+        self.check_session_and_permission(session, PERM_VENUE_READ)?;
+        let name_norm = normalize_for_search(name);
+        if name_norm.is_empty() {
+            return Ok(false);
+        }
+        let city_norm = city.map(normalize_for_search).filter(|s| !s.is_empty());
+        self.stores
+            .venues
+            .exists_by_name_and_city(
+                &session.tenant_id,
+                &name_norm,
+                city_norm.as_deref(),
+                exclude_id,
+            )
+            .await
+    }
+
+    pub async fn set_venue_active(
+        &self,
+        session: &SessionInfo,
+        id: &str,
+        active: bool,
+    ) -> Result<VenueWithDetails> {
+        self.check_session_and_permission(session, PERM_VENUE_MANAGE)?;
+        let session_clone = session.clone();
+        let id_str = id.to_string();
+        let now = Utc::now().to_rfc3339();
+
+        self.run_transaction(|stores| {
+            let session = session_clone.clone();
+            let id = id_str.clone();
+            let now = now.clone();
+
+            Box::pin(async move {
+                let mut existing = stores
+                    .venues()
+                    .find_by_id(&session.tenant_id, &id)
+                    .await?
+                    .ok_or_else(|| {
+                        CoreError::NotFound("Local de evento não encontrado.".to_string())
+                    })?;
+
+                stores
+                    .venues()
+                    .set_active(&session.tenant_id, &id, active, &now)
+                    .await?;
+                existing.venue.active = active;
+                existing.venue.updated_at = now;
+
+                let action = if active {
+                    "venue.activated"
+                } else {
+                    "venue.deactivated"
+                };
+                let status_label = if active { "ativado" } else { "desativado" };
+                let detail = format!(
+                    "Local de evento '{}' {} (id: {})",
+                    existing.venue.name, status_label, existing.venue.id
+                );
+
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &session.tenant_id,
+                        Some(&session.user_id),
+                        action,
+                        "venue",
+                        &id,
+                        &detail,
+                    ))
+                    .await?;
+
+                Ok(existing)
+            })
+        })
+        .await
+    }
+
+    pub async fn delete_venue(&self, session: &SessionInfo, id: &str) -> Result<()> {
+        self.check_session_and_permission(session, PERM_VENUE_MANAGE)?;
+        let session_clone = session.clone();
+        let id_str = id.to_string();
+        let now = Utc::now().to_rfc3339();
+
+        self.run_transaction(|stores| {
+            let session = session_clone.clone();
+            let id = id_str.clone();
+            let now = now.clone();
+
+            Box::pin(async move {
+                let existing = stores
+                    .venues()
+                    .find_by_id(&session.tenant_id, &id)
+                    .await?
+                    .ok_or_else(|| {
+                        CoreError::NotFound("Local de evento não encontrado.".to_string())
+                    })?;
+
+                stores
+                    .venues()
+                    .soft_delete(&session.tenant_id, &id, &now)
+                    .await?;
+
+                let detail = format!(
+                    "Local de evento '{}' excluído logicamente (soft delete, id: {})",
+                    existing.venue.name, existing.venue.id
+                );
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &session.tenant_id,
+                        Some(&session.user_id),
+                        "venue.deleted",
+                        "venue",
+                        &id,
+                        &detail,
+                    ))
+                    .await?;
+
+                Ok(())
+            })
+        })
+        .await
+    }
+
+    // -----------------------------------------------------------------------
+    // Configurações Operacionais / Alocação (Fase 1D / ADR-0012)
+    // -----------------------------------------------------------------------
+
+    pub async fn get_allocation_settings(
+        &self,
+        session: &SessionInfo,
+    ) -> Result<AllocationSettings> {
+        self.check_session_and_permission(session, PERM_SETTINGS_READ)?;
+        self.get_allocation_settings_for_tenant(&session.tenant_id)
+            .await
+    }
+
+    /// Leitura interna sem sessão (utilizada pelo motor de disponibilidade da Fase 3).
+    /// Nunca grava no banco: quando a chave não existe ou tem valor inválido,
+    /// devolve o padrão em memória (registrando aviso no log no caso inválido).
+    pub async fn get_allocation_settings_for_tenant(
+        &self,
+        tenant_id: &str,
+    ) -> Result<AllocationSettings> {
+        let rows = self
+            .stores
+            .settings
+            .get_many(
+                tenant_id,
+                &[
+                    SETTING_DEFAULT_SETUP_MINUTES,
+                    SETTING_DEFAULT_TEARDOWN_MINUTES,
+                    SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
+                    SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES,
+                ],
+            )
+            .await?;
+
+        let mut result = AllocationSettings::default();
+        for row in rows {
+            let parsed_opt = row
+                .setting_value
+                .trim()
+                .parse::<i64>()
+                .ok()
+                .filter(|v| (0..=MAX_ALLOCATION_MINUTES).contains(v));
+
+            let Some(parsed) = parsed_opt else {
+                tracing::warn!(
+                    tenant_id = %tenant_id,
+                    setting_key = %row.setting_key,
+                    raw_value = %row.setting_value,
+                    "Valor inválido em tenant_setting; usando padrão em memória."
+                );
+                continue;
+            };
+
+            match row.setting_key.as_str() {
+                SETTING_DEFAULT_SETUP_MINUTES => result.default_setup_minutes = parsed,
+                SETTING_DEFAULT_TEARDOWN_MINUTES => result.default_teardown_minutes = parsed,
+                SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES => {
+                    result.default_turnover_buffer_minutes = parsed
+                }
+                SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES => {
+                    result.default_internal_transfer_minutes = parsed
+                }
+                _ => {}
+            }
+        }
+        Ok(result)
+    }
+
+    pub async fn update_allocation_settings(
+        &self,
+        session: &SessionInfo,
+        input: &UpdateAllocationSettingsInput,
+    ) -> Result<AllocationSettings> {
+        self.check_session_and_permission(session, PERM_SETTINGS_MANAGE)?;
+        crate::domain::validate_allocation_settings(input)?;
+
+        let session_clone = session.clone();
+        let input_clone = input.clone();
+        let now = Utc::now().to_rfc3339();
+
+        self.run_transaction(|stores| {
+            let session = session_clone.clone();
+            let input = input_clone.clone();
+            let now = now.clone();
+            Box::pin(async move {
+                let pairs = [
+                    (
+                        SETTING_DEFAULT_SETUP_MINUTES,
+                        input.default_setup_minutes.to_string(),
+                    ),
+                    (
+                        SETTING_DEFAULT_TEARDOWN_MINUTES,
+                        input.default_teardown_minutes.to_string(),
+                    ),
+                    (
+                        SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
+                        input.default_turnover_buffer_minutes.to_string(),
+                    ),
+                    (
+                        SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES,
+                        input.default_internal_transfer_minutes.to_string(),
+                    ),
+                ];
+
+                for (key, val) in pairs {
+                    stores
+                        .settings()
+                        .upsert(&TenantSetting {
+                            id: Uuid::now_v7().to_string(),
+                            tenant_id: session.tenant_id.clone(),
+                            setting_key: key.to_string(),
+                            setting_value: val,
+                            updated_at: now.clone(),
+                            updated_by: Some(session.user_id.clone()),
+                        })
+                        .await?;
+                }
+
+                let detail = format!(
+                    "Configurações de alocação atualizadas: montagem={}min, desmontagem={}min, giro={}min, deslocamento={}min",
+                    input.default_setup_minutes,
+                    input.default_teardown_minutes,
+                    input.default_turnover_buffer_minutes,
+                    input.default_internal_transfer_minutes
+                );
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &session.tenant_id,
+                        Some(&session.user_id),
+                        "settings.allocation_updated",
+                        "tenant_setting",
+                        &session.tenant_id,
+                        &detail,
+                    ))
+                    .await?;
+
+                Ok(AllocationSettings {
+                    default_setup_minutes: input.default_setup_minutes,
+                    default_teardown_minutes: input.default_teardown_minutes,
+                    default_turnover_buffer_minutes: input.default_turnover_buffer_minutes,
+                    default_internal_transfer_minutes: input.default_internal_transfer_minutes,
+                })
             })
         })
         .await

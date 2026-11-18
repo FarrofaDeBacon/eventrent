@@ -28,3 +28,8 @@ Como o SQLite não suporta alterações completas de restrições `CHECK`, nulab
 - Isolamento multi-tenant completo com chave estrangeira composta `(tenant_id, customer_id) REFERENCES customer(tenant_id, id)` em todas as tabelas dependentes (`customer_contact` e `customer_address`), impedindo qualquer inconsistência de filhas pertencerem a tenants divergentes do cliente pai.
 - Unicidade parcial por `(tenant_id, document_type, document_number) WHERE document_number IS NOT NULL AND deleted_at IS NULL`, permitindo múltiplos pré-cadastros sem documento.
 - Eliminação do índice morto `idx_customer_tenant_search`.
+
+## Adendo (Fase 1D — 2026-11-17)
+
+- As migrações `0005_customers_rev.sql` (clientes) e `0006_suppliers.sql` (inclusão de `is_customer`/`is_supplier` antes da primeira versão distribuída) foram as únicas reconstruções de tabelas executadas na fase pré-lançamento.
+- A partir deste marco, fica estritamente proibida qualquer reconstrução de tabelas (`DROP`/`CREATE`) em migrações futuras sem um novo ADR específico e sem teste automatizado de migração com dados reais pré-existentes. Alterações evolutivas devem priorizar `ALTER TABLE ... ADD COLUMN` e novos índices incrementais.

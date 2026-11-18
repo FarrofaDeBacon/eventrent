@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BRAZILIAN_UFS,
+  composePhoneE164,
   formatDocument,
   maskCep,
   maskCnpj,
@@ -9,6 +10,7 @@ import {
   normalizeDocument,
   normalizeForSearch,
   normalizePhoneE164,
+  splitPhoneDdi,
   validateCnpj,
   validateCpf,
 } from "./document";
@@ -86,6 +88,17 @@ describe("Utilitários de Documentos Brasileiros e Máscaras", () => {
     expect(normalizePhoneE164("+1 212 555 1234")).toBe("+12125551234");
     expect(normalizePhoneE164("12 91234-5678")).toBe("+5512912345678");
     expect(normalizePhoneE164("+55 21 99999-1234")).toBe("+5521999991234");
+    expect(splitPhoneDdi("+5521999991234")).toEqual({
+      ddi: "+55",
+      local: "(21) 99999-1234",
+    });
+    expect(splitPhoneDdi("+351912345678")).toEqual({
+      ddi: "+351",
+      local: "912345678",
+    });
+    expect(composePhoneE164("+55", "(11) 98888-7777")).toBe("+5511988887777");
+    expect(composePhoneE164("+351", "912 345 678")).toBe("+351912345678");
+    expect(composePhoneE164("+1", "2125551234")).toBe("+12125551234");
     expect(formatDocument("52998224725", "individual")).toBe("529.982.247-25");
     expect(formatDocument("11222333000181", "legal")).toBe(
       "11.222.333/0001-81",

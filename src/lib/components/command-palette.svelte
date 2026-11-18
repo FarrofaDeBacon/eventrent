@@ -7,10 +7,12 @@
     LayoutDashboard,
     Users,
     Truck,
+    MapPin,
     UserPlus,
     UserCog,
     Shield,
     Palette,
+    SlidersHorizontal,
     SunMoon,
     LogOut,
     ArrowRight,
@@ -91,6 +93,17 @@
       },
     },
     {
+      id: "venues",
+      labelKey: "command.goToVenues",
+      categoryKey: "command.navigation",
+      icon: MapPin,
+      permission: PERMISSIONS.VENUE_READ,
+      action: () => {
+        open = false;
+        goto("/venues");
+      },
+    },
+    {
       id: "new-customer",
       labelKey: "command.newCustomer",
       categoryKey: "command.actions",
@@ -110,6 +123,17 @@
       action: () => {
         open = false;
         goto("/customers/new?role=supplier");
+      },
+    },
+    {
+      id: "new-venue",
+      labelKey: "command.newVenue",
+      categoryKey: "command.actions",
+      icon: MapPin,
+      permission: PERMISSIONS.VENUE_MANAGE,
+      action: () => {
+        open = false;
+        goto("/venues/new");
       },
     },
     {
@@ -143,6 +167,17 @@
       action: () => {
         open = false;
         goto("/settings/appearance");
+      },
+    },
+    {
+      id: "operation",
+      labelKey: "command.goToOperation",
+      categoryKey: "command.navigation",
+      icon: SlidersHorizontal,
+      permission: PERMISSIONS.SETTINGS_READ,
+      action: () => {
+        open = false;
+        goto("/settings/operation");
       },
     },
     {

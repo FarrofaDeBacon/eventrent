@@ -20,9 +20,24 @@ const steps = [
     args: ["fmt", "--all", "--", "--check"],
   },
   {
-    name: "Clippy Linter",
+    name: "Clippy Linter (Workspace)",
     command: "cargo",
     args: ["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
+  },
+  {
+    name: "Clippy Linter (eventrent-core sem unificação)",
+    command: "cargo",
+    args: ["clippy", "-p", "eventrent-core", "--", "-D", "warnings"],
+  },
+  {
+    name: "Clippy Linter (eventrent-store-sqlite sem unificação)",
+    command: "cargo",
+    args: ["clippy", "-p", "eventrent-store-sqlite", "--", "-D", "warnings"],
+  },
+  {
+    name: "Clippy Linter (eventrent-app sem unificação)",
+    command: "cargo",
+    args: ["clippy", "-p", "eventrent-app", "--", "-D", "warnings"],
   },
   {
     name: "Testes Unitários Rust Workspace",

@@ -72,3 +72,15 @@ Com a conclusão do cadastro unificado de clientes e fornecedores (Fases 1B.2 e 
 - A Fase 1D prepara os cadastros de Locais e Espaços (incluindo tempo de deslocamento interno configurável por local e campos técnicos opcionais do espaço) antes da criação do catálogo/motor de disponibilidade.
 - O conceito de capacidade e intervalo de tempo evita duplicar regras entre equipamentos e equipe técnica nas Fases 2, 3 e 4.5.
 - Nenhuma tabela ou código deste ADR é implementado na Fase 1C; este documento serve de especificação formal para as fases seguintes.
+
+## Adendo (Fase 1D — 2026-11-17)
+
+- Implementado na Fase 1D (`0007_venues_and_settings.sql`):
+  - `venue.internal_transfer_minutes` (`INTEGER NULL`, `0..=240` minutos; `NULL` = usar o padrão da empresa `allocation.default_internal_transfer_minutes`, padrão `20`) para modelar o tempo de deslocamento interno do local.
+  - Chaves em `tenant_setting` para defaults globais do tenant:
+    - `allocation.default_setup_minutes` (padrão `30`)
+    - `allocation.default_teardown_minutes` (padrão `20`)
+    - `allocation.default_turnover_buffer_minutes` (padrão `60`)
+    - `allocation.default_internal_transfer_minutes` (padrão `20`)
+  - Todos validados no intervalo `0..=240` minutos e editáveis em **Configurações → Operação** (`/settings/operation`).
+  - Na Fase 4, espaços referenciados em eventos terão sua remoção bloqueada pelo domínio, orientando a desativação (`active = false`).
