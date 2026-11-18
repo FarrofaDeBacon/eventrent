@@ -1584,7 +1584,7 @@ pub async fn contract_supplier_rbac_and_dual_roles(
                 name: "Tentativa Owner".to_string(),
                 trade_name: None,
                 document_type: DocumentType::Cpf,
-                document_number: Some(shared_cpf),
+                document_number: Some(shared_cpf.clone()),
                 state_registration: None,
                 municipal_registration: None,
                 notes: None,
@@ -1642,18 +1642,134 @@ pub async fn contract_supplier_rbac_and_dual_roles(
             .await,
         Err(CoreError::Forbidden(_))
     ));
-    // - Estoque (só supplier:manage): CONSEGUE adicionar Supplier ao cliente existente
-    let promoted = services
+    // - Estoque (sem leitura de cliente): add_customer_role em cust_only devolve NotFound (anti-vazamento)
+    let warehouse_add_on_unreadable = services
         .add_customer_role(
             &warehouse_session,
             &cust_only.customer.id,
             CustomerRole::Supplier,
         )
-        .await
-        .expect("Estoque adiciona papel Fornecedor em cadastro existente");
-    assert!(promoted.customer.is_customer && promoted.customer.is_supplier);
+        .await;
+    assert!(matches!(
+        warehouse_add_on_unreadable,
+        Err(CoreError::NotFound(_))
+    ));
 
-    // - Comercial (só customer:manage): CONSEGUE adicionar Customer ao fornecedor puro
+    // - Estoque (sem leitura de cliente): update, set_active e delete em cust_only também devolvem NotFound
+    assert!(matches!(
+        services
+            .set_customer_active(&warehouse_session, &cust_only.customer.id, false)
+            .await,
+        Err(CoreError::NotFound(_))
+    ));
+    assert!(matches!(
+        services
+            .delete_customer(&warehouse_session, &cust_only.customer.id)
+            .await,
+        Err(CoreError::NotFound(_))
+    ));
+    assert!(matches!(
+        services
+            .update_customer(
+                &warehouse_session,
+                &cust_only.customer.id,
+                &UpdateCustomerInput {
+                    person_type: PersonType::Legal,
+                    name: "Tentativa".to_string(),
+                    trade_name: None,
+                    document_type: DocumentType::None,
+                    document_number: None,
+                    state_registration: None,
+                    municipal_registration: None,
+                    notes: None,
+                    is_customer: false,
+                    is_supplier: true,
+                    supplier_categories: vec![SupplierCategory::Sublocacao],
+                    contacts: vec![CreateContactInput {
+                        id: None,
+                        name: "Contato".to_string(),
+                        email: Some("tentativa@forn.com".to_string()),
+                        phone: None,
+                        role: None,
+                        is_primary: true,
+                    }],
+                    addresses: vec![],
+                    expected_updated_at: cust_only.customer.updated_at.clone(),
+                },
+            )
+            .await,
+        Err(CoreError::NotFound(_))
+    ));
+
+    // - Estoque: update_customer tentando usar documento de cust_only (que não pode ler) devolve Conflict genérico sem ID
+    let sup_for_dup_update = services
+        .create_customer(
+            &warehouse_session,
+            &CreateCustomerInput {
+                person_type: PersonType::Legal,
+                name: "Fornecedor Atualiza Doc".to_string(),
+                trade_name: None,
+                document_type: DocumentType::None,
+                document_number: None,
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: false,
+                is_supplier: true,
+                supplier_categories: vec![SupplierCategory::Sublocacao],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Contato".to_string(),
+                    email: Some("upd@forn.com".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    let update_dup_err = services
+        .update_customer(
+            &warehouse_session,
+            &sup_for_dup_update.customer.id,
+            &UpdateCustomerInput {
+                person_type: PersonType::Individual,
+                name: "Fornecedor Atualiza Doc".to_string(),
+                trade_name: None,
+                document_type: DocumentType::Cpf,
+                document_number: Some(shared_cpf.clone()),
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: false,
+                is_supplier: true,
+                supplier_categories: vec![SupplierCategory::Sublocacao],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Contato".to_string(),
+                    email: Some("upd@forn.com".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+                expected_updated_at: sup_for_dup_update.customer.updated_at.clone(),
+            },
+        )
+        .await;
+    match update_dup_err {
+        Err(CoreError::Conflict(msg)) => {
+            assert!(
+                !msg.contains(&cust_only.customer.id),
+                "Erro de documento duplicado na atualização não pode vazar ID: {msg}"
+            );
+        }
+        other => panic!("Esperava Conflict anti-vazamento na atualização, obteve {other:?}"),
+    }
+
+    // - Comercial (só customer:manage, mas com supplier:read): CONSEGUE adicionar Customer ao fornecedor puro
     let promoted_supplier = services
         .add_customer_role(
             &commercial_session,

@@ -1708,23 +1708,7 @@ impl CoreServices {
                         .find_by_document(&session.tenant_id, customer.document_type, raw)
                         .await?
                     {
-                        let can_read_cust = session.has_permission(PERM_CUSTOMER_READ)
-                            || session.has_permission(PERM_CUSTOMER_MANAGE);
-                        let can_read_supp = session.has_permission(PERM_SUPPLIER_READ)
-                            || session.has_permission(PERM_SUPPLIER_MANAGE);
-                        let can_read_existing = (existing_doc.is_customer && can_read_cust)
-                            || (existing_doc.is_supplier && can_read_supp);
-
-                        if can_read_existing {
-                            return Err(CoreError::Conflict(format!(
-                                "Já existe um cadastro com este documento (id: {}).",
-                                existing_doc.id
-                            )));
-                        }
-                        return Err(CoreError::Conflict(
-                            "Este documento já está cadastrado. Se precisar usá-lo neste papel, peça a quem gerencia o cadastro existente."
-                                .to_string(),
-                        ));
+                        return Err(duplicate_document_conflict_error(&session, &existing_doc));
                     }
                 }
 
@@ -1851,6 +1835,10 @@ impl CoreServices {
                     .await?
                     .ok_or_else(|| CoreError::NotFound("Cadastro não encontrado.".to_string()))?;
 
+                if !can_read_party(&session, &existing.customer) {
+                    return Err(CoreError::NotFound("Cadastro não encontrado.".to_string()));
+                }
+
                 // Remover um papel exige manage desse papel
                 if existing.customer.is_customer
                     && !input.is_customer
@@ -1890,10 +1878,7 @@ impl CoreServices {
                             .await?
                         {
                             if other.id != id {
-                                return Err(CoreError::Conflict(
-                                    "Já existe um cliente cadastrado com este documento (ativo ou inativo)."
-                                        .to_string(),
-                                ));
+                                return Err(duplicate_document_conflict_error(&session, &other));
                             }
                         }
                     }
@@ -2124,6 +2109,10 @@ impl CoreServices {
                     .await?
                     .ok_or_else(|| CoreError::NotFound("Cadastro não encontrado.".to_string()))?;
 
+                if !can_read_party(&session, &existing.customer) {
+                    return Err(CoreError::NotFound("Cadastro não encontrado.".to_string()));
+                }
+
                 if existing.customer.is_customer && !session.has_permission(PERM_CUSTOMER_MANAGE) {
                     return Err(CoreError::Forbidden(
                         "Acesso negado: permissão 'customer:manage' necessária.".to_string(),
@@ -2217,6 +2206,10 @@ impl CoreServices {
                     .await?
                     .ok_or_else(|| CoreError::NotFound("Cadastro não encontrado.".to_string()))?;
 
+                if !can_read_party(&session, &existing.customer) {
+                    return Err(CoreError::NotFound("Cadastro não encontrado.".to_string()));
+                }
+
                 if existing.customer.is_customer && !session.has_permission(PERM_CUSTOMER_MANAGE) {
                     return Err(CoreError::Forbidden(
                         "Acesso negado: permissão 'customer:manage' necessária.".to_string(),
@@ -2296,6 +2289,10 @@ impl CoreServices {
                     .find_by_id(&session.tenant_id, &id)
                     .await?
                     .ok_or_else(|| CoreError::NotFound("Cadastro não encontrado.".to_string()))?;
+
+                if !can_read_party(&session, &existing.customer) {
+                    return Err(CoreError::NotFound("Cadastro não encontrado.".to_string()));
+                }
 
                 let already_has_role = match role {
                     CustomerRole::Customer => existing.customer.is_customer,
@@ -3073,6 +3070,28 @@ impl CoreServices {
             })
         })
         .await
+    }
+}
+
+fn can_read_party(session: &SessionInfo, customer: &Customer) -> bool {
+    let can_read_cust =
+        session.has_permission(PERM_CUSTOMER_READ) || session.has_permission(PERM_CUSTOMER_MANAGE);
+    let can_read_supp =
+        session.has_permission(PERM_SUPPLIER_READ) || session.has_permission(PERM_SUPPLIER_MANAGE);
+    (customer.is_customer && can_read_cust) || (customer.is_supplier && can_read_supp)
+}
+
+fn duplicate_document_conflict_error(session: &SessionInfo, existing: &Customer) -> CoreError {
+    if can_read_party(session, existing) {
+        CoreError::Conflict(format!(
+            "Já existe um cadastro com este documento (id: {}).",
+            existing.id
+        ))
+    } else {
+        CoreError::Conflict(
+            "Este documento já está cadastrado. Se precisar usá-lo neste papel, peça a quem gerencia o cadastro existente."
+                .to_string(),
+        )
     }
 }
 
