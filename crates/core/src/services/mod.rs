@@ -2158,9 +2158,15 @@ impl CoreServices {
                 } else {
                     existing.customer.name.clone()
                 };
+                let role_label =
+                    match (existing.customer.is_customer, existing.customer.is_supplier) {
+                        (true, true) => "Cliente/Fornecedor",
+                        (false, true) => "Fornecedor",
+                        _ => "Cliente",
+                    };
                 let audit_detail = format!(
-                    "Cliente '{}' {} com sucesso (id: {})",
-                    masked_audit_name, status_label, existing.customer.id
+                    "{} '{}' {} com sucesso (id: {})",
+                    role_label, masked_audit_name, status_label, existing.customer.id
                 );
 
                 stores
@@ -2232,9 +2238,15 @@ impl CoreServices {
                 } else {
                     existing.customer.name.clone()
                 };
+                let role_label =
+                    match (existing.customer.is_customer, existing.customer.is_supplier) {
+                        (true, true) => "Cliente/Fornecedor",
+                        (false, true) => "Fornecedor",
+                        _ => "Cliente",
+                    };
                 let audit_detail = format!(
-                    "Cliente '{}' excluído logicamente (soft delete, id: {})",
-                    masked_audit_name, existing.customer.id
+                    "{} '{}' excluído logicamente (soft delete, id: {})",
+                    role_label, masked_audit_name, existing.customer.id
                 );
 
                 stores
