@@ -1,7 +1,7 @@
 # Relatório de Entrega — Fase 1D: Tarefa 0 + Locais de Evento, Espaços, Contatos e Configurações de Alocação
 
 - **Branch:** `fase-1d-locais`
-- **Commit de referência (código e docs):** `ccb2500122949df2ddde81bdccc175f54dc61b1c`
+- **Commit de referência (código e docs):** `b4f4eb9dbe5bcdd6931f1b992a081d1167a32608`
 - **Status:** Pronto para revisão / PR para `main` (sem merge e sem tag, conforme regra do projeto)
 
 ---
@@ -27,19 +27,19 @@
 
 ---
 
-## 2. URLs Raw Fixadas no Hash (`ccb2500122949df2ddde81bdccc175f54dc61b1c`)
+## 2. URLs Raw Fixadas no Hash (`b4f4eb9dbe5bcdd6931f1b992a081d1167a32608`)
 
-- Migração `0007`: https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/ccb2500122949df2ddde81bdccc175f54dc61b1c/crates/store-sqlite/migrations/0007_venues_and_settings.sql
-- Permissões (`permission.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/ccb2500122949df2ddde81bdccc175f54dc61b1c/crates/core/src/domain/permission.rs
-- Domínio de Locais (`venue.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/ccb2500122949df2ddde81bdccc175f54dc61b1c/crates/core/src/domain/venue.rs
-- Domínio de Configurações (`settings.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/ccb2500122949df2ddde81bdccc175f54dc61b1c/crates/core/src/domain/settings.rs
-- Store Traits (`store/mod.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/ccb2500122949df2ddde81bdccc175f54dc61b1c/crates/core/src/store/mod.rs
-- Serviços (`services/mod.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/ccb2500122949df2ddde81bdccc175f54dc61b1c/crates/core/src/services/mod.rs
-- Store SQLite (`store-sqlite/src/lib.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/ccb2500122949df2ddde81bdccc175f54dc61b1c/crates/store-sqlite/src/lib.rs
+- Migração `0007`: https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/crates/store-sqlite/migrations/0007_venues_and_settings.sql
+- Permissões (`permission.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/crates/core/src/domain/permission.rs
+- Domínio de Locais (`venue.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/crates/core/src/domain/venue.rs
+- Domínio de Configurações (`settings.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/crates/core/src/domain/settings.rs
+- Store Traits (`store/mod.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/crates/core/src/store/mod.rs
+- Serviços (`services/mod.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/crates/core/src/services/mod.rs
+- Store SQLite (`store-sqlite/src/lib.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/crates/store-sqlite/src/lib.rs
 - Comandos Tauri (`venues.rs` / `settings.rs`):
-  - https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/ccb2500122949df2ddde81bdccc175f54dc61b1c/src-tauri/src/commands/venues.rs
-  - https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/ccb2500122949df2ddde81bdccc175f54dc61b1c/src-tauri/src/commands/settings.rs
-- E2E Playwright (`e2e/venues.spec.ts`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/ccb2500122949df2ddde81bdccc175f54dc61b1c/e2e/venues.spec.ts
+  - https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/src-tauri/src/commands/venues.rs
+  - https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/src-tauri/src/commands/settings.rs
+- E2E Playwright (`e2e/venues.spec.ts`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/e2e/venues.spec.ts
 
 ---
 
