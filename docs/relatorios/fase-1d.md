@@ -1,133 +1,69 @@
-# Relatório de Entrega — Fase 1D: Tarefa 0 + Locais de Evento, Espaços, Contatos e Configurações de Alocação
+# Relatório de Entrega — Fase 1D + Revisão 1D-rev: Tarefa 0, Locais de Evento, Espaços, Contatos e Configurações de Alocação
 
-- **Branch:** `fase-1d-locais`
-- **Commit de referência (código e docs):** `b4f4eb9dbe5bcdd6931f1b992a081d1167a32608`
-- **Status:** Pronto para revisão / PR para `main` (sem merge e sem tag, conforme regra do projeto)
-
----
-
-## 1. Resumo das Entregas
-
-### Tarefa 0 — Pendências da Fase 1C
-
-- **0.1 `add_customer_role` & Anti-vazamento:** Operação `add_customer_role(session, id, role)` (`CustomerRole::Customer | Supplier`) exigindo apenas `manage` do papel adicionado, erro anti-vazamento em documento duplicado quando o usuário não tem leitura do registro existente e botões contextuais na UI (`Abrir cadastro` / `Adicionar papel`). Coberto por `contract_supplier_rbac_and_dual_roles` em `crates/core/src/testing.rs`.
-- **0.2 Auditoria exata por papel:** `set_customer_active` e `delete_customer` em `crates/core/src/services/mod.rs` registram `"Cliente"`, `"Fornecedor"` ou `"Cliente/Fornecedor"` conforme os papéis ativos.
-- **0.3 Seletor de DDI + E.164:** Componente reutilizável `src/lib/components/phone-input.svelte` com seletor de DDI (padrão `+55`) e helpers `splitPhoneDdi`/`composePhoneE164` em `src/lib/utils/document.ts`.
-- **0.4 Política de migrações sem reconstrução:** Regra explícita em `AGENTS.md` e adendo na `ADR-0011` proibindo reconstruções `DROP`/`CREATE` sem ADR específico e teste automatizado de preservação de dados.
-
-### Fase 1D — Locais de Evento, Espaços e Operação (ADR-0012)
-
-- **1.1 Migração `0007_venues_and_settings.sql`:** Tabelas `venue`, `venue_space`, `venue_contact` e `tenant_setting`, com chaves estrangeiras compostas `(tenant_id, venue_id)`, índices únicos parciais `WHERE deleted_at IS NULL`, `CHECK (internal_transfer_minutes >= 0 AND internal_transfer_minutes <= 240)` e zero inserts iniciais na migração.
-- **1.2 Permissões RBAC (`venue:read`, `venue:manage`):** Adicionadas em `crates/core/src/domain/permission.rs`, `src/lib/data/fixtures/system-roles.json`, `src/lib/data/types.ts` e `src/lib/data/mock-auth-repository.ts`.
-- **1.3 Backend Core + SQLite + Tauri de Locais:** Domínio `crates/core/src/domain/venue.rs` (limites de tamanho, validação de caracteres de controle, `Debug` mascarando `email`/`phone` em `VenueContact`, normalização de busca), `VenueStore` em `crates/core/src/store/mod.rs`, serviços transacionais em `crates/core/src/services/mod.rs` (preservando IDs estáveis de espaços em `update_venue` + concorrência otimista `expected_updated_at`), `SqliteStore` e comandos Tauri em `src-tauri/src/commands/venues.rs`.
-- **1.4 Configurações de Alocação (`Configurações > Operação`):** `TenantSettingStore`, `get_allocation_settings` (defaults idempotentes `30`, `20`, `60`), `update_allocation_settings` (`0..=240` min + auditoria), comandos Tauri em `src-tauri/src/commands/settings.rs` e tela `/settings/operation`.
-- **1.5 Frontend de Locais:** Lista virtualizada `/venues` com busca por nome/cidade/espaço/contato, `/venues/new`, `/venues/[id]` (somente leitura para `venue:read` sem `venue:manage`), componente `src/lib/components/venue-form.svelte` com abas (Dados do Local, Espaços com ficha técnica recolhível, Contatos com `<PhoneInput>`), aviso não bloqueante de duplicidade `nome + cidade`, sidebar e paleta `Ctrl+K`.
-- **1.6 Testes:** Core (`test_venue_domain_validations_and_limits`), SQLite (`test_store_venues_fk_unique_spaces_contacts_and_isolation`, `test_store_allocation_settings_idempotent_and_rbac`), Vitest (`src/lib/data/venue-repository.spec.ts`) e Playwright E2E (`e2e/venues.spec.ts`).
-- **1.7 Documentação:** Atualização de `docs/02-modelo-dados.md`, `docs/03-regras-negocio.md` e adendo da `docs/decisions/0012-modelo-de-alocacao.md`.
+- **Branch:** `fase-1d-locais` (PR #9)
+- **Commit de referência do código:** `9779bc5aee753e167360dc835bb97f641e7dc2d4`
+- **Status:** Pronto para revisão / merge na `main` (sem merge e sem tag, conforme regra do projeto)
 
 ---
 
-## 2. URLs Raw Fixadas no Hash (`b4f4eb9dbe5bcdd6931f1b992a081d1167a32608`)
+## 1. Correções da Rodada 1D-rev
 
-- Migração `0007`: https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/crates/store-sqlite/migrations/0007_venues_and_settings.sql
-- Permissões (`permission.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/crates/core/src/domain/permission.rs
-- Domínio de Locais (`venue.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/crates/core/src/domain/venue.rs
-- Domínio de Configurações (`settings.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/crates/core/src/domain/settings.rs
-- Store Traits (`store/mod.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/crates/core/src/store/mod.rs
-- Serviços (`services/mod.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/crates/core/src/services/mod.rs
-- Store SQLite (`store-sqlite/src/lib.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/crates/store-sqlite/src/lib.rs
-- Comandos Tauri (`venues.rs` / `settings.rs`):
-  - https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/src-tauri/src/commands/venues.rs
-  - https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/src-tauri/src/commands/settings.rs
-- E2E Playwright (`e2e/venues.spec.ts`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/b4f4eb9dbe5bcdd6931f1b992a081d1167a32608/e2e/venues.spec.ts
+- **R1 (`internal_transfer_minutes` no Local + padrão na empresa):** Movido de `venue_space` para `venue` como `INTEGER NULL CHECK (internal_transfer_minutes IS NULL OR (internal_transfer_minutes >= 0 AND internal_transfer_minutes <= 240))` (`NULL` = usar o padrão da empresa `allocation.default_internal_transfer_minutes`, padrão `20` min; `0` explícito = zero).
+- **R2 (`venue_space` ficha técnica e `CHECK`s):** Adicionadas colunas `setup_hours_notes`, `noise_restrictions_notes` e `load_dimensions_notes` (`TEXT NULL`, até 2000 caracteres validadas no `core` e exibidas na seção recolhível), além de `CHECK (valor IS NULL OR valor > 0)` em `area_sqm` (até `1.000.000`) e `ceiling_height_m` (até `100`).
+- **R3 (`tenant_setting` exceção documentada):** Documentado em `AGENTS.md` e `docs/02-modelo-dados.md` que `tenant_setting` não possui `created_at` nem exclusão lógica (`deleted_at`), mantendo todo histórico de alterações no `audit_log` na mesma transação (comprovado em `test_store_allocation_settings_idempotent_and_rbac`).
+- **R4 (`get_allocation_settings` somente leitura):** `get_allocation_settings` e o método interno `get_allocation_settings_for_tenant` não gravam nada no banco quando a chave está ausente (retornam defaults em memória); valores inválidos no banco caem para o padrão em memória com `tracing::warn!`.
+- **R5 (`scripts/verify.js`):** Adicionado `cargo clippy -p <crate> -- -D warnings` sem unificação de features para `eventrent-core`, `eventrent-store-sqlite` e `eventrent-app`.
 
 ---
 
-## 3. Trechos Exatos do Código
+## 2. URLs Raw Fixadas no Hash (`9779bc5aee753e167360dc835bb97f641e7dc2d4`)
 
-### 3.1 `SYSTEM_ROLES` em `crates/core/src/domain/permission.rs`
+- Migração `0007`: https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/9779bc5aee753e167360dc835bb97f641e7dc2d4/crates/store-sqlite/migrations/0007_venues_and_settings.sql
+- Domínio de Locais (`venue.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/9779bc5aee753e167360dc835bb97f641e7dc2d4/crates/core/src/domain/venue.rs
+- Domínio de Configurações (`settings.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/9779bc5aee753e167360dc835bb97f641e7dc2d4/crates/core/src/domain/settings.rs
+- Serviços (`services/mod.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/9779bc5aee753e167360dc835bb97f641e7dc2d4/crates/core/src/services/mod.rs
+- Store Traits (`store/mod.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/9779bc5aee753e167360dc835bb97f641e7dc2d4/crates/core/src/store/mod.rs
+- Store SQLite (`store-sqlite/src/lib.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/9779bc5aee753e167360dc835bb97f641e7dc2d4/crates/store-sqlite/src/lib.rs
+- Comandos Tauri (`commands/venues.rs`): https://raw.githubusercontent.com/FarrofaDeBacon/eventrent/9779bc5aee753e167360dc835bb97f641e7dc2d4/src-tauri/src/commands/venues.rs
 
-```rust
-pub const SYSTEM_ROLES: &[SystemRoleSpec] = &[
-    SystemRoleSpec {
-        name: "Proprietário",
-        slug: ROLE_SLUG_OWNER,
-        description:
-            "Acesso total à administração, configurações, usuários, financeiro e operação.",
-        permissions: ALL_PERMISSIONS,
-    },
-    SystemRoleSpec {
-        name: "Comercial",
-        slug: ROLE_SLUG_COMMERCIAL,
-        description: "Gestão de clientes, orçamentos, reservas e consulta ao catálogo.",
-        permissions: &[
-            PERM_CUSTOMER_READ,
-            PERM_CUSTOMER_MANAGE,
-            PERM_SUPPLIER_READ,
-            PERM_VENUE_READ,
-            PERM_VENUE_MANAGE,
-            PERM_CATALOG_READ,
-            PERM_RESERVATION_READ,
-            PERM_RESERVATION_MANAGE,
-            PERM_QUOTE_READ,
-            PERM_QUOTE_MANAGE,
-            PERM_BRANDING_READ,
-        ],
-    },
-    SystemRoleSpec {
-        name: "Estoque",
-        slug: ROLE_SLUG_WAREHOUSE,
-        description: "Gestão do catálogo de equipamentos, patrimônio, separação e conferência.",
-        permissions: &[
-            PERM_SUPPLIER_READ,
-            PERM_SUPPLIER_MANAGE,
-            PERM_VENUE_READ,
-            PERM_VENUE_MANAGE,
-            PERM_CATALOG_READ,
-            PERM_CATALOG_MANAGE,
-            PERM_RESERVATION_READ,
-            PERM_WAREHOUSE_READ,
-            PERM_WAREHOUSE_OPERATE,
-            PERM_BRANDING_READ,
-        ],
-    },
-    SystemRoleSpec {
-        name: "Técnico",
-        slug: ROLE_SLUG_TECHNICIAN,
-        description:
-            "Operação de conferência de carga, leitura QR, manutenção e consulta de eventos.",
-        permissions: &[
-            PERM_VENUE_READ,
-            PERM_CATALOG_READ,
-            PERM_RESERVATION_READ,
-            PERM_WAREHOUSE_READ,
-            PERM_WAREHOUSE_OPERATE,
-            PERM_BRANDING_READ,
-        ],
-    },
-    SystemRoleSpec {
-        name: "Financeiro",
-        slug: ROLE_SLUG_FINANCE,
-        description: "Gestão de faturamento, contas a pagar/receber, contratos e auditoria.",
-        permissions: &[
-            PERM_CUSTOMER_READ,
-            PERM_SUPPLIER_READ,
-            PERM_SUPPLIER_MANAGE,
-            PERM_VENUE_READ,
-            PERM_QUOTE_READ,
-            PERM_RESERVATION_READ,
-            PERM_FINANCE_READ,
-            PERM_FINANCE_MANAGE,
-            PERM_AUDIT_READ,
-            PERM_BRANDING_READ,
-        ],
-    },
-];
-```
+---
 
-### 3.2 `venue_space` e `tenant_setting` em `crates/store-sqlite/migrations/0007_venues_and_settings.sql`
+## 3. DDL Completo de `venue` e `venue_space` (`0007_venues_and_settings.sql`)
 
 ```sql
+CREATE TABLE venue (
+    id TEXT PRIMARY KEY NOT NULL,
+    tenant_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    street TEXT,
+    number TEXT,
+    complement TEXT,
+    neighborhood TEXT,
+    city TEXT,
+    state TEXT,
+    postal_code TEXT,
+    country TEXT NOT NULL DEFAULT 'BR',
+    parking_notes TEXT,
+    loading_dock_notes TEXT,
+    access_hours TEXT,
+    internal_transfer_minutes INTEGER CHECK (internal_transfer_minutes IS NULL OR (internal_transfer_minutes >= 0 AND internal_transfer_minutes <= 240)),
+    notes TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    search_text TEXT NOT NULL,
+    name_sort TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT,
+    created_by TEXT,
+    FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES app_user(id) ON DELETE SET NULL,
+    UNIQUE (tenant_id, id)
+);
+
+CREATE INDEX idx_venue_tenant_sort
+    ON venue (tenant_id, name_sort, id)
+    WHERE deleted_at IS NULL;
+
 CREATE TABLE venue_space (
     id TEXT PRIMARY KEY NOT NULL,
     tenant_id TEXT NOT NULL,
@@ -135,13 +71,15 @@ CREATE TABLE venue_space (
     name TEXT NOT NULL,
     name_normalized TEXT NOT NULL,
     capacity_people INTEGER,
-    area_sqm REAL,
-    ceiling_height_m REAL,
+    area_sqm REAL CHECK (area_sqm IS NULL OR area_sqm > 0),
+    ceiling_height_m REAL CHECK (ceiling_height_m IS NULL OR ceiling_height_m > 0),
     power_available TEXT,
     loading_access TEXT,
     rigging_points TEXT,
     acoustics_notes TEXT,
-    internal_transfer_minutes INTEGER NOT NULL DEFAULT 0 CHECK (internal_transfer_minutes >= 0 AND internal_transfer_minutes <= 240),
+    setup_hours_notes TEXT,
+    noise_restrictions_notes TEXT,
+    load_dimensions_notes TEXT,
     notes TEXT,
     active INTEGER NOT NULL DEFAULT 1,
     sort_order INTEGER NOT NULL DEFAULT 0,
@@ -164,29 +102,531 @@ CREATE UNIQUE INDEX idx_venue_space_name_active
     WHERE deleted_at IS NULL;
 ```
 
-```sql
-CREATE TABLE tenant_setting (
-    id TEXT PRIMARY KEY NOT NULL,
-    tenant_id TEXT NOT NULL,
-    setting_key TEXT NOT NULL,
-    setting_value TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    updated_by TEXT,
-    FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE,
-    FOREIGN KEY (updated_by) REFERENCES app_user(id) ON DELETE SET NULL,
-    UNIQUE (tenant_id, setting_key)
-);
+---
+
+## 4. Trechos Exatos do Código (`crates/core/src/services/mod.rs`)
+
+### 4.1 `add_customer_role`
+
+```rust
+    /// Ativa um papel (`Customer` ou `Supplier`) em um cadastro de terceiro já existente.
+    /// Exige `manage` SOMENTE do papel que está sendo adicionado.
+    pub async fn add_customer_role(
+        &self,
+        session: &SessionInfo,
+        id: &str,
+        role: CustomerRole,
+    ) -> Result<CustomerWithDetails> {
+        let required_perm = match role {
+            CustomerRole::Customer => PERM_CUSTOMER_MANAGE,
+            CustomerRole::Supplier => PERM_SUPPLIER_MANAGE,
+        };
+        self.check_session_and_permission(session, required_perm)?;
+
+        let session_clone = session.clone();
+        let id_str = id.to_string();
+        let now = Utc::now().to_rfc3339();
+
+        self.run_transaction(|stores| {
+            let session = session_clone.clone();
+            let id = id_str.clone();
+            let now = now.clone();
+
+            Box::pin(async move {
+                let mut existing = stores
+                    .customers()
+                    .find_by_id(&session.tenant_id, &id)
+                    .await?
+                    .ok_or_else(|| CoreError::NotFound("Cadastro não encontrado.".to_string()))?;
+
+                let already_has_role = match role {
+                    CustomerRole::Customer => existing.customer.is_customer,
+                    CustomerRole::Supplier => existing.customer.is_supplier,
+                };
+                if already_has_role {
+                    return Ok(existing);
+                }
+
+                match role {
+                    CustomerRole::Customer => existing.customer.is_customer = true,
+                    CustomerRole::Supplier => existing.customer.is_supplier = true,
+                }
+                existing.customer.updated_at = now;
+
+                stores
+                    .customers()
+                    .update(
+                        &existing.customer,
+                        &existing.contacts,
+                        &existing.addresses,
+                        &existing.supplier_categories,
+                    )
+                    .await?;
+
+                let masked_audit_name = if existing.customer.person_type == PersonType::Individual {
+                    mask_individual_name_for_audit(&existing.customer.name)
+                } else {
+                    existing.customer.name.clone()
+                };
+                let added_label = match role {
+                    CustomerRole::Customer => "Cliente",
+                    CustomerRole::Supplier => "Fornecedor",
+                };
+                let audit_detail = format!(
+                    "Papel '{added_label}' adicionado ao cadastro '{}' (id: {})",
+                    masked_audit_name, existing.customer.id
+                );
+
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &session.tenant_id,
+                        Some(&session.user_id),
+                        "customer.role_added",
+                        "customer",
+                        &existing.customer.id,
+                        &audit_detail,
+                    ))
+                    .await?;
+
+                Ok(existing)
+            })
+        })
+        .await
+    }
+```
+
+### 4.2 `update_venue` (preservação de IDs de espaços e `expected_updated_at`)
+
+```rust
+    pub async fn update_venue(
+        &self,
+        session: &SessionInfo,
+        input: &UpdateVenueInput,
+    ) -> Result<VenueWithDetails> {
+        self.check_session_and_permission(session, PERM_VENUE_MANAGE)?;
+
+        if input.expected_updated_at.trim().is_empty() {
+            return Err(CoreError::Validation(
+                "expected_updated_at é obrigatório para atualização concorrente.".to_string(),
+            ));
+        }
+
+        let fields = validate_venue_fields(
+            &input.name,
+            input.street.clone(),
+            input.number.clone(),
+            input.complement.clone(),
+            input.neighborhood.clone(),
+            input.city.clone(),
+            input.state.clone(),
+            input.postal_code.clone(),
+            &input.country,
+            input.parking_notes.clone(),
+            input.loading_dock_notes.clone(),
+            input.access_hours.clone(),
+            input.internal_transfer_minutes,
+            input.notes.clone(),
+        )?;
+
+        let mut space_inputs = input.spaces.clone();
+        validate_venue_spaces(&mut space_inputs)?;
+
+        let mut contact_inputs = input.contacts.clone();
+        validate_venue_contacts(&mut contact_inputs, &fields.country)?;
+
+        let now = Utc::now().to_rfc3339();
+        let search_text = build_venue_search_text(&fields, &space_inputs, &contact_inputs);
+        let name_sort = build_venue_name_sort(&fields.name);
+
+        let session_clone = session.clone();
+        let id_str = input.id.clone();
+        let expected_updated_at = input.expected_updated_at.clone();
+
+        self.run_transaction(|stores| {
+            let session = session_clone.clone();
+            let id = id_str.clone();
+            let expected_updated_at = expected_updated_at.clone();
+            let now = now.clone();
+            let name = fields.name.clone();
+            let street = fields.street.clone();
+            let number = fields.number.clone();
+            let complement = fields.complement.clone();
+            let neighborhood = fields.neighborhood.clone();
+            let city = fields.city.clone();
+            let state = fields.state.clone();
+            let postal_code = fields.postal_code.clone();
+            let country = fields.country.clone();
+            let parking_notes = fields.parking_notes.clone();
+            let loading_dock_notes = fields.loading_dock_notes.clone();
+            let access_hours = fields.access_hours.clone();
+            let internal_transfer_minutes = fields.internal_transfer_minutes;
+            let notes = fields.notes.clone();
+            let search_text = search_text.clone();
+            let name_sort = name_sort.clone();
+            let space_inputs = space_inputs.clone();
+            let contact_inputs = contact_inputs.clone();
+
+            Box::pin(async move {
+                let existing = stores
+                    .venues()
+                    .find_by_id(&session.tenant_id, &id)
+                    .await?
+                    .ok_or_else(|| {
+                        CoreError::NotFound("Local de evento não encontrado.".to_string())
+                    })?;
+
+                if existing.venue.updated_at != expected_updated_at {
+                    return Err(CoreError::Conflict(
+                        "O cadastro do local foi alterado por outra pessoa. Recarregue os dados antes de salvar."
+                            .to_string(),
+                    ));
+                }
+
+                let existing_space_map: std::collections::HashMap<String, &VenueSpace> = existing
+                    .spaces
+                    .iter()
+                    .map(|s| (s.id.clone(), s))
+                    .collect();
+                let mut seen_space_ids = std::collections::HashSet::new();
+
+                let mut spaces = Vec::with_capacity(space_inputs.len());
+                for (idx, sp) in space_inputs.into_iter().enumerate() {
+                    let (space_id, created_at, created_by) = match sp.id {
+                        Some(ref raw_id) if !raw_id.trim().is_empty() => {
+                            let sid = raw_id.trim().to_string();
+                            if !seen_space_ids.insert(sid.clone()) {
+                                return Err(CoreError::Validation(
+                                    "IDs de espaço duplicados na atualização.".to_string(),
+                                ));
+                            }
+                            let prev = existing_space_map.get(&sid).ok_or_else(|| {
+                                CoreError::Validation(format!(
+                                    "O espaço informado (id: {sid}) não pertence a este local."
+                                ))
+                            })?;
+                            (sid, prev.created_at.clone(), prev.created_by.clone())
+                        }
+                        _ => (
+                            Uuid::now_v7().to_string(),
+                            now.clone(),
+                            Some(session.user_id.clone()),
+                        ),
+                    };
+
+                    spaces.push(VenueSpace {
+                        id: space_id,
+                        tenant_id: session.tenant_id.clone(),
+                        venue_id: existing.venue.id.clone(),
+                        name_normalized: normalize_for_search(&sp.name),
+                        name: sp.name,
+                        capacity_people: sp.capacity_people,
+                        area_sqm: sp.area_sqm,
+                        ceiling_height_m: sp.ceiling_height_m,
+                        power_available: sp.power_available,
+                        loading_access: sp.loading_access,
+                        rigging_points: sp.rigging_points,
+                        acoustics_notes: sp.acoustics_notes,
+                        setup_hours_notes: sp.setup_hours_notes,
+                        noise_restrictions_notes: sp.noise_restrictions_notes,
+                        load_dimensions_notes: sp.load_dimensions_notes,
+                        notes: sp.notes,
+                        active: sp.active,
+                        sort_order: if sp.sort_order == 0 {
+                            idx as i64
+                        } else {
+                            sp.sort_order
+                        },
+                        created_at,
+                        updated_at: now.clone(),
+                        deleted_at: None,
+                        created_by,
+                    });
+                }
+
+                let existing_contact_map: std::collections::HashMap<String, &VenueContact> =
+                    existing.contacts.iter().map(|c| (c.id.clone(), c)).collect();
+                let mut seen_contact_ids = std::collections::HashSet::new();
+
+                let mut contacts = Vec::with_capacity(contact_inputs.len());
+                for ct in contact_inputs {
+                    let (contact_id, created_at, created_by) = match ct.id {
+                        Some(ref raw_id) if !raw_id.trim().is_empty() => {
+                            let cid = raw_id.trim().to_string();
+                            if !seen_contact_ids.insert(cid.clone()) {
+                                return Err(CoreError::Validation(
+                                    "IDs de contato duplicados na atualização.".to_string(),
+                                ));
+                            }
+                            let prev = existing_contact_map.get(&cid).ok_or_else(|| {
+                                CoreError::Validation(format!(
+                                    "O contato informado (id: {cid}) não pertence a este local."
+                                ))
+                            })?;
+                            (cid, prev.created_at.clone(), prev.created_by.clone())
+                        }
+                        _ => (
+                            Uuid::now_v7().to_string(),
+                            now.clone(),
+                            Some(session.user_id.clone()),
+                        ),
+                    };
+
+                    contacts.push(VenueContact {
+                        id: contact_id,
+                        tenant_id: session.tenant_id.clone(),
+                        venue_id: existing.venue.id.clone(),
+                        name: ct.name,
+                        email: ct.email,
+                        phone: ct.phone,
+                        role: ct.role,
+                        is_primary: ct.is_primary,
+                        created_at,
+                        updated_at: now.clone(),
+                        deleted_at: None,
+                        created_by,
+                    });
+                }
+
+                let updated_venue = Venue {
+                    id: existing.venue.id.clone(),
+                    tenant_id: session.tenant_id.clone(),
+                    name,
+                    street,
+                    number,
+                    complement,
+                    neighborhood,
+                    city,
+                    state,
+                    postal_code,
+                    country,
+                    parking_notes,
+                    loading_dock_notes,
+                    access_hours,
+                    internal_transfer_minutes,
+                    notes,
+                    active: existing.venue.active,
+                    search_text,
+                    name_sort,
+                    created_at: existing.venue.created_at.clone(),
+                    updated_at: now,
+                    deleted_at: None,
+                    created_by: existing.venue.created_by.clone(),
+                };
+
+                stores
+                    .venues()
+                    .update(&updated_venue, &spaces, &contacts)
+                    .await?;
+
+                let detail = format!(
+                    "Local de evento '{}' atualizado ({} espaço(s), {} contato(s), id: {})",
+                    updated_venue.name,
+                    spaces.len(),
+                    contacts.len(),
+                    updated_venue.id
+                );
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &session.tenant_id,
+                        Some(&session.user_id),
+                        "venue.updated",
+                        "venue",
+                        &updated_venue.id,
+                        &detail,
+                    ))
+                    .await?;
+
+                Ok(VenueWithDetails {
+                    venue: updated_venue,
+                    spaces,
+                    contacts,
+                })
+            })
+        })
+        .await
+    }
+```
+
+### 4.3 `get_allocation_settings`, `get_allocation_settings_for_tenant` e `update_allocation_settings`
+
+```rust
+    pub async fn get_allocation_settings(
+        &self,
+        session: &SessionInfo,
+    ) -> Result<AllocationSettings> {
+        self.check_session_and_permission(session, PERM_SETTINGS_READ)?;
+        self.get_allocation_settings_for_tenant(&session.tenant_id)
+            .await
+    }
+
+    /// Leitura interna sem sessão (utilizada pelo motor de disponibilidade da Fase 3).
+    /// Nunca grava no banco: quando a chave não existe ou tem valor inválido,
+    /// devolve o padrão em memória (registrando aviso no log no caso inválido).
+    pub async fn get_allocation_settings_for_tenant(
+        &self,
+        tenant_id: &str,
+    ) -> Result<AllocationSettings> {
+        let rows = self
+            .stores
+            .settings
+            .get_many(
+                tenant_id,
+                &[
+                    SETTING_DEFAULT_SETUP_MINUTES,
+                    SETTING_DEFAULT_TEARDOWN_MINUTES,
+                    SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
+                    SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES,
+                ],
+            )
+            .await?;
+
+        let mut result = AllocationSettings::default();
+        for row in rows {
+            let parsed_opt = row
+                .setting_value
+                .trim()
+                .parse::<i64>()
+                .ok()
+                .filter(|v| (0..=MAX_ALLOCATION_MINUTES).contains(v));
+
+            let Some(parsed) = parsed_opt else {
+                tracing::warn!(
+                    tenant_id = %tenant_id,
+                    setting_key = %row.setting_key,
+                    raw_value = %row.setting_value,
+                    "Valor inválido em tenant_setting; usando padrão em memória."
+                );
+                continue;
+            };
+
+            match row.setting_key.as_str() {
+                SETTING_DEFAULT_SETUP_MINUTES => result.default_setup_minutes = parsed,
+                SETTING_DEFAULT_TEARDOWN_MINUTES => result.default_teardown_minutes = parsed,
+                SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES => {
+                    result.default_turnover_buffer_minutes = parsed
+                }
+                SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES => {
+                    result.default_internal_transfer_minutes = parsed
+                }
+                _ => {}
+            }
+        }
+        Ok(result)
+    }
+
+    pub async fn update_allocation_settings(
+        &self,
+        session: &SessionInfo,
+        input: &UpdateAllocationSettingsInput,
+    ) -> Result<AllocationSettings> {
+        self.check_session_and_permission(session, PERM_SETTINGS_MANAGE)?;
+        crate::domain::validate_allocation_settings(input)?;
+
+        let session_clone = session.clone();
+        let input_clone = input.clone();
+        let now = Utc::now().to_rfc3339();
+
+        self.run_transaction(|stores| {
+            let session = session_clone.clone();
+            let input = input_clone.clone();
+            let now = now.clone();
+            Box::pin(async move {
+                let pairs = [
+                    (
+                        SETTING_DEFAULT_SETUP_MINUTES,
+                        input.default_setup_minutes.to_string(),
+                    ),
+                    (
+                        SETTING_DEFAULT_TEARDOWN_MINUTES,
+                        input.default_teardown_minutes.to_string(),
+                    ),
+                    (
+                        SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
+                        input.default_turnover_buffer_minutes.to_string(),
+                    ),
+                    (
+                        SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES,
+                        input.default_internal_transfer_minutes.to_string(),
+                    ),
+                ];
+
+                for (key, val) in pairs {
+                    stores
+                        .settings()
+                        .upsert(&TenantSetting {
+                            id: Uuid::now_v7().to_string(),
+                            tenant_id: session.tenant_id.clone(),
+                            setting_key: key.to_string(),
+                            setting_value: val,
+                            updated_at: now.clone(),
+                            updated_by: Some(session.user_id.clone()),
+                        })
+                        .await?;
+                }
+
+                let detail = format!(
+                    "Configurações de alocação atualizadas: montagem={}min, desmontagem={}min, giro={}min, deslocamento={}min",
+                    input.default_setup_minutes,
+                    input.default_teardown_minutes,
+                    input.default_turnover_buffer_minutes,
+                    input.default_internal_transfer_minutes
+                );
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &session.tenant_id,
+                        Some(&session.user_id),
+                        "settings.allocation_updated",
+                        "tenant_setting",
+                        &session.tenant_id,
+                        &detail,
+                    ))
+                    .await?;
+
+                Ok(AllocationSettings {
+                    default_setup_minutes: input.default_setup_minutes,
+                    default_teardown_minutes: input.default_teardown_minutes,
+                    default_turnover_buffer_minutes: input.default_turnover_buffer_minutes,
+                    default_internal_transfer_minutes: input.default_internal_transfer_minutes,
+                })
+            })
+        })
+        .await
+    }
 ```
 
 ---
 
-## 4. Verificações Executadas
+## 5. Trecho Alterado em `scripts/verify.js` (Clippy por Crate)
 
-- `pnpm verify` (7/7 etapas):
-  - `svelte-check`: 0 erros, 0 avisos
-  - Lint de código & cores: 0 cores literais em 36 componentes `.svelte`, Prettier e ESLint 100% conformes
-  - Vitest: 7 arquivos, 39 testes passando (incluindo `src/lib/data/venue-repository.spec.ts`)
-  - Prova de congelamento de migrações: 6/6 cenários passando
-  - `cargo fmt --check` & `cargo clippy --workspace -- -D warnings`: 0 avisos/erros
-  - Rust workspace tests: 9 (`eventrent_app_lib`) + 18 (`eventrent_core`) + 28 (`eventrent_store_sqlite`) = **55/55 passando** (incluindo `contract_supplier_rbac_and_dual_roles`, `test_venue_domain_validations_and_limits`, `test_store_venues_fk_unique_spaces_contacts_and_isolation` e `test_store_allocation_settings_idempotent_and_rbac`)
-- `pnpm test:e2e` (Playwright): **5/5 passando** (`smoke.spec.ts`, `branding.spec.ts`, `customers.spec.ts`, `suppliers.spec.ts`, `venues.spec.ts`).
+```js
+  {
+    name: "Clippy Linter (Workspace)",
+    command: "cargo",
+    args: ["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
+  },
+  {
+    name: "Clippy Linter (eventrent-core sem unificação)",
+    command: "cargo",
+    args: ["clippy", "-p", "eventrent-core", "--", "-D", "warnings"],
+  },
+  {
+    name: "Clippy Linter (eventrent-store-sqlite sem unificação)",
+    command: "cargo",
+    args: ["clippy", "-p", "eventrent-store-sqlite", "--", "-D", "warnings"],
+  },
+  {
+    name: "Clippy Linter (eventrent-app sem unificação)",
+    command: "cargo",
+    args: ["clippy", "-p", "eventrent-app", "--", "-D", "warnings"],
+  },
+```
+
+---
+
+## 6. Verificações Executadas
+
+- `pnpm verify` (10/10 etapas): `svelte-check` (0 erros/avisos), `check-no-hardcoded-colors` (0 cores literais em 36 `.svelte`), Prettier/ESLint, Vitest (**39/39**), prova de congelamento de migrações (**6/6**), `cargo fmt --check`, Clippy workspace + Clippy por crate sem unificação de features (`eventrent-core`, `eventrent-store-sqlite`, `eventrent-app`), e testes Rust (**9** `eventrent_app_lib` + **18** `eventrent_core` + **28** `eventrent_store_sqlite` = **55/55**).
+- `pnpm test:e2e` (Playwright): **5/5** (`smoke.spec.ts`, `branding.spec.ts`, `customers.spec.ts`, `suppliers.spec.ts`, `venues.spec.ts`).
