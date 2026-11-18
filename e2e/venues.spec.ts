@@ -31,12 +31,13 @@ test.describe("E2E — Locais de Evento, Espaços e Operação (Fase 1D)", () =>
     await expect(page).toHaveURL(/\/settings\/operation$/);
 
     await expect(
-      page.getByLabel("Montagem padrão (min)", { exact: true }),
+      page.getByLabel("Virada no mesmo espaço (min)", { exact: true }),
     ).toHaveValue("30");
-    await page.getByLabel("Montagem padrão (min)", { exact: true }).fill("45");
-    await page.getByLabel("Desmontagem padrão (min)").fill("25");
-    await page.getByLabel("Buffer de giro (min)").fill("90");
-    await page.getByLabel("Deslocamento interno padrão (min)").fill("35");
+    await page
+      .getByLabel("Virada no mesmo espaço (min)", { exact: true })
+      .fill("45");
+    await page.getByLabel("Deslocamento interno (min)").fill("35");
+    await page.getByLabel("Deslocamento externo (min)").fill("120");
     await page.getByRole("button", { name: "Salvar configurações" }).click();
     await expect(
       page.getByText("Configurações operacionais salvas com sucesso."),

@@ -324,17 +324,15 @@ export interface CustomerPage {
 }
 
 export interface AllocationSettings {
-  default_setup_minutes: number;
-  default_teardown_minutes: number;
-  default_turnover_buffer_minutes: number;
-  default_internal_transfer_minutes: number;
+  changeover_minutes: number;
+  internal_transfer_minutes: number;
+  external_transfer_minutes: number;
 }
 
 export interface UpdateAllocationSettingsInput {
-  default_setup_minutes: number;
-  default_teardown_minutes: number;
-  default_turnover_buffer_minutes: number;
-  default_internal_transfer_minutes: number;
+  changeover_minutes: number;
+  internal_transfer_minutes: number;
+  external_transfer_minutes: number;
 }
 
 export interface Venue {

@@ -395,7 +395,7 @@ pub fn resolve_venue_internal_transfer_minutes(
 ) -> i64 {
     venue
         .internal_transfer_minutes
-        .unwrap_or(settings.default_internal_transfer_minutes)
+        .unwrap_or(settings.internal_transfer_minutes)
 }
 
 pub fn validate_venue_spaces(spaces: &mut [VenueSpaceInput]) -> CoreResult<()> {

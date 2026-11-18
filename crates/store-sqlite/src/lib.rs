@@ -5213,10 +5213,9 @@ mod tests {
             .get_allocation_settings(&readonly_session)
             .await
             .unwrap();
-        assert_eq!(s1.default_setup_minutes, 30);
-        assert_eq!(s1.default_teardown_minutes, 20);
-        assert_eq!(s1.default_turnover_buffer_minutes, 60);
-        assert_eq!(s1.default_internal_transfer_minutes, 20);
+        assert_eq!(s1.changeover_minutes, 30);
+        assert_eq!(s1.internal_transfer_minutes, 20);
+        assert_eq!(s1.external_transfer_minutes, 60);
 
         let count_after_read: i64 =
             sqlx::query("SELECT COUNT(*) as total FROM tenant_setting WHERE tenant_id = ?")
@@ -5230,7 +5229,15 @@ mod tests {
             "get_allocation_settings não pode gravar no banco quando chave está ausente"
         );
 
-        // Leitura interna sem sessão devolve o mesmo padrão
+        // Chave antiga no banco deve ser ignorada silenciosamente
+        sqlx::query(
+            "INSERT INTO tenant_setting (id, tenant_id, setting_key, setting_value, updated_at) VALUES ('old-1', 'tenant-set-1', 'allocation.default_setup_minutes', '99', ?)",
+        )
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
         let internal_s1 = services
             .get_allocation_settings_for_tenant("tenant-set-1")
             .await
@@ -5242,10 +5249,9 @@ mod tests {
             .update_allocation_settings(
                 &readonly_session,
                 &UpdateAllocationSettingsInput {
-                    default_setup_minutes: 45,
-                    default_teardown_minutes: 30,
-                    default_turnover_buffer_minutes: 90,
-                    default_internal_transfer_minutes: 25,
+                    changeover_minutes: 45,
+                    internal_transfer_minutes: 25,
+                    external_transfer_minutes: 120,
                 },
             )
             .await;
@@ -5256,18 +5262,16 @@ mod tests {
             .update_allocation_settings(
                 &owner_session,
                 &UpdateAllocationSettingsInput {
-                    default_setup_minutes: 45,
-                    default_teardown_minutes: 30,
-                    default_turnover_buffer_minutes: 90,
-                    default_internal_transfer_minutes: 25,
+                    changeover_minutes: 45,
+                    internal_transfer_minutes: 25,
+                    external_transfer_minutes: 120,
                 },
             )
             .await
             .unwrap();
-        assert_eq!(updated.default_setup_minutes, 45);
-        assert_eq!(updated.default_teardown_minutes, 30);
-        assert_eq!(updated.default_turnover_buffer_minutes, 90);
-        assert_eq!(updated.default_internal_transfer_minutes, 25);
+        assert_eq!(updated.changeover_minutes, 45);
+        assert_eq!(updated.internal_transfer_minutes, 25);
+        assert_eq!(updated.external_transfer_minutes, 120);
 
         let reloaded = services
             .get_allocation_settings(&readonly_session)
@@ -5285,19 +5289,20 @@ mod tests {
         .unwrap();
         assert_eq!(audit_rows.len(), 1);
         let summary: String = audit_rows[0].get("summary");
-        assert!(summary.contains("montagem=45min"));
-        assert!(summary.contains("deslocamento=25min"));
+        assert!(summary.contains("virada=45min"));
+        assert!(summary.contains("deslocamento_interno=25min"));
+        assert!(summary.contains("deslocamento_externo=120min"));
 
-        // 5. Valor inválido no banco (não numérico ou > 240) cai para o padrão em memória com aviso no log
+        // 5. Valor inválido no banco (não numérico ou acima do limite) cai para o padrão em memória com aviso no log
         sqlx::query(
-            "UPDATE tenant_setting SET setting_value = 'nao-numerico' WHERE tenant_id = ? AND setting_key = 'allocation.default_setup_minutes'",
+            "UPDATE tenant_setting SET setting_value = 'nao-numerico' WHERE tenant_id = ? AND setting_key = 'allocation.changeover_minutes'",
         )
         .bind("tenant-set-1")
         .execute(&pool)
         .await
         .unwrap();
         sqlx::query(
-            "UPDATE tenant_setting SET setting_value = '999' WHERE tenant_id = ? AND setting_key = 'allocation.default_internal_transfer_minutes'",
+            "UPDATE tenant_setting SET setting_value = '999' WHERE tenant_id = ? AND setting_key = 'allocation.external_transfer_minutes'",
         )
         .bind("tenant-set-1")
         .execute(&pool)
@@ -5308,9 +5313,8 @@ mod tests {
             .get_allocation_settings_for_tenant("tenant-set-1")
             .await
             .unwrap();
-        assert_eq!(fallback.default_setup_minutes, 30);
-        assert_eq!(fallback.default_teardown_minutes, 30);
-        assert_eq!(fallback.default_turnover_buffer_minutes, 90);
-        assert_eq!(fallback.default_internal_transfer_minutes, 20);
+        assert_eq!(fallback.changeover_minutes, 30);
+        assert_eq!(fallback.internal_transfer_minutes, 25);
+        assert_eq!(fallback.external_transfer_minutes, 60);
     }
 }

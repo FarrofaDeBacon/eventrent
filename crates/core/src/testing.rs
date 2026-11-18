@@ -3813,27 +3813,46 @@ mod unit_tests {
 
         assert!(
             validate_allocation_settings(&UpdateAllocationSettingsInput {
-                default_setup_minutes: 0,
-                default_teardown_minutes: 240,
-                default_turnover_buffer_minutes: 60,
-                default_internal_transfer_minutes: 20,
+                changeover_minutes: 0,
+                internal_transfer_minutes: 240,
+                external_transfer_minutes: 720,
             })
             .is_ok()
         );
         assert!(matches!(
             validate_allocation_settings(&UpdateAllocationSettingsInput {
-                default_setup_minutes: -1,
-                default_teardown_minutes: 20,
-                default_turnover_buffer_minutes: 60,
-                default_internal_transfer_minutes: 20,
+                changeover_minutes: -1,
+                internal_transfer_minutes: 20,
+                external_transfer_minutes: 60,
             }),
             Err(CoreError::Validation(_))
         ));
+        assert!(matches!(
+            validate_allocation_settings(&UpdateAllocationSettingsInput {
+                changeover_minutes: 241,
+                internal_transfer_minutes: 20,
+                external_transfer_minutes: 60,
+            }),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            validate_allocation_settings(&UpdateAllocationSettingsInput {
+                changeover_minutes: 30,
+                internal_transfer_minutes: 20,
+                external_transfer_minutes: 721,
+            }),
+            Err(CoreError::Validation(_))
+        ));
+        // Todos os campos da entrada são obrigatórios (sem serde default)
+        let missing_field_json = r#"{"changeover_minutes": 30, "external_transfer_minutes": 60}"#;
+        assert!(serde_json::from_str::<UpdateAllocationSettingsInput>(missing_field_json).is_err());
 
         // Local sem internal_transfer_minutes usa padrão (20); local com 0 explícito usa 0
         use crate::domain::{resolve_venue_internal_transfer_minutes, AllocationSettings, Venue};
         let default_settings = AllocationSettings::default();
-        assert_eq!(default_settings.default_internal_transfer_minutes, 20);
+        assert_eq!(default_settings.changeover_minutes, 30);
+        assert_eq!(default_settings.internal_transfer_minutes, 20);
+        assert_eq!(default_settings.external_transfer_minutes, 60);
         let venue_null = Venue {
             id: "v-1".to_string(),
             tenant_id: "t-1".to_string(),

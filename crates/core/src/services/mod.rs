@@ -12,12 +12,12 @@ use crate::domain::{
     RoleWithPermissions, SessionInfo, Tenant, TenantBranding, TenantSetting,
     UpdateAllocationSettingsInput, UpdateBrandingInput, UpdateCustomerInput, UpdateUserInput,
     UpdateVenueInput, UserRecord, UserWithRole, Venue, VenueContact, VenueCursor, VenueFilter,
-    VenuePage, VenueSpace, VenueWithDetails, MAX_ALLOCATION_MINUTES, PERM_BRANDING_MANAGE,
-    PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ,
-    PERM_SETTINGS_MANAGE, PERM_SETTINGS_READ, PERM_SUPPLIER_MANAGE, PERM_SUPPLIER_READ,
-    PERM_USER_MANAGE, PERM_USER_READ, PERM_VENUE_MANAGE, PERM_VENUE_READ, ROLE_SLUG_OWNER,
-    SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES, SETTING_DEFAULT_SETUP_MINUTES,
-    SETTING_DEFAULT_TEARDOWN_MINUTES, SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES, SYSTEM_ROLES,
+    VenuePage, VenueSpace, VenueWithDetails, MAX_CHANGEOVER_MINUTES, MAX_EXTERNAL_TRANSFER_MINUTES,
+    MAX_INTERNAL_TRANSFER_SETTING_MINUTES, PERM_BRANDING_MANAGE, PERM_BRANDING_READ,
+    PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_SETTINGS_MANAGE,
+    PERM_SETTINGS_READ, PERM_SUPPLIER_MANAGE, PERM_SUPPLIER_READ, PERM_USER_MANAGE, PERM_USER_READ,
+    PERM_VENUE_MANAGE, PERM_VENUE_READ, ROLE_SLUG_OWNER, SETTING_CHANGEOVER_MINUTES,
+    SETTING_EXTERNAL_TRANSFER_MINUTES, SETTING_INTERNAL_TRANSFER_MINUTES, SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
@@ -2968,22 +2968,28 @@ impl CoreServices {
             .get_many(
                 tenant_id,
                 &[
-                    SETTING_DEFAULT_SETUP_MINUTES,
-                    SETTING_DEFAULT_TEARDOWN_MINUTES,
-                    SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
-                    SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES,
+                    SETTING_CHANGEOVER_MINUTES,
+                    SETTING_INTERNAL_TRANSFER_MINUTES,
+                    SETTING_EXTERNAL_TRANSFER_MINUTES,
                 ],
             )
             .await?;
 
         let mut result = AllocationSettings::default();
         for row in rows {
+            let max_allowed = match row.setting_key.as_str() {
+                SETTING_CHANGEOVER_MINUTES => MAX_CHANGEOVER_MINUTES,
+                SETTING_INTERNAL_TRANSFER_MINUTES => MAX_INTERNAL_TRANSFER_SETTING_MINUTES,
+                SETTING_EXTERNAL_TRANSFER_MINUTES => MAX_EXTERNAL_TRANSFER_MINUTES,
+                _ => continue,
+            };
+
             let parsed_opt = row
                 .setting_value
                 .trim()
                 .parse::<i64>()
                 .ok()
-                .filter(|v| (0..=MAX_ALLOCATION_MINUTES).contains(v));
+                .filter(|v| (0..=max_allowed).contains(v));
 
             let Some(parsed) = parsed_opt else {
                 tracing::warn!(
@@ -2996,14 +3002,9 @@ impl CoreServices {
             };
 
             match row.setting_key.as_str() {
-                SETTING_DEFAULT_SETUP_MINUTES => result.default_setup_minutes = parsed,
-                SETTING_DEFAULT_TEARDOWN_MINUTES => result.default_teardown_minutes = parsed,
-                SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES => {
-                    result.default_turnover_buffer_minutes = parsed
-                }
-                SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES => {
-                    result.default_internal_transfer_minutes = parsed
-                }
+                SETTING_CHANGEOVER_MINUTES => result.changeover_minutes = parsed,
+                SETTING_INTERNAL_TRANSFER_MINUTES => result.internal_transfer_minutes = parsed,
+                SETTING_EXTERNAL_TRANSFER_MINUTES => result.external_transfer_minutes = parsed,
                 _ => {}
             }
         }
@@ -3029,20 +3030,16 @@ impl CoreServices {
             Box::pin(async move {
                 let pairs = [
                     (
-                        SETTING_DEFAULT_SETUP_MINUTES,
-                        input.default_setup_minutes.to_string(),
+                        SETTING_CHANGEOVER_MINUTES,
+                        input.changeover_minutes.to_string(),
                     ),
                     (
-                        SETTING_DEFAULT_TEARDOWN_MINUTES,
-                        input.default_teardown_minutes.to_string(),
+                        SETTING_INTERNAL_TRANSFER_MINUTES,
+                        input.internal_transfer_minutes.to_string(),
                     ),
                     (
-                        SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
-                        input.default_turnover_buffer_minutes.to_string(),
-                    ),
-                    (
-                        SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES,
-                        input.default_internal_transfer_minutes.to_string(),
+                        SETTING_EXTERNAL_TRANSFER_MINUTES,
+                        input.external_transfer_minutes.to_string(),
                     ),
                 ];
 
@@ -3061,11 +3058,10 @@ impl CoreServices {
                 }
 
                 let detail = format!(
-                    "Configurações de alocação atualizadas: montagem={}min, desmontagem={}min, giro={}min, deslocamento={}min",
-                    input.default_setup_minutes,
-                    input.default_teardown_minutes,
-                    input.default_turnover_buffer_minutes,
-                    input.default_internal_transfer_minutes
+                    "Configurações de alocação atualizadas: virada={}min, deslocamento_interno={}min, deslocamento_externo={}min",
+                    input.changeover_minutes,
+                    input.internal_transfer_minutes,
+                    input.external_transfer_minutes
                 );
                 stores
                     .audit()
@@ -3080,10 +3076,9 @@ impl CoreServices {
                     .await?;
 
                 Ok(AllocationSettings {
-                    default_setup_minutes: input.default_setup_minutes,
-                    default_teardown_minutes: input.default_teardown_minutes,
-                    default_turnover_buffer_minutes: input.default_turnover_buffer_minutes,
-                    default_internal_transfer_minutes: input.default_internal_transfer_minutes,
+                    changeover_minutes: input.changeover_minutes,
+                    internal_transfer_minutes: input.internal_transfer_minutes,
+                    external_transfer_minutes: input.external_transfer_minutes,
                 })
             })
         })

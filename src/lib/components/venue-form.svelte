@@ -73,7 +73,7 @@
     if (hasPermission(appSession.session, PERMISSIONS.SETTINGS_READ)) {
       try {
         const s = await getSettingsRepository().getAllocationSettings();
-        defaultInternalTransferMinutes = s.default_internal_transfer_minutes;
+        defaultInternalTransferMinutes = s.internal_transfer_minutes;
       } catch {
         // mantém padrão 20 min
       }

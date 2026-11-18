@@ -25,23 +25,17 @@
     hasPermission(appSession.session, PERMISSIONS.SETTINGS_MANAGE),
   );
 
-  let defaultSetupMinutes = $state("30");
-  let defaultTeardownMinutes = $state("20");
-  let defaultTurnoverBufferMinutes = $state("60");
-  let defaultInternalTransferMinutes = $state("20");
+  let changeoverMinutes = $state("30");
+  let internalTransferMinutes = $state("20");
+  let externalTransferMinutes = $state("60");
   let fieldErrors = $state<Record<string, string>>({});
 
   onMount(async () => {
     try {
       const settings = await getSettingsRepository().getAllocationSettings();
-      defaultSetupMinutes = String(settings.default_setup_minutes);
-      defaultTeardownMinutes = String(settings.default_teardown_minutes);
-      defaultTurnoverBufferMinutes = String(
-        settings.default_turnover_buffer_minutes,
-      );
-      defaultInternalTransferMinutes = String(
-        settings.default_internal_transfer_minutes,
-      );
+      changeoverMinutes = String(settings.changeover_minutes);
+      internalTransferMinutes = String(settings.internal_transfer_minutes);
+      externalTransferMinutes = String(settings.external_transfer_minutes);
     } catch (err) {
       toast.error(
         err instanceof Error
@@ -57,6 +51,7 @@
     raw: string | number,
     key: string,
     label: string,
+    max: number,
   ): number | null {
     const trimmed = String(raw ?? "").trim();
     if (!/^\d+$/.test(trimmed)) {
@@ -64,8 +59,8 @@
       return null;
     }
     const parsed = Number.parseInt(trimmed, 10);
-    if (parsed < 0 || parsed > 240) {
-      fieldErrors[key] = `${label} deve estar entre 0 e 240 minutos.`;
+    if (parsed < 0 || parsed > max) {
+      fieldErrors[key] = `${label} deve estar entre 0 e ${max} minutos.`;
       return null;
     }
     return parsed;
@@ -76,32 +71,29 @@
     if (!canEdit || isSaving) return;
 
     fieldErrors = {};
-    const setup = parseMinutes(
-      defaultSetupMinutes,
-      "setup",
-      "Tempo padrão de montagem",
-    );
-    const teardown = parseMinutes(
-      defaultTeardownMinutes,
-      "teardown",
-      "Tempo padrão de desmontagem",
-    );
-    const turnover = parseMinutes(
-      defaultTurnoverBufferMinutes,
-      "turnover",
-      "Buffer padrão de giro",
+    const changeover = parseMinutes(
+      changeoverMinutes,
+      "changeover",
+      "Virada no mesmo espaço",
+      240,
     );
     const internalTransfer = parseMinutes(
-      defaultInternalTransferMinutes,
+      internalTransferMinutes,
       "internalTransfer",
-      "Deslocamento interno padrão",
+      "Deslocamento interno",
+      240,
+    );
+    const externalTransfer = parseMinutes(
+      externalTransferMinutes,
+      "externalTransfer",
+      "Deslocamento externo",
+      720,
     );
 
     if (
-      setup === null ||
-      teardown === null ||
-      turnover === null ||
-      internalTransfer === null
+      changeover === null ||
+      internalTransfer === null ||
+      externalTransfer === null
     ) {
       toast.error("Corrija os campos destacados antes de salvar.");
       return;
@@ -110,19 +102,13 @@
     isSaving = true;
     try {
       const updated = await getSettingsRepository().updateAllocationSettings({
-        default_setup_minutes: setup,
-        default_teardown_minutes: teardown,
-        default_turnover_buffer_minutes: turnover,
-        default_internal_transfer_minutes: internalTransfer,
+        changeover_minutes: changeover,
+        internal_transfer_minutes: internalTransfer,
+        external_transfer_minutes: externalTransfer,
       });
-      defaultSetupMinutes = String(updated.default_setup_minutes);
-      defaultTeardownMinutes = String(updated.default_teardown_minutes);
-      defaultTurnoverBufferMinutes = String(
-        updated.default_turnover_buffer_minutes,
-      );
-      defaultInternalTransferMinutes = String(
-        updated.default_internal_transfer_minutes,
-      );
+      changeoverMinutes = String(updated.changeover_minutes);
+      internalTransferMinutes = String(updated.internal_transfer_minutes);
+      externalTransferMinutes = String(updated.external_transfer_minutes);
       toast.success("Configurações operacionais salvas com sucesso.");
     } catch (err) {
       toast.error(
@@ -144,8 +130,8 @@
         Operação e Alocação
       </h1>
       <p class="text-sm text-muted-foreground">
-        Defina os tempos operacionais padrão aplicados em novas reservas e
-        eventos (ADR-0012).
+        Defina os tempos operacionais padrão de virada e deslocamento aplicados
+        pelo motor de disponibilidade (ADR-0012).
       </p>
     </div>
   </div>
@@ -172,82 +158,40 @@
           Tempos Padrão de Alocação
         </CardTitle>
         <CardDescription>
-          Valores em minutos (0 a 240). Os eventos poderão sobrescrever estes
-          tempos caso a caso.
+          Virada e deslocamento interno aceitam de 0 a 240 minutos; deslocamento
+          externo aceita de 0 a 720 minutos.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <form onsubmit={handleSave} class="space-y-5">
-          <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          <div class="grid gap-5 sm:grid-cols-3">
             <div class="space-y-2">
-              <label for="setup-minutes" class="text-sm font-medium">
-                Montagem padrão (min)
+              <label for="changeover-minutes" class="text-sm font-medium">
+                Virada no mesmo espaço (min)
               </label>
               <Input
-                id="setup-minutes"
+                id="changeover-minutes"
                 type="number"
                 min={0}
                 max={240}
                 step={1}
                 disabled={!canEdit || isSaving}
-                bind:value={defaultSetupMinutes}
+                bind:value={changeoverMinutes}
               />
-              {#if fieldErrors.setup}
-                <p class="text-xs text-destructive">{fieldErrors.setup}</p>
-              {:else}
-                <p class="text-xs text-muted-foreground">
-                  Tempo antes do início do evento (padrão: 30 min).
+              {#if fieldErrors.changeover}
+                <p class="text-xs text-destructive">
+                  {fieldErrors.changeover}
                 </p>
-              {/if}
-            </div>
-
-            <div class="space-y-2">
-              <label for="teardown-minutes" class="text-sm font-medium">
-                Desmontagem padrão (min)
-              </label>
-              <Input
-                id="teardown-minutes"
-                type="number"
-                min={0}
-                max={240}
-                step={1}
-                disabled={!canEdit || isSaving}
-                bind:value={defaultTeardownMinutes}
-              />
-              {#if fieldErrors.teardown}
-                <p class="text-xs text-destructive">{fieldErrors.teardown}</p>
               {:else}
                 <p class="text-xs text-muted-foreground">
-                  Tempo após o encerramento (padrão: 20 min).
-                </p>
-              {/if}
-            </div>
-
-            <div class="space-y-2">
-              <label for="turnover-minutes" class="text-sm font-medium">
-                Buffer de giro (min)
-              </label>
-              <Input
-                id="turnover-minutes"
-                type="number"
-                min={0}
-                max={240}
-                step={1}
-                disabled={!canEdit || isSaving}
-                bind:value={defaultTurnoverBufferMinutes}
-              />
-              {#if fieldErrors.turnover}
-                <p class="text-xs text-destructive">{fieldErrors.turnover}</p>
-              {:else}
-                <p class="text-xs text-muted-foreground">
-                  Intervalo entre devolução e nova saída (padrão: 60 min).
+                  Intervalo entre eventos no mesmo espaço (padrão: 30 min).
                 </p>
               {/if}
             </div>
 
             <div class="space-y-2">
               <label for="transfer-minutes" class="text-sm font-medium">
-                Deslocamento interno padrão (min)
+                Deslocamento interno (min)
               </label>
               <Input
                 id="transfer-minutes"
@@ -256,7 +200,7 @@
                 max={240}
                 step={1}
                 disabled={!canEdit || isSaving}
-                bind:value={defaultInternalTransferMinutes}
+                bind:value={internalTransferMinutes}
               />
               {#if fieldErrors.internalTransfer}
                 <p class="text-xs text-destructive">
@@ -264,7 +208,32 @@
                 </p>
               {:else}
                 <p class="text-xs text-muted-foreground">
-                  Usado em locais sem deslocamento próprio (padrão: 20 min).
+                  Entre espaços do mesmo local quando não definido no cadastro
+                  (padrão: 20 min).
+                </p>
+              {/if}
+            </div>
+
+            <div class="space-y-2">
+              <label for="external-minutes" class="text-sm font-medium">
+                Deslocamento externo (min)
+              </label>
+              <Input
+                id="external-minutes"
+                type="number"
+                min={0}
+                max={720}
+                step={1}
+                disabled={!canEdit || isSaving}
+                bind:value={externalTransferMinutes}
+              />
+              {#if fieldErrors.externalTransfer}
+                <p class="text-xs text-destructive">
+                  {fieldErrors.externalTransfer}
+                </p>
+              {:else}
+                <p class="text-xs text-muted-foreground">
+                  Deslocamento entre locais diferentes (padrão: 60 min).
                 </p>
               {/if}
             </div>
