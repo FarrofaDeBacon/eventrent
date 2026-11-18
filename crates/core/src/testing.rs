@@ -4210,4 +4210,221 @@ mod unit_tests {
             0
         );
     }
+
+    #[test]
+    fn test_catalog_domain_validations_and_inheritance() {
+        use crate::domain::catalog::{
+            resolve_inherited_attributes, validate_attribute_definition_fields,
+            validate_category_tree_placement, validate_ean, validate_equipment_model_fields,
+            validate_model_attribute_values, validate_ncm, AttributeDataType, AttributeDefinition,
+            AttributeValueInput, EquipmentCategory,
+        };
+        use crate::CoreError;
+
+        // 1. EAN-8 / EAN-13 com dígito verificador GS1
+        assert_eq!(
+            validate_ean(Some("7891000315507")).unwrap(),
+            Some("7891000315507".to_string())
+        );
+        assert_eq!(
+            validate_ean(Some("9638-5074")).unwrap(),
+            Some("96385074".to_string())
+        );
+        assert!(matches!(
+            validate_ean(Some("7891000315508")),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            validate_ean(Some("12345")),
+            Err(CoreError::Validation(_))
+        ));
+
+        // 2. NCM 8 dígitos
+        assert_eq!(
+            validate_ncm(Some("8519.81.90")).unwrap(),
+            Some("85198190".to_string())
+        );
+        assert!(matches!(
+            validate_ncm(Some("8519819")),
+            Err(CoreError::Validation(_))
+        ));
+
+        // 3. Dimensões, peso e dinheiro não negativo
+        assert!(matches!(
+            validate_equipment_model_fields(
+                "Mesa X32",
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(0.0),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            validate_equipment_model_fields(
+                "Mesa X32",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(-100),
+                None,
+                None,
+            ),
+            Err(CoreError::Validation(_))
+        ));
+
+        // 4. Ciclo e profundidade máxima 4 níveis na árvore de categorias
+        let mk_cat = |id: &str, parent_id: Option<&str>, name: &str| EquipmentCategory {
+            id: id.to_string(),
+            tenant_id: "t1".to_string(),
+            parent_id: parent_id.map(|s| s.to_string()),
+            name: name.to_string(),
+            name_normalized: name.to_lowercase(),
+            description: None,
+            sort_order: 0,
+            active: true,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            deleted_at: None,
+            created_by: None,
+        };
+        let cats = vec![
+            mk_cat("c1", None, "Áudio"),
+            mk_cat("c2", Some("c1"), "Microfones"),
+            mk_cat("c3", Some("c2"), "Sem Fio"),
+            mk_cat("c4", Some("c3"), "Bastão"),
+        ];
+        // Nível 5 deve falhar
+        assert!(matches!(
+            validate_category_tree_placement(&cats, None, Some("c4")),
+            Err(CoreError::Validation(_))
+        ));
+        // Auto-referência ou mover pai para dentro de filho deve falhar
+        assert!(matches!(
+            validate_category_tree_placement(&cats, Some("c1"), Some("c1")),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            validate_category_tree_placement(&cats, Some("c1"), Some("c3")),
+            Err(CoreError::Validation(_))
+        ));
+
+        // 5. Definições de atributos + herança + validação de valores
+        assert!(matches!(
+            validate_attribute_definition_fields(
+                "proto",
+                "Protocolo",
+                AttributeDataType::Select,
+                None,
+                &[],
+            ),
+            Err(CoreError::Validation(_))
+        ));
+
+        let defs = vec![
+            AttributeDefinition {
+                id: "d1".to_string(),
+                tenant_id: "t1".to_string(),
+                category_id: "c1".to_string(),
+                field_key: "impedancia".to_string(),
+                label: "Impedância".to_string(),
+                data_type: AttributeDataType::Number,
+                unit: Some("Ω".to_string()),
+                choices: vec![],
+                is_required: true,
+                sort_order: 1,
+                active: true,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                deleted_at: None,
+                created_by: None,
+            },
+            AttributeDefinition {
+                id: "d2".to_string(),
+                tenant_id: "t1".to_string(),
+                category_id: "c3".to_string(),
+                field_key: "banda".to_string(),
+                label: "Banda".to_string(),
+                data_type: AttributeDataType::Select,
+                unit: None,
+                choices: vec!["UHF".to_string(), "2.4GHz".to_string()],
+                is_required: false,
+                sort_order: 1,
+                active: true,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                deleted_at: None,
+                created_by: None,
+            },
+        ];
+
+        let effective = resolve_inherited_attributes(&cats, &defs, "c3").unwrap();
+        assert_eq!(effective.len(), 2);
+        assert!(effective[0].is_inherited);
+        assert!(!effective[1].is_inherited);
+
+        // Falha se obrigatório faltar ou opção select inválida
+        assert!(matches!(
+            validate_model_attribute_values(&effective, &[]),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            validate_model_attribute_values(
+                &effective,
+                &[
+                    AttributeValueInput {
+                        definition_id: "d1".to_string(),
+                        value_text: None,
+                        value_number: Some(600.0),
+                        value_bool: None,
+                    },
+                    AttributeValueInput {
+                        definition_id: "d2".to_string(),
+                        value_text: Some("VHF".to_string()),
+                        value_number: None,
+                        value_bool: None,
+                    },
+                ],
+            ),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(validate_model_attribute_values(
+            &effective,
+            &[
+                AttributeValueInput {
+                    definition_id: "d1".to_string(),
+                    value_text: None,
+                    value_number: Some(600.0),
+                    value_bool: None,
+                },
+                AttributeValueInput {
+                    definition_id: "d2".to_string(),
+                    value_text: Some("UHF".to_string()),
+                    value_number: None,
+                    value_bool: None,
+                },
+            ],
+        )
+        .is_ok());
+    }
 }

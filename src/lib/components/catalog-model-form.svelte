@@ -78,23 +78,33 @@
     return (cents / 100).toFixed(2);
   }
 
-  function reaisStrToCents(raw: string): number | null {
-    const trimmed = raw.trim().replace(",", ".");
+  function reaisStrToCents(
+    raw: string | number | null | undefined,
+  ): number | null {
+    const trimmed = String(raw ?? "")
+      .trim()
+      .replace(",", ".");
     if (!trimmed) return null;
     const num = Number(trimmed);
     if (!Number.isFinite(num) || num < 0) return null;
     return Math.round(num * 100);
   }
 
-  function parseOptionalNumber(raw: string): number | null {
-    const trimmed = raw.trim().replace(",", ".");
+  function parseOptionalNumber(
+    raw: string | number | null | undefined,
+  ): number | null {
+    const trimmed = String(raw ?? "")
+      .trim()
+      .replace(",", ".");
     if (!trimmed) return null;
     const num = Number(trimmed);
     return Number.isFinite(num) ? num : null;
   }
 
-  function parseOptionalInt(raw: string): number | null {
-    const trimmed = raw.trim();
+  function parseOptionalInt(
+    raw: string | number | null | undefined,
+  ): number | null {
+    const trimmed = String(raw ?? "").trim();
     if (!trimmed) return null;
     const num = Number.parseInt(trimmed, 10);
     return Number.isFinite(num) ? num : null;

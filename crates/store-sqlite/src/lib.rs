@@ -5352,4 +5352,303 @@ mod tests {
         assert_eq!(fallback.internal_transfer_minutes, 25);
         assert_eq!(fallback.external_transfer_minutes, 60);
     }
+
+    #[tokio::test]
+    async fn test_store_catalog_crud_inheritance_rbac_and_isolation() {
+        use eventrent_core::{
+            AttributeValueInput, CatalogListFilter, ControlMode, CreateBrandInput,
+            CreateEquipmentModelInput, SessionInfo, UpdateEquipmentModelInput, VoltageOption,
+        };
+
+        let pool = init_memory_db().await.unwrap();
+        let store = SqliteStore::new(pool.clone());
+        let services = CoreServices::new(store.into_bundle());
+
+        for tid in ["tenant-cat-a", "tenant-cat-b"] {
+            services
+                .stores
+                .tenants
+                .create(&Tenant {
+                    id: tid.to_string(),
+                    tenant_id: tid.to_string(),
+                    name: format!("Empresa {tid}"),
+                    slug: tid.to_string(),
+                    document_number: None,
+                    created_at: Utc::now().to_rfc3339(),
+                    updated_at: Utc::now().to_rfc3339(),
+                    deleted_at: None,
+                    created_by: None,
+                })
+                .await
+                .unwrap();
+        }
+
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO role (id, tenant_id, name, slug, is_system, created_at, updated_at) VALUES ('role-cat-a', 'tenant-cat-a', 'Estoque', 'warehouse', 1, ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO app_user (id, tenant_id, role_id, name, email, password_hash, active, created_at, updated_at) VALUES ('u-wh-a', 'tenant-cat-a', 'role-cat-a', 'Estoque A', 'u-wh-a@test.com', 'hash', 1, ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mk_session = |uid: &str, tid: &str, perms: &[&str]| {
+            let now = Utc::now().to_rfc3339();
+            SessionInfo {
+                user_id: uid.to_string(),
+                tenant_id: tid.to_string(),
+                name: uid.to_string(),
+                email: format!("{uid}@test.com"),
+                role_id: "role-id".to_string(),
+                role_name: "Role".to_string(),
+                role_slug: "custom".to_string(),
+                permissions: perms.iter().map(|s| s.to_string()).collect(),
+                authenticated_at: now.clone(),
+                last_activity_at: now,
+                inactivity_timeout_minutes: 30,
+            }
+        };
+
+        let warehouse_a = mk_session(
+            "u-wh-a",
+            "tenant-cat-a",
+            &["catalog:read", "catalog:manage"],
+        );
+        let tech_a = mk_session("u-tech-a", "tenant-cat-a", &["catalog:read"]);
+        let finance_a = mk_session("u-fin-a", "tenant-cat-a", &["customer:read"]);
+        let warehouse_b = mk_session(
+            "u-wh-b",
+            "tenant-cat-b",
+            &["catalog:read", "catalog:manage"],
+        );
+
+        // 1. RBAC: Financeiro sem catalog:read recebe Forbidden
+        assert!(matches!(
+            services.list_brands(&finance_a, false).await,
+            Err(CoreError::Forbidden(_))
+        ));
+        assert!(matches!(
+            services
+                .list_equipment_models(&finance_a, &CatalogListFilter::default())
+                .await,
+            Err(CoreError::Forbidden(_))
+        ));
+
+        // 2. RBAC: Técnico (somente catalog:read) não pode carregar sugeridas nem criar marca
+        assert!(matches!(
+            services.load_suggested_catalog_categories(&tech_a).await,
+            Err(CoreError::Forbidden(_))
+        ));
+        assert!(matches!(
+            services
+                .create_brand(
+                    &tech_a,
+                    &CreateBrandInput {
+                        name: "Shure".to_string(),
+                        active: true
+                    }
+                )
+                .await,
+            Err(CoreError::Forbidden(_))
+        ));
+
+        // 3. Carga sugerida idempotente pelo Estoque (warehouse_a)
+        let first_load = services
+            .load_suggested_catalog_categories(&warehouse_a)
+            .await
+            .unwrap();
+        assert!(first_load.categories_created >= 10);
+        assert!(first_load.attributes_created >= 10);
+
+        let second_load = services
+            .load_suggested_catalog_categories(&warehouse_a)
+            .await
+            .unwrap();
+        assert_eq!(second_load.categories_created, 0);
+        assert_eq!(second_load.attributes_created, 0);
+
+        // 4. Herança: "Mesas de som" herda "impedancia_ohms" de "Áudio" + próprios "canais" e "protocolo_digital"
+        let tree = services.list_categories_tree(&tech_a, false).await.unwrap();
+        let audio = tree
+            .iter()
+            .find(|i| i.category.name == "Áudio")
+            .expect("Áudio");
+        let mesas = tree
+            .iter()
+            .find(|i| i.category.name == "Mesas de som")
+            .expect("Mesas de som");
+        let effective = services
+            .get_category_effective_attributes(&tech_a, &mesas.category.id)
+            .await
+            .unwrap();
+        let canais_def = effective
+            .iter()
+            .find(|a| a.definition.field_key == "canais")
+            .expect("canais");
+        let impedancia_def = effective
+            .iter()
+            .find(|a| a.definition.field_key == "impedancia_ohms")
+            .expect("impedancia_ohms herdada");
+        assert!(!canais_def.is_inherited);
+        assert!(impedancia_def.is_inherited);
+
+        // 5. Criação de marca + modelo com atributos herdados e próprios + validação EAN/NCM
+        let behringer = services
+            .create_brand(
+                &warehouse_a,
+                &CreateBrandInput {
+                    name: "Behringer".to_string(),
+                    active: true,
+                },
+            )
+            .await
+            .unwrap();
+
+        let created = services
+            .create_equipment_model(
+                &warehouse_a,
+                &CreateEquipmentModelInput {
+                    category_id: mesas.category.id.clone(),
+                    brand_id: Some(behringer.id.clone()),
+                    name: "X32 Compact".to_string(),
+                    model_code: Some("X32C".to_string()),
+                    sku: Some("AUD-X32C".to_string()),
+                    ean: Some("7891000315507".to_string()),
+                    ncm: Some("8543.70.99".to_string()),
+                    description: Some("Console digital 32 canais".to_string()),
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: Some(15.4),
+                    length_cm: Some(62.5),
+                    width_cm: Some(50.6),
+                    height_cm: Some(21.5),
+                    power_watts: Some(120),
+                    voltage: Some(VoltageOption::Bivolt),
+                    amperage: Some(1.5),
+                    requires_case: true,
+                    units_per_case: Some(1),
+                    daily_rate_cents: Some(35_000),
+                    replacement_value_cents: Some(1_800_000),
+                    cost_price_cents: Some(1_200_000),
+                    active: true,
+                    attribute_values: vec![
+                        AttributeValueInput {
+                            definition_id: canais_def.definition.id.clone(),
+                            value_text: None,
+                            value_number: Some(32.0),
+                            value_bool: None,
+                        },
+                        AttributeValueInput {
+                            definition_id: impedancia_def.definition.id.clone(),
+                            value_text: None,
+                            value_number: Some(600.0),
+                            value_bool: None,
+                        },
+                    ],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.attribute_values.len(), 2);
+        assert_eq!(created.model.ncm.as_deref(), Some("85437099"));
+
+        // 6. Filtro por categoria pai ("Áudio") retorna modelo em subcategoria ("Mesas de som")
+        let list_by_audio = services
+            .list_equipment_models(
+                &tech_a,
+                &CatalogListFilter {
+                    category_id: Some(audio.category.id.clone()),
+                    limit: 50,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(list_by_audio.total_count, 1);
+        assert_eq!(list_by_audio.items[0].model.id, created.model.id);
+
+        // 7. Unicidade parcial de SKU e proteção de exclusão de categoria/marca com modelos
+        assert!(matches!(
+            services.delete_brand(&warehouse_a, &behringer.id).await,
+            Err(CoreError::Conflict(_))
+        ));
+        assert!(matches!(
+            services
+                .delete_category(&warehouse_a, &mesas.category.id)
+                .await,
+            Err(CoreError::Conflict(_))
+        ));
+        assert!(matches!(
+            services
+                .delete_category(&warehouse_a, &audio.category.id)
+                .await,
+            Err(CoreError::Conflict(_))
+        ));
+
+        // 8. Concorrência otimista na atualização do modelo
+        let stale_update = services
+            .update_equipment_model(
+                &warehouse_a,
+                &created.model.id,
+                &UpdateEquipmentModelInput {
+                    category_id: mesas.category.id.clone(),
+                    brand_id: Some(behringer.id.clone()),
+                    name: "X32 Compact v2".to_string(),
+                    model_code: Some("X32C".to_string()),
+                    sku: Some("AUD-X32C".to_string()),
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: Some(40_000),
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
+                    active: true,
+                    attribute_values: vec![],
+                    expected_updated_at: "stale-ts".to_string(),
+                },
+            )
+            .await;
+        assert!(matches!(stale_update, Err(CoreError::Conflict(_))));
+
+        // 9. Isolamento multi-tenant + FK composta no banco
+        let list_b = services
+            .list_equipment_models(&warehouse_b, &CatalogListFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(list_b.total_count, 0);
+
+        let cross_fk = sqlx::query(
+            "INSERT INTO equipment_model (
+                id, tenant_id, category_id, brand_id, name, name_sort,
+                control_mode, requires_case, active, search_text, created_at, updated_at
+             ) VALUES (?, ?, ?, NULL, 'Cross', 'cross', 'serialized', 0, 1, 'cross', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind("cross-model-1")
+        .bind("tenant-cat-b")
+        .bind(&mesas.category.id)
+        .execute(&pool)
+        .await;
+        assert!(
+            cross_fk.is_err(),
+            "FK composta deve impedir vínculo cross-tenant"
+        );
+    }
 }
