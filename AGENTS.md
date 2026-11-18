@@ -79,6 +79,8 @@ Este documento estabelece as diretrizes arquiteturais, de qualidade de código, 
 14. **Proibição de Reconstrução de Tabelas (`DROP`/`CREATE`)**:
     - Preferir sempre `ALTER TABLE ... ADD COLUMN` e novos índices incrementais em novas migrações.
     - É estritamente proibido reconstruir tabelas (`DROP TABLE` + `CREATE TABLE`) sem ADR específico aprovado e sem teste automatizado de migração que comprove preservação integral dos dados existentes.
+15. **Fonte Obrigatória de Requisitos (Fases 2 a 4.5)**:
+    - O documento [`docs/06-requisitos-de-produto.md`](docs/06-requisitos-de-produto.md) é fonte obrigatória de requisitos de produto e regras de domínio para todas as entregas da Fase 2 até a Fase 4.5.
 
 ---
 
