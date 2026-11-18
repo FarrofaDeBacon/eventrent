@@ -6,6 +6,7 @@
     Search,
     LayoutDashboard,
     Users,
+    Truck,
     UserPlus,
     UserCog,
     Shield,
@@ -79,6 +80,17 @@
       },
     },
     {
+      id: "suppliers",
+      labelKey: "command.goToSuppliers",
+      categoryKey: "command.navigation",
+      icon: Truck,
+      permission: PERMISSIONS.SUPPLIER_READ,
+      action: () => {
+        open = false;
+        goto("/suppliers");
+      },
+    },
+    {
       id: "new-customer",
       labelKey: "command.newCustomer",
       categoryKey: "command.actions",
@@ -87,6 +99,17 @@
       action: () => {
         open = false;
         goto("/customers/new");
+      },
+    },
+    {
+      id: "new-supplier",
+      labelKey: "command.newSupplier",
+      categoryKey: "command.actions",
+      icon: UserPlus,
+      permission: PERMISSIONS.SUPPLIER_MANAGE,
+      action: () => {
+        open = false;
+        goto("/customers/new?role=supplier");
       },
     },
     {
@@ -144,8 +167,11 @@
     },
   ];
 
-  let canReadCustomers = $derived(
-    hasPermission(appSession.session, PERMISSIONS.CUSTOMER_READ),
+  let canReadParties = $derived(
+    hasPermission(appSession.session, PERMISSIONS.CUSTOMER_READ) ||
+      hasPermission(appSession.session, PERMISSIONS.CUSTOMER_MANAGE) ||
+      hasPermission(appSession.session, PERMISSIONS.SUPPLIER_READ) ||
+      hasPermission(appSession.session, PERMISSIONS.SUPPLIER_MANAGE),
   );
 
   let permittedBaseCommands = $derived<CommandItem[]>(
@@ -194,7 +220,7 @@
 
   $effect(() => {
     const trimmed = query.trim();
-    if (!open || !canReadCustomers || trimmed.length < 2) {
+    if (!open || !canReadParties || trimmed.length < 2) {
       if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
       matchedCustomers = [];
       isSearchingCustomers = false;

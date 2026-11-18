@@ -33,9 +33,18 @@
   let isDeleting = $state(false);
   let isTogglingActive = $state(false);
 
-  let canManage = $derived(
+  let canManageCustomer = $derived(
     hasPermission(appSession.session, PERMISSIONS.CUSTOMER_MANAGE),
   );
+  let canManageSupplier = $derived(
+    hasPermission(appSession.session, PERMISSIONS.SUPPLIER_MANAGE),
+  );
+  let canManage = $derived.by(() => {
+    if (!details) return canManageCustomer || canManageSupplier;
+    const needCust = details.customer.is_customer;
+    const needSupp = details.customer.is_supplier;
+    return (!needCust || canManageCustomer) && (!needSupp || canManageSupplier);
+  });
 
   async function loadCustomer() {
     if (!customerId) return;
@@ -64,6 +73,9 @@
       state_registration: data.customer.state_registration ?? "",
       municipal_registration: data.customer.municipal_registration ?? "",
       notes: data.customer.notes ?? "",
+      is_customer: data.customer.is_customer,
+      is_supplier: data.customer.is_supplier,
+      supplier_categories: [...(data.supplier_categories ?? [])],
       contacts: data.contacts.map((c) => ({
         id: c.id,
         name: c.name,
@@ -216,6 +228,13 @@
         <Badge variant={details.customer.active ? "default" : "outline"}>
           {details.customer.active ? "Ativo" : "Inativo"}
         </Badge>
+        {#if details.customer.is_customer && details.customer.is_supplier}
+          <Badge variant="outline">{$_("customers.roleBoth")}</Badge>
+        {:else if details.customer.is_supplier}
+          <Badge variant="outline">{$_("customers.roleSupplier")}</Badge>
+        {:else}
+          <Badge variant="outline">{$_("customers.roleCustomer")}</Badge>
+        {/if}
       </div>
       <p class="text-sm text-muted-foreground">
         {formatDocument(
@@ -236,6 +255,8 @@
     {#key isEditing ? "editing" : details.customer.updated_at}
       <CustomerForm
         initialValues={toFormInput(details)}
+        {canManageCustomer}
+        {canManageSupplier}
         readonly={!isEditing || !canManage}
         {submitting}
         {submitError}

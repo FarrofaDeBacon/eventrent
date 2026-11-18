@@ -155,6 +155,8 @@ export const PERMISSIONS = {
   BRANDING_MANAGE: "branding:manage",
   CUSTOMER_READ: "customer:read",
   CUSTOMER_MANAGE: "customer:manage",
+  SUPPLIER_READ: "supplier:read",
+  SUPPLIER_MANAGE: "supplier:manage",
   CATALOG_READ: "catalog:read",
   CATALOG_MANAGE: "catalog:manage",
   RESERVATION_READ: "reservation:read",
@@ -187,6 +189,14 @@ export const DEFAULT_COMPANY_NAME = "Minha empresa";
 
 export type PersonType = "individual" | "legal";
 export type DocumentType = "cpf" | "cnpj" | "foreign" | "none";
+export type SupplierCategory =
+  | "sublocacao"
+  | "manutencao"
+  | "transporte"
+  | "compras"
+  | "servicos"
+  | "outros";
+export type CustomerRoleFilter = "customer" | "supplier" | "both" | "all";
 
 export interface Customer {
   id: string;
@@ -200,6 +210,8 @@ export interface Customer {
   municipal_registration?: string | null;
   notes?: string | null;
   active: boolean;
+  is_customer: boolean;
+  is_supplier: boolean;
   search_text: string;
   name_sort: string;
   created_at: string;
@@ -247,6 +259,7 @@ export interface CustomerWithDetails {
   customer: Customer;
   contacts: CustomerContact[];
   addresses: CustomerAddress[];
+  supplier_categories: SupplierCategory[];
 }
 
 export interface CreateContactInput {
@@ -281,6 +294,9 @@ export interface CreateCustomerInput {
   state_registration?: string | null;
   municipal_registration?: string | null;
   notes?: string | null;
+  is_customer?: boolean;
+  is_supplier?: boolean;
+  supplier_categories?: SupplierCategory[];
   contacts: CreateContactInput[];
   addresses: CreateAddressInput[];
 }
@@ -292,6 +308,7 @@ export interface UpdateCustomerInput extends CreateCustomerInput {
 export interface CustomerFilter {
   query?: string;
   person_type?: PersonType;
+  role_filter?: CustomerRoleFilter;
   cursor?: string;
   limit?: number;
 }

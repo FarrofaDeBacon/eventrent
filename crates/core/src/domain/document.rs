@@ -373,9 +373,26 @@ pub fn mask_email_for_audit(email: &str) -> String {
     format!("{first}***@{domain}")
 }
 
-/// Mascara telefone brasileiro para conformidade com a LGPD (ex.: `(21) *****-1234`).
+/// Mascara telefone (E.164 ou nacional) para conformidade com a LGPD (ex.: `+55 (21) *****-1234`).
 pub fn mask_phone_for_audit(phone: &str) -> String {
-    let digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
+    let trimmed = phone.trim();
+    let digits: String = trimmed.chars().filter(|c| c.is_ascii_digit()).collect();
+    if trimmed.starts_with('+') {
+        if digits.starts_with("55") && (digits.len() == 12 || digits.len() == 13) {
+            let national = &digits[2..];
+            let ddd = &national[0..2];
+            let last4 = &national[national.len() - 4..];
+            let masked_mid = "*".repeat(national.len() - 6);
+            return format!("+55 ({ddd}) {masked_mid}-{last4}");
+        }
+        if digits.len() >= 6 {
+            let prefix_len = 2.min(digits.len() - 4);
+            let prefix = &digits[..prefix_len];
+            let last4 = &digits[digits.len() - 4..];
+            let masked_mid = "*".repeat(digits.len() - prefix_len - 4);
+            return format!("+{prefix}{masked_mid}-{last4}");
+        }
+    }
     if digits.len() >= 10 {
         let ddd = &digits[0..2];
         let last4 = &digits[digits.len() - 4..];

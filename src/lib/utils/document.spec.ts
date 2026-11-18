@@ -8,6 +8,7 @@ import {
   maskPhone,
   normalizeDocument,
   normalizeForSearch,
+  normalizePhoneE164,
   validateCnpj,
   validateCpf,
 } from "./document";
@@ -80,6 +81,11 @@ describe("Utilitários de Documentos Brasileiros e Máscaras", () => {
     expect(maskCep("01310200")).toBe("01310-200");
     expect(maskPhone("11987654321")).toBe("(11) 98765-4321");
     expect(maskPhone("1132654321")).toBe("(11) 3265-4321");
+    expect(maskPhone("+5521999991234")).toBe("+55 (21) 99999-1234");
+    expect(maskPhone("+12125551234")).toBe("+12125551234");
+    expect(normalizePhoneE164("+1 212 555 1234")).toBe("+12125551234");
+    expect(normalizePhoneE164("12 91234-5678")).toBe("+5512912345678");
+    expect(normalizePhoneE164("+55 21 99999-1234")).toBe("+5521999991234");
     expect(formatDocument("52998224725", "individual")).toBe("529.982.247-25");
     expect(formatDocument("11222333000181", "legal")).toBe(
       "11.222.333/0001-81",

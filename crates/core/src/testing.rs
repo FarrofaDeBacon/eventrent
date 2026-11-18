@@ -1,9 +1,9 @@
 use crate::domain::{
     CreateAddressInput, CreateContactInput, CreateCustomerInput, CreateUserInput, CustomerFilter,
-    DocumentType, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
-    PersonType, RecoverPasswordInput, ResetPasswordInput, SessionInfo, UpdateBrandingInput,
-    UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole, ROLE_SLUG_COMMERCIAL,
-    ROLE_SLUG_OWNER,
+    CustomerRoleFilter, DocumentType, InitialSetupInput, InitialSetupResult, LoginInput,
+    LoginPolicy, OperationMode, PersonType, RecoverPasswordInput, ResetPasswordInput, SessionInfo,
+    UpdateBrandingInput, UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole,
+    ROLE_SLUG_COMMERCIAL, ROLE_SLUG_OWNER,
 };
 use crate::error::CoreError;
 use crate::services::{
@@ -71,7 +71,13 @@ pub async fn contract_system_roles(stores: &StoreBundle, tenant_id: &str) {
         .iter()
         .find(|r| r.slug == ROLE_SLUG_COMMERCIAL)
         .unwrap();
-    assert_eq!(repaired_comm.permissions.len(), 8);
+    let expected_comm_len = crate::domain::permission::SYSTEM_ROLES
+        .iter()
+        .find(|r| r.slug == ROLE_SLUG_COMMERCIAL)
+        .expect("commercial spec")
+        .permissions
+        .len();
+    assert_eq!(repaired_comm.permissions.len(), expected_comm_len);
 
     let audits = stores
         .audit
@@ -642,6 +648,9 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         state_registration: None,
         municipal_registration: None,
         notes: Some("Cliente VIP de eventos corporativos".to_string()),
+        is_customer: true,
+        is_supplier: false,
+        supplier_categories: vec![],
         contacts: vec![CreateContactInput {
             id: None,
             name: "Carlos Silva".to_string(),
@@ -689,6 +698,9 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         state_registration: Some("123.456.789.000".to_string()),
         municipal_registration: Some("987654".to_string()),
         notes: None,
+        is_customer: true,
+        is_supplier: false,
+        supplier_categories: vec![],
         contacts: vec![CreateContactInput {
             id: None,
             name: "Diretoria Financeira".to_string(),
@@ -781,6 +793,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             &CustomerFilter {
                 query: Some("eduardo silva".to_string()),
                 person_type: None,
+                role_filter: CustomerRoleFilter::All,
                 cursor: None,
                 limit: Some(10),
             },
@@ -797,6 +810,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             &CustomerFilter {
                 query: Some("12.ABC.345".to_string()),
                 person_type: None,
+                role_filter: CustomerRoleFilter::All,
                 cursor: None,
                 limit: Some(10),
             },
@@ -813,6 +827,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             &CustomerFilter {
                 query: Some("11998877665".to_string()),
                 person_type: None,
+                role_filter: CustomerRoleFilter::All,
                 cursor: None,
                 limit: Some(10),
             },
@@ -832,6 +847,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             &CustomerFilter {
                 query: Some("Diretoria Financeira".to_string()),
                 person_type: None,
+                role_filter: CustomerRoleFilter::All,
                 cursor: None,
                 limit: Some(10),
             },
@@ -848,6 +864,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             &CustomerFilter {
                 query: Some("a".repeat(101)),
                 person_type: None,
+                role_filter: CustomerRoleFilter::All,
                 cursor: None,
                 limit: None,
             },
@@ -863,6 +880,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             &CustomerFilter {
                 query: Some("um dois tres quatro cinco seis sete oito nove".to_string()),
                 person_type: None,
+                role_filter: CustomerRoleFilter::All,
                 cursor: None,
                 limit: None,
             },
@@ -879,6 +897,7 @@ pub async fn contract_customer_crud_and_lgpd_audit(
             &CustomerFilter {
                 query: None,
                 person_type: None,
+                role_filter: CustomerRoleFilter::All,
                 cursor: Some("cursor-adulterado-!@#".to_string()),
                 limit: None,
             },
@@ -920,6 +939,9 @@ pub async fn contract_customer_crud_and_lgpd_audit(
         state_registration: None,
         municipal_registration: None,
         notes: Some("Notas atualizadas".to_string()),
+        is_customer: true,
+        is_supplier: false,
+        supplier_categories: vec![],
         contacts: updated_contacts,
         addresses: created_pf
             .addresses
@@ -961,6 +983,9 @@ pub async fn contract_customer_crud_and_lgpd_audit(
                 state_registration: None,
                 municipal_registration: None,
                 notes: None,
+                is_customer: true,
+                is_supplier: false,
+                supplier_categories: vec![],
                 contacts: vec![CreateContactInput {
                     id: Some(original_contact_id.clone()),
                     name: "Carlos".to_string(),
@@ -1068,11 +1093,57 @@ pub async fn contract_customer_crud_and_lgpd_audit(
 
     // 9. Prova LGPD em {:?} (Debug manual)
     let debug_details = format!("{deactivated:?}");
+    assert!(!debug_details.contains("Carlos Eduardo da Silva"));
+
+    // 10. create_customer ignora IDs enviados pelo cliente (ex: ID de contato/endereço de outro cliente)
+    let existing_contact_id = created_pj.contacts[0].id.clone();
+    let existing_address_id = created_pj.addresses[0].id.clone();
+    let forged_input = CreateCustomerInput {
+        person_type: PersonType::Individual,
+        name: "Cliente ID Forjado".to_string(),
+        trade_name: None,
+        document_type: DocumentType::None,
+        document_number: None,
+        state_registration: None,
+        municipal_registration: None,
+        notes: None,
+        is_customer: true,
+        is_supplier: false,
+        supplier_categories: vec![],
+        contacts: vec![CreateContactInput {
+            id: Some(existing_contact_id.clone()),
+            name: "Contato Forjado".to_string(),
+            email: Some("forjado@ex.com".to_string()),
+            phone: None,
+            role: None,
+            is_primary: true,
+        }],
+        addresses: vec![CreateAddressInput {
+            id: Some(existing_address_id.clone()),
+            label: "Sede".to_string(),
+            street: "Rua Forjada".to_string(),
+            number: "10".to_string(),
+            complement: None,
+            neighborhood: "Centro".to_string(),
+            city: "São Paulo".to_string(),
+            state: "SP".to_string(),
+            postal_code: "01001000".to_string(),
+            country: Some("BR".to_string()),
+            is_primary: true,
+        }],
+    };
+    let created_forged = services
+        .create_customer(session, &forged_input)
+        .await
+        .expect("create_customer deve ignorar IDs enviados pelo cliente");
+    assert_ne!(created_forged.contacts[0].id, existing_contact_id);
+    assert_ne!(created_forged.addresses[0].id, existing_address_id);
     let debug_filter = format!(
         "{:?}",
         CustomerFilter {
             query: Some("529.982.247-25".to_string()),
             person_type: Some(PersonType::Individual),
+            role_filter: CustomerRoleFilter::All,
             cursor: Some("abc".to_string()),
             limit: Some(50),
         }
@@ -1128,6 +1199,313 @@ where
     contract_unique_partial_indexes(&stores, &tenant_id).await;
     contract_branding_dark_logo_and_icon(&stores, &tenant_id).await;
     contract_customer_crud_and_lgpd_audit(&services, &setup_result.session, &tenant_id).await;
+    contract_supplier_rbac_and_dual_roles(&services, &setup_result.session, &tenant_id).await;
+}
+
+pub async fn contract_supplier_rbac_and_dual_roles(
+    services: &CoreServices,
+    owner_session: &SessionInfo,
+    tenant_id: &str,
+) {
+    use crate::domain::{
+        CreateContactInput, CreateCustomerInput, CustomerFilter, CustomerRoleFilter, DocumentType,
+        LoginInput, LoginPolicy, PersonType, SupplierCategory, UpdateCustomerInput,
+    };
+    use crate::error::CoreError;
+
+    // Cria usuários Comercial, Estoque e Técnico para provar RBAC por papel
+    let roles = services
+        .list_roles(owner_session)
+        .await
+        .expect("list_roles");
+    let commercial_role = roles
+        .iter()
+        .find(|r| r.slug == "commercial")
+        .expect("commercial role");
+    let warehouse_role = roles
+        .iter()
+        .find(|r| r.slug == "warehouse")
+        .expect("warehouse role");
+    let tech_role = roles
+        .iter()
+        .find(|r| r.slug == "technician")
+        .expect("technician role");
+
+    services
+        .create_user(
+            owner_session,
+            &CreateUserInput {
+                name: "Comercial Teste".to_string(),
+                email: "comercial.sup@eventrent.com.br".to_string(),
+                password: "UserPass#2026".to_string(),
+                role_id: commercial_role.id.clone(),
+            },
+        )
+        .await
+        .expect("create commercial");
+    services
+        .create_user(
+            owner_session,
+            &CreateUserInput {
+                name: "Estoque Teste".to_string(),
+                email: "estoque.sup@eventrent.com.br".to_string(),
+                password: "UserPass#2026".to_string(),
+                role_id: warehouse_role.id.clone(),
+            },
+        )
+        .await
+        .expect("create warehouse");
+    services
+        .create_user(
+            owner_session,
+            &CreateUserInput {
+                name: "Tecnico Teste".to_string(),
+                email: "tecnico.sup@eventrent.com.br".to_string(),
+                password: "UserPass#2026".to_string(),
+                role_id: tech_role.id.clone(),
+            },
+        )
+        .await
+        .expect("create technician");
+
+    let policy = LoginPolicy {
+        reveal_account_locked: true,
+    };
+    let commercial_session = services
+        .login(
+            tenant_id,
+            &LoginInput {
+                email: "comercial.sup@eventrent.com.br".to_string(),
+                password: "UserPass#2026".to_string(),
+            },
+            &policy,
+            30,
+        )
+        .await
+        .expect("login commercial");
+    let warehouse_session = services
+        .login(
+            tenant_id,
+            &LoginInput {
+                email: "estoque.sup@eventrent.com.br".to_string(),
+                password: "UserPass#2026".to_string(),
+            },
+            &policy,
+            30,
+        )
+        .await
+        .expect("login warehouse");
+    let tech_session = services
+        .login(
+            tenant_id,
+            &LoginInput {
+                email: "tecnico.sup@eventrent.com.br".to_string(),
+                password: "UserPass#2026".to_string(),
+            },
+            &policy,
+            30,
+        )
+        .await
+        .expect("login technician");
+
+    // 1. Estoque (supplier:manage implica supplier:read) cria e lê fornecedor puro
+    let supplier_only = services
+        .create_customer(
+            &warehouse_session,
+            &CreateCustomerInput {
+                person_type: PersonType::Legal,
+                name: "Sublocadora Som & Luz Ltda".to_string(),
+                trade_name: Some("Subloca Som".to_string()),
+                document_type: DocumentType::None,
+                document_number: None,
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: false,
+                is_supplier: true,
+                supplier_categories: vec![
+                    SupplierCategory::Sublocacao,
+                    SupplierCategory::Transporte,
+                ],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Rafael Logística".to_string(),
+                    email: Some("rafael@sublocasom.com.br".to_string()),
+                    phone: Some("11988881111".to_string()),
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+            },
+        )
+        .await
+        .expect("Estoque deve criar fornecedor puro");
+    assert!(!supplier_only.customer.is_customer);
+    assert!(supplier_only.customer.is_supplier);
+    assert_eq!(supplier_only.supplier_categories.len(), 2);
+
+    let warehouse_list = services
+        .list_customers(
+            &warehouse_session,
+            &CustomerFilter {
+                query: None,
+                person_type: None,
+                role_filter: CustomerRoleFilter::Supplier,
+                cursor: None,
+                limit: Some(50),
+            },
+        )
+        .await
+        .expect("supplier:manage implica supplier:read");
+    assert!(warehouse_list
+        .items
+        .iter()
+        .any(|c| c.id == supplier_only.customer.id));
+
+    // 2. Categorias sem is_supplier = true devem falhar
+    let invalid_cat_res = services
+        .create_customer(
+            owner_session,
+            &CreateCustomerInput {
+                person_type: PersonType::Legal,
+                name: "Cliente Sem Fornecedor".to_string(),
+                trade_name: None,
+                document_type: DocumentType::None,
+                document_number: None,
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: true,
+                is_supplier: false,
+                supplier_categories: vec![SupplierCategory::Sublocacao],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "C".to_string(),
+                    email: Some("c@ex.com".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+            },
+        )
+        .await;
+    assert!(matches!(invalid_cat_res, Err(CoreError::Validation(_))));
+
+    // 3. Proprietário cria cadastro com os dois papéis (cliente e fornecedor)
+    let dual_party = services
+        .create_customer(
+            owner_session,
+            &CreateCustomerInput {
+                person_type: PersonType::Legal,
+                name: "Parceiro Duplo Eventos Ltda".to_string(),
+                trade_name: None,
+                document_type: DocumentType::None,
+                document_number: None,
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: true,
+                is_supplier: true,
+                supplier_categories: vec![SupplierCategory::Manutencao],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Contato Duplo".to_string(),
+                    email: Some("duplo@parceiro.com.br".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+            },
+        )
+        .await
+        .expect("Proprietário cria cadastro duplo");
+    assert!(dual_party.customer.is_customer && dual_party.customer.is_supplier);
+
+    // 4. Técnico (sem customer:read e sem supplier:read) não acessa nada
+    assert!(matches!(
+        services
+            .list_customers(&tech_session, &CustomerFilter::default())
+            .await,
+        Err(CoreError::Forbidden(_))
+    ));
+    assert!(matches!(
+        services
+            .get_customer(&tech_session, &supplier_only.customer.id)
+            .await,
+        Err(CoreError::Forbidden(_))
+    ));
+
+    // 5. Comercial lê fornecedor (supplier:read), mas não pode criar nem editar fornecedor
+    let commercial_sup = services
+        .get_customer(&commercial_session, &supplier_only.customer.id)
+        .await
+        .expect("Comercial tem supplier:read");
+    assert_eq!(commercial_sup.customer.id, supplier_only.customer.id);
+
+    let commercial_edit_sup = services
+        .update_customer(
+            &commercial_session,
+            &dual_party.customer.id,
+            &UpdateCustomerInput {
+                person_type: PersonType::Legal,
+                name: "Tentativa Comercial".to_string(),
+                trade_name: None,
+                document_type: DocumentType::None,
+                document_number: None,
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: true,
+                is_supplier: false, // remover papel de fornecedor exige supplier:manage
+                supplier_categories: vec![],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Contato Duplo".to_string(),
+                    email: Some("duplo@parceiro.com.br".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+                expected_updated_at: dual_party.customer.updated_at.clone(),
+            },
+        )
+        .await;
+    assert!(matches!(commercial_edit_sup, Err(CoreError::Forbidden(_))));
+
+    // 6. Estoque não pode remover papel de cliente em cadastro duplo
+    let warehouse_edit_dual = services
+        .update_customer(
+            &warehouse_session,
+            &dual_party.customer.id,
+            &UpdateCustomerInput {
+                person_type: PersonType::Legal,
+                name: "Tentativa Estoque".to_string(),
+                trade_name: None,
+                document_type: DocumentType::None,
+                document_number: None,
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: false,
+                is_supplier: true,
+                supplier_categories: vec![SupplierCategory::Manutencao],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Contato Duplo".to_string(),
+                    email: Some("duplo@parceiro.com.br".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+                expected_updated_at: dual_party.customer.updated_at.clone(),
+            },
+        )
+        .await;
+    assert!(matches!(warehouse_edit_dual, Err(CoreError::Forbidden(_))));
 }
 
 #[cfg(test)]
@@ -1343,6 +1721,8 @@ mod unit_tests {
             municipal_registration: None,
             notes: None,
             active: true,
+            is_customer: true,
+            is_supplier: false,
             search_text: "carlos eduardo".to_string(),
             name_sort: "carlos eduardo".to_string(),
             created_at: "2026-01-01T00:00:00Z".to_string(),
@@ -1364,6 +1744,9 @@ mod unit_tests {
             state_registration: None,
             municipal_registration: None,
             notes: None,
+            is_customer: true,
+            is_supplier: false,
+            supplier_categories: vec![],
             contacts: vec![],
             addresses: vec![],
         };
@@ -1380,6 +1763,9 @@ mod unit_tests {
             state_registration: None,
             municipal_registration: None,
             notes: None,
+            is_customer: true,
+            is_supplier: false,
+            supplier_categories: vec![],
             contacts: vec![],
             addresses: vec![],
             expected_updated_at: "2026-01-01T00:00:00Z".to_string(),
@@ -1397,6 +1783,9 @@ mod unit_tests {
             state_registration: None,
             municipal_registration: None,
             notes: None,
+            is_customer: true,
+            is_supplier: false,
+            supplier_categories: vec![],
             contacts: vec![],
             addresses: vec![],
         };
@@ -1460,11 +1849,26 @@ mod unit_tests {
         assert!(validate_email("usuario@exa!mple.com").is_err());
         assert!(validate_email("usuario@sub.-empresa.com").is_err());
         assert!(validate_email("usuario@empresa-.com").is_err());
-        // Parte local com caracteres proibidos (aspas, comentários, acentos e colchetes)
+        // Parte local com caracteres proibidos (aspas, comentários, acentos, colchetes e U+212A Kelvin sign)
         assert!(validate_email("usuá[rio]@dominio.com").is_err());
         assert!(validate_email("\"usuario\"@dominio.com").is_err());
         assert!(validate_email("usuario(comentario)@dominio.com").is_err());
         assert!(validate_email("usuario@(comentario)dominio.com").is_err());
+        assert!(validate_email("usuario@dominio.\u{212A}om").is_err());
+        assert!(validate_email("mar\u{212A}@dominio.com").is_err());
+
+        // Nomes de usuário (1 a 100 caracteres, trim, sem controle)
+        use crate::domain::validation::validate_user_name;
+        assert_eq!(validate_user_name("  Ana Maria  ").unwrap(), "Ana Maria");
+        assert!(validate_user_name("").is_err());
+        assert!(validate_user_name("   ").is_err());
+        assert!(validate_user_name("Ana\nMaria").is_err());
+        assert!(validate_user_name("Ana\0Maria").is_err());
+        let name_100 = "á".repeat(100);
+        assert_eq!(name_100.len(), 200);
+        assert_eq!(name_100.chars().count(), 100);
+        assert!(validate_user_name(&name_100).is_ok());
+        assert!(validate_user_name(&"á".repeat(101)).is_err());
     }
 
     #[test]
@@ -1512,27 +1916,34 @@ mod unit_tests {
         assert!(validate_country_code("BRA").is_err());
         assert!(validate_country_code("B1").is_err());
 
-        // 4. Telefone: '+' internacional (8-15 dígitos), +55 vira nacional, sem '+' segue regra do Brasil
+        // 4. Telefone: E.164 com '+' obrigatório no armazenamento, sem ambiguidade BR vs internacional
         assert_eq!(
             normalize_and_validate_phone("(11) 98765-4321", Some("BR")).unwrap(),
-            "11987654321"
+            "+5511987654321"
         );
         assert_eq!(
             normalize_and_validate_phone("+55 21 99999-1234", None).unwrap(),
-            "21999991234"
+            "+5521999991234"
         );
         assert_eq!(
             normalize_and_validate_phone("+351 912 345 678", None).unwrap(),
-            "351912345678"
+            "+351912345678"
         );
         assert_eq!(
             normalize_and_validate_phone("5511987654321", Some("BR")).unwrap(),
-            "11987654321"
+            "+5511987654321"
         );
         assert_eq!(
             normalize_and_validate_phone("(11) 2345-6789", Some("BR")).unwrap(),
-            "1123456789"
+            "+551123456789"
         );
+        // Sem ambiguidade entre EUA (+1 212 555 1234) e Brasil DDD 12 (12 91234 5678)
+        let us_e164 = normalize_and_validate_phone("+1 212 555 1234", None).unwrap();
+        let br_e164 = normalize_and_validate_phone("12 91234-5678", None).unwrap();
+        assert_eq!(us_e164, "+12125551234");
+        assert_eq!(br_e164, "+5512912345678");
+        assert_ne!(us_e164, br_e164);
+
         assert!(normalize_and_validate_phone("12345", None).is_err());
         assert!(normalize_and_validate_phone("119876", Some("BR")).is_err());
         assert!(normalize_and_validate_phone("1198765432100", Some("BR")).is_err());
@@ -1540,7 +1951,7 @@ mod unit_tests {
         // Internacional
         assert_eq!(
             normalize_and_validate_phone("+1 202 555 0123", Some("US")).unwrap(),
-            "12025550123"
+            "+12025550123"
         );
         assert!(normalize_and_validate_phone("12345", Some("US")).is_err());
         assert!(normalize_and_validate_phone("+351 123", None).is_err());
@@ -1568,7 +1979,7 @@ mod unit_tests {
         // Primeiro virou principal automaticamente
         assert!(contacts[0].is_primary);
         assert!(!contacts[1].is_primary);
-        assert_eq!(contacts[1].phone.as_deref(), Some("11987654321"));
+        assert_eq!(contacts[1].phone.as_deref(), Some("+5511987654321"));
 
         // Dois principais = erro
         let mut two_primaries = contacts.clone();
@@ -1981,6 +2392,7 @@ mod unit_tests {
                 _: &crate::domain::Customer,
                 _: &[crate::domain::CustomerContact],
                 _: &[crate::domain::CustomerAddress],
+                _: &[crate::domain::SupplierCategory],
             ) -> crate::error::Result<()> {
                 unreachable!()
             }
@@ -1989,6 +2401,7 @@ mod unit_tests {
                 _: &crate::domain::Customer,
                 _: &[crate::domain::CustomerContact],
                 _: &[crate::domain::CustomerAddress],
+                _: &[crate::domain::SupplierCategory],
             ) -> crate::error::Result<()> {
                 unreachable!()
             }

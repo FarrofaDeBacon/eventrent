@@ -126,3 +126,12 @@ O tratamento de dados pessoais e fiscais de clientes (CPF, CNPJ, contatos e ende
 5. **Pendência de Anonimização LGPD e `search_text`**:
    - A coluna derivada `customer.search_text` armazena cópia normalizada de dados pessoais (nome, documento, e-mail e telefone) para viabilizar busca textual rápida.
    - Fica registrada como requisito obrigatório de conformidade LGPD a futura operação de **anonimização de titular** (ex.: mediante solicitação de exclusão definitiva quando houver retenção fiscal/contratual), a qual deverá ofuscar `name`, `trade_name`, `document_number`, contatos, endereços e **limpar integralmente `search_text`**, preservando apenas os vínculos financeiros/fiscais anônimos.
+
+---
+
+## 8. Segregação de Dados Financeiros de Fornecedores (Fase 1C)
+
+Para manter o princípio do menor privilégio e evitar exposição desnecessária a perfis operacionais (Estoque e Comercial):
+
+- **Dados sensíveis fora do cadastro unificado nesta fase:** **Chave PIX**, **dados bancários** (banco, agência, conta, titularidade) e **condições de pagamento** **NÃO são armazenados** nas tabelas `customer`, `customer_contact`, `customer_address` ou `customer_supplier_category` na Fase 1C.
+- **Planejamento para a Fase 6 (Financeiro):** Essas informações serão modeladas em tabela/domínio financeiro dedicado na **Fase 6**, protegidas por permissões financeiras restritas (`finance:read` e `finance:manage`), mascaramento/criptografia adequada e auditoria específica, impedindo acesso por perfis sem atribuição financeira.

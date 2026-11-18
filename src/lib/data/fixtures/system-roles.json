@@ -12,6 +12,8 @@
       "branding:manage",
       "customer:read",
       "customer:manage",
+      "supplier:read",
+      "supplier:manage",
       "catalog:read",
       "catalog:manage",
       "reservation:read",
@@ -34,6 +36,7 @@
     "permissions": [
       "customer:read",
       "customer:manage",
+      "supplier:read",
       "catalog:read",
       "reservation:read",
       "reservation:manage",
@@ -47,6 +50,8 @@
     "name": "Estoque",
     "description": "Gestão do catálogo de equipamentos, patrimônio, separação e conferência.",
     "permissions": [
+      "supplier:read",
+      "supplier:manage",
       "catalog:read",
       "catalog:manage",
       "reservation:read",
@@ -73,6 +78,8 @@
     "description": "Gestão de faturamento, contas a pagar/receber, contratos e auditoria.",
     "permissions": [
       "customer:read",
+      "supplier:read",
+      "supplier:manage",
       "quote:read",
       "reservation:read",
       "finance:read",

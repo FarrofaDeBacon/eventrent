@@ -1411,6 +1411,8 @@ fn row_to_customer(r: &sqlx::sqlite::SqliteRow) -> Result<Customer> {
     let doc_type_str: String = r.get("document_type");
     let document_type = doc_type_str.parse().map_err(CoreError::Database)?;
     let active_int: i64 = r.get("active");
+    let is_customer_int: i64 = r.get("is_customer");
+    let is_supplier_int: i64 = r.get("is_supplier");
     Ok(Customer {
         id: r.get("id"),
         tenant_id: r.get("tenant_id"),
@@ -1423,6 +1425,8 @@ fn row_to_customer(r: &sqlx::sqlite::SqliteRow) -> Result<Customer> {
         municipal_registration: r.get("municipal_registration"),
         notes: r.get("notes"),
         active: active_int != 0,
+        is_customer: is_customer_int != 0,
+        is_supplier: is_supplier_int != 0,
         search_text: r.get("search_text"),
         name_sort: r.get("name_sort"),
         created_at: r.get("created_at"),
@@ -1441,7 +1445,8 @@ impl CustomerStore for SqliteStore {
                     r#"
                     SELECT id, tenant_id, person_type, name, trade_name, document_type,
                            document_number, state_registration, municipal_registration, notes,
-                           active, search_text, name_sort, created_at, updated_at, deleted_at, created_by
+                           active, is_customer, is_supplier, search_text, name_sort,
+                           created_at, updated_at, deleted_at, created_by
                     FROM customer
                     WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
                     LIMIT 1
@@ -1537,10 +1542,34 @@ impl CustomerStore for SqliteStore {
             })
             .collect();
 
+        let cat_rows = self
+            .fetch_all(
+                sqlx::query(
+                    r#"
+                    SELECT category
+                    FROM customer_supplier_category
+                    WHERE tenant_id = ? AND customer_id = ? AND deleted_at IS NULL
+                    ORDER BY category ASC
+                    "#,
+                )
+                .bind(tenant_id)
+                .bind(id),
+            )
+            .await?;
+
+        let mut supplier_categories = Vec::with_capacity(cat_rows.len());
+        for r in cat_rows {
+            let cat_str: String = r.get("category");
+            let cat: eventrent_core::domain::SupplierCategory =
+                cat_str.parse().map_err(CoreError::Database)?;
+            supplier_categories.push(cat);
+        }
+
         Ok(Some(CustomerWithDetails {
             customer,
             contacts,
             addresses,
+            supplier_categories,
         }))
     }
 
@@ -1556,7 +1585,8 @@ impl CustomerStore for SqliteStore {
                     r#"
                     SELECT id, tenant_id, person_type, name, trade_name, document_type,
                            document_number, state_registration, municipal_registration, notes,
-                           active, search_text, name_sort, created_at, updated_at, deleted_at, created_by
+                           active, is_customer, is_supplier, search_text, name_sort,
+                           created_at, updated_at, deleted_at, created_by
                     FROM customer
                     WHERE tenant_id = ? AND document_type = ? AND document_number = ? AND deleted_at IS NULL
                     LIMIT 1
@@ -1585,11 +1615,25 @@ impl CustomerStore for SqliteStore {
             r#"
             SELECT id, tenant_id, person_type, name, trade_name, document_type,
                    document_number, state_registration, municipal_registration, notes,
-                   active, search_text, name_sort, created_at, updated_at, deleted_at, created_by
+                   active, is_customer, is_supplier, search_text, name_sort,
+                   created_at, updated_at, deleted_at, created_by
             FROM customer
             WHERE tenant_id = ? AND deleted_at IS NULL
             "#,
         );
+
+        match filter.role_filter {
+            eventrent_core::domain::CustomerRoleFilter::Customer => {
+                sql.push_str(" AND is_customer = 1");
+            }
+            eventrent_core::domain::CustomerRoleFilter::Supplier => {
+                sql.push_str(" AND is_supplier = 1");
+            }
+            eventrent_core::domain::CustomerRoleFilter::Both => {
+                sql.push_str(" AND is_customer = 1 AND is_supplier = 1");
+            }
+            eventrent_core::domain::CustomerRoleFilter::All => {}
+        }
 
         if let Some(pt) = filter.person_type {
             sql.push_str(" AND person_type = '");
@@ -1663,6 +1707,7 @@ impl CustomerStore for SqliteStore {
         customer: &Customer,
         contacts: &[CustomerContact],
         addresses: &[CustomerAddress],
+        supplier_categories: &[eventrent_core::domain::SupplierCategory],
     ) -> Result<()> {
         self.execute(
             sqlx::query(
@@ -1670,8 +1715,9 @@ impl CustomerStore for SqliteStore {
                 INSERT INTO customer (
                     id, tenant_id, person_type, name, trade_name, document_type,
                     document_number, state_registration, municipal_registration, notes,
-                    active, search_text, name_sort, created_at, updated_at, deleted_at, created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    active, is_customer, is_supplier, search_text, name_sort,
+                    created_at, updated_at, deleted_at, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(&customer.id)
@@ -1685,6 +1731,8 @@ impl CustomerStore for SqliteStore {
             .bind(&customer.municipal_registration)
             .bind(&customer.notes)
             .bind(if customer.active { 1i64 } else { 0i64 })
+            .bind(if customer.is_customer { 1i64 } else { 0i64 })
+            .bind(if customer.is_supplier { 1i64 } else { 0i64 })
             .bind(&customer.search_text)
             .bind(&customer.name_sort)
             .bind(&customer.created_at)
@@ -1752,6 +1800,27 @@ impl CustomerStore for SqliteStore {
             .await?;
         }
 
+        for cat in supplier_categories {
+            let cat_id = Uuid::now_v7().to_string();
+            self.execute(
+                sqlx::query(
+                    r#"
+                    INSERT INTO customer_supplier_category (
+                        id, tenant_id, customer_id, category, created_at, updated_at, deleted_at, created_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
+                    "#,
+                )
+                .bind(&cat_id)
+                .bind(&customer.tenant_id)
+                .bind(&customer.id)
+                .bind(cat.as_str())
+                .bind(&customer.created_at)
+                .bind(&customer.updated_at)
+                .bind(&customer.created_by),
+            )
+            .await?;
+        }
+
         Ok(())
     }
 
@@ -1760,6 +1829,7 @@ impl CustomerStore for SqliteStore {
         customer: &Customer,
         contacts: &[CustomerContact],
         addresses: &[CustomerAddress],
+        supplier_categories: &[eventrent_core::domain::SupplierCategory],
     ) -> Result<()> {
         self.execute(
             sqlx::query(
@@ -1767,7 +1837,7 @@ impl CustomerStore for SqliteStore {
                 UPDATE customer
                 SET person_type = ?, name = ?, trade_name = ?, document_type = ?, document_number = ?,
                     state_registration = ?, municipal_registration = ?, notes = ?,
-                    active = ?, search_text = ?, name_sort = ?, updated_at = ?
+                    active = ?, is_customer = ?, is_supplier = ?, search_text = ?, name_sort = ?, updated_at = ?
                 WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL
                 "#,
             )
@@ -1780,6 +1850,8 @@ impl CustomerStore for SqliteStore {
             .bind(&customer.municipal_registration)
             .bind(&customer.notes)
             .bind(if customer.active { 1i64 } else { 0i64 })
+            .bind(if customer.is_customer { 1i64 } else { 0i64 })
+            .bind(if customer.is_supplier { 1i64 } else { 0i64 })
             .bind(&customer.search_text)
             .bind(&customer.name_sort)
             .bind(&customer.updated_at)
@@ -1875,6 +1947,17 @@ impl CustomerStore for SqliteStore {
                 q = q.bind(&a.id);
             }
             self.execute(q).await?;
+        } else {
+            self.execute(
+                sqlx::query(
+                    "UPDATE customer_address SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND customer_id = ? AND deleted_at IS NULL",
+                )
+                .bind(&customer.updated_at)
+                .bind(&customer.updated_at)
+                .bind(&customer.tenant_id)
+                .bind(&customer.id),
+            )
+            .await?;
         }
 
         for a in addresses {
@@ -1922,6 +2005,71 @@ impl CustomerStore for SqliteStore {
                 .bind(&a.created_by),
             )
             .await?;
+        }
+
+        // Sincroniza categorias de fornecedor sem colidir com idx_customer_supplier_category_active
+        if !supplier_categories.is_empty() {
+            let placeholders = vec!["?"; supplier_categories.len()].join(", ");
+            let sql_soft_del = format!(
+                "UPDATE customer_supplier_category SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND customer_id = ? AND deleted_at IS NULL AND category NOT IN ({placeholders})"
+            );
+            let mut q = sqlx::query(&sql_soft_del)
+                .bind(&customer.updated_at)
+                .bind(&customer.updated_at)
+                .bind(&customer.tenant_id)
+                .bind(&customer.id);
+            for cat in supplier_categories {
+                q = q.bind(cat.as_str());
+            }
+            self.execute(q).await?;
+        } else {
+            self.execute(
+                sqlx::query(
+                    "UPDATE customer_supplier_category SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND customer_id = ? AND deleted_at IS NULL",
+                )
+                .bind(&customer.updated_at)
+                .bind(&customer.updated_at)
+                .bind(&customer.tenant_id)
+                .bind(&customer.id),
+            )
+            .await?;
+        }
+
+        let active_cat_rows = self
+            .fetch_all(
+                sqlx::query(
+                    "SELECT category FROM customer_supplier_category WHERE tenant_id = ? AND customer_id = ? AND deleted_at IS NULL",
+                )
+                .bind(&customer.tenant_id)
+                .bind(&customer.id),
+            )
+            .await?;
+        let active_cats: std::collections::HashSet<String> = active_cat_rows
+            .into_iter()
+            .map(|r| r.get::<String, _>("category"))
+            .collect();
+
+        for cat in supplier_categories {
+            if !active_cats.contains(cat.as_str()) {
+                let cat_id = Uuid::now_v7().to_string();
+                self.execute(
+                    sqlx::query(
+                        r#"
+                        INSERT INTO customer_supplier_category (
+                            id, tenant_id, customer_id, category, created_at, updated_at, deleted_at, created_by
+                        ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
+                        "#,
+                    )
+                    .bind(&cat_id)
+                    .bind(&customer.tenant_id)
+                    .bind(&customer.id)
+                    .bind(cat.as_str())
+                    .bind(&customer.updated_at)
+                    .bind(&customer.updated_at)
+                    .bind(&customer.created_by),
+                )
+                .await?;
+            }
         }
 
         Ok(())
@@ -1973,6 +2121,17 @@ impl CustomerStore for SqliteStore {
         self.execute(
             sqlx::query(
                 "UPDATE customer_address SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND customer_id = ? AND deleted_at IS NULL",
+            )
+            .bind(deleted_at)
+            .bind(deleted_at)
+            .bind(tenant_id)
+            .bind(id),
+        )
+        .await?;
+
+        self.execute(
+            sqlx::query(
+                "UPDATE customer_supplier_category SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND customer_id = ? AND deleted_at IS NULL",
             )
             .bind(deleted_at)
             .bind(deleted_at)
@@ -3153,6 +3312,7 @@ mod tests {
                 &CustomerFilter {
                     query: None,
                     person_type: None,
+                    role_filter: eventrent_core::domain::CustomerRoleFilter::All,
                     cursor: None,
                     limit: Some(50),
                 },
@@ -3178,6 +3338,7 @@ mod tests {
                 &CustomerFilter {
                     query: None,
                     person_type: None,
+                    role_filter: eventrent_core::domain::CustomerRoleFilter::All,
                     cursor: page1.next_cursor.clone(),
                     limit: Some(50),
                 },
@@ -3202,6 +3363,7 @@ mod tests {
                 &CustomerFilter {
                     query: Some("empresa 15432".to_string()),
                     person_type: None,
+                    role_filter: eventrent_core::domain::CustomerRoleFilter::All,
                     cursor: None,
                     limit: Some(50),
                 },
@@ -3364,6 +3526,8 @@ mod tests {
             municipal_registration: None,
             notes: None,
             active: true,
+            is_customer: true,
+            is_supplier: false,
             search_text: "cliente swap".to_string(),
             name_sort: "cliente swap".to_string(),
             created_at: now.clone(),
@@ -3446,6 +3610,7 @@ mod tests {
                 &customer,
                 &[contact_a.clone(), contact_b.clone()],
                 &[addr_a.clone(), addr_b.clone()],
+                &[],
             )
             .await
             .expect("create customer");
@@ -3468,6 +3633,7 @@ mod tests {
                 &customer,
                 &[new_contact_b, new_contact_a],
                 &[new_addr_b, new_addr_a],
+                &[],
             )
             .await;
         assert!(
@@ -3545,6 +3711,8 @@ mod tests {
             municipal_registration: None,
             notes: None,
             active: true,
+            is_customer: true,
+            is_supplier: false,
             search_text: "cliente soft".to_string(),
             name_sort: "cliente soft".to_string(),
             created_at: now.clone(),
@@ -3570,7 +3738,7 @@ mod tests {
 
         store
             .customers
-            .create(&customer, &[contact_old], &[])
+            .create(&customer, &[contact_old], &[], &[])
             .await
             .expect("create");
 
@@ -3592,7 +3760,7 @@ mod tests {
 
         store
             .customers
-            .update(&customer, &[contact_new], &[])
+            .update(&customer, &[contact_new], &[], &[])
             .await
             .expect("update");
 
@@ -3657,6 +3825,8 @@ mod tests {
             municipal_registration: None,
             notes: None,
             active: true,
+            is_customer: true,
+            is_supplier: false,
             search_text: "cliente tenant 1".to_string(),
             name_sort: "cliente tenant 1".to_string(),
             created_at: now.clone(),
@@ -3667,7 +3837,7 @@ mod tests {
 
         store
             .customers
-            .create(&customer1, &[], &[])
+            .create(&customer1, &[], &[], &[])
             .await
             .expect("create cust1");
 
@@ -3707,6 +3877,7 @@ mod tests {
                 &CustomerFilter {
                     query: None,
                     person_type: None,
+                    role_filter: eventrent_core::domain::CustomerRoleFilter::All,
                     cursor: None,
                     limit: None,
                 },
@@ -3722,6 +3893,7 @@ mod tests {
                 &CustomerFilter {
                     query: None,
                     person_type: None,
+                    role_filter: eventrent_core::domain::CustomerRoleFilter::All,
                     cursor: None,
                     limit: None,
                 },
@@ -3756,5 +3928,165 @@ mod tests {
             .await
             .unwrap();
         assert!(c1_still_exists.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_store_suppliers_roles_categories_fk_and_isolation() {
+        let pool = init_memory_db()
+            .await
+            .expect("Falha ao inicializar banco em memória");
+        let store = SqliteStore::new(pool.clone()).into_bundle();
+        let now = Utc::now().to_rfc3339();
+
+        for tid in ["tenant-sup-1", "tenant-sup-2"] {
+            store
+                .tenants
+                .create(&Tenant {
+                    id: tid.to_string(),
+                    tenant_id: tid.to_string(),
+                    name: format!("Empresa {tid}"),
+                    slug: tid.to_string(),
+                    document_number: None,
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                    deleted_at: None,
+                    created_by: None,
+                })
+                .await
+                .unwrap();
+        }
+
+        // 1. Cria fornecedor puro no tenant 1 com 2 categorias
+        let supplier = Customer {
+            id: "sup-1".to_string(),
+            tenant_id: "tenant-sup-1".to_string(),
+            person_type: PersonType::Legal,
+            name: "Locadora Parceira Ltda".to_string(),
+            trade_name: None,
+            document_type: DocumentType::None,
+            document_number: None,
+            state_registration: None,
+            municipal_registration: None,
+            notes: None,
+            active: true,
+            is_customer: false,
+            is_supplier: true,
+            search_text: "locadora parceira ltda".to_string(),
+            name_sort: "locadora parceira ltda".to_string(),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            deleted_at: None,
+            created_by: None,
+        };
+        let cats = vec![
+            eventrent_core::domain::SupplierCategory::Sublocacao,
+            eventrent_core::domain::SupplierCategory::Transporte,
+        ];
+        store
+            .customers
+            .create(&supplier, &[], &[], &cats)
+            .await
+            .unwrap();
+
+        let loaded = store
+            .customers
+            .find_by_id("tenant-sup-1", "sup-1")
+            .await
+            .unwrap()
+            .expect("Fornecedor deve existir no tenant 1");
+        assert!(!loaded.customer.is_customer);
+        assert!(loaded.customer.is_supplier);
+        assert_eq!(loaded.supplier_categories.len(), 2);
+
+        // 2. Atualiza categorias (remove Transporte, adiciona Manutencao e mantém Sublocacao)
+        let new_cats = vec![
+            eventrent_core::domain::SupplierCategory::Sublocacao,
+            eventrent_core::domain::SupplierCategory::Manutencao,
+        ];
+        store
+            .customers
+            .update(&supplier, &[], &[], &new_cats)
+            .await
+            .unwrap();
+        let reloaded = store
+            .customers
+            .find_by_id("tenant-sup-1", "sup-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reloaded.supplier_categories.len(), 2);
+        assert!(reloaded
+            .supplier_categories
+            .contains(&eventrent_core::domain::SupplierCategory::Manutencao));
+        assert!(!reloaded
+            .supplier_categories
+            .contains(&eventrent_core::domain::SupplierCategory::Transporte));
+
+        // 3. Filtro por papel (Supplier encontra, Customer não encontra)
+        let sup_list = store
+            .customers
+            .list(
+                "tenant-sup-1",
+                &CustomerFilter {
+                    role_filter: eventrent_core::domain::CustomerRoleFilter::Supplier,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(sup_list.items.len(), 1);
+
+        let cust_list = store
+            .customers
+            .list(
+                "tenant-sup-1",
+                &CustomerFilter {
+                    role_filter: eventrent_core::domain::CustomerRoleFilter::Customer,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(cust_list.items.len(), 0);
+
+        // 4. Isolamento por tenant
+        let sup_list_t2 = store
+            .customers
+            .list(
+                "tenant-sup-2",
+                &CustomerFilter {
+                    role_filter: eventrent_core::domain::CustomerRoleFilter::Supplier,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(sup_list_t2.items.len(), 0);
+
+        // 5. CHECK (is_customer = 1 OR is_supplier = 1) no banco
+        let check_err = sqlx::query(
+            "INSERT INTO customer (id, tenant_id, person_type, name, is_customer, is_supplier, search_text, name_sort, created_at, updated_at) VALUES ('bad-role', 'tenant-sup-1', 'legal', 'Sem Papel', 0, 0, 'sem papel', 'sem papel', ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await;
+        assert!(
+            check_err.is_err(),
+            "CHECK deve impedir cadastro sem cliente e sem fornecedor"
+        );
+
+        // 6. FK composta (tenant_id, customer_id) em customer_supplier_category
+        let fk_err = sqlx::query(
+            "INSERT INTO customer_supplier_category (id, tenant_id, customer_id, category, created_at, updated_at) VALUES ('cat-cross', 'tenant-sup-2', 'sup-1', 'sublocacao', ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await;
+        assert!(
+            fk_err.is_err(),
+            "FK composta deve impedir categoria com tenant diferente do cliente"
+        );
     }
 }

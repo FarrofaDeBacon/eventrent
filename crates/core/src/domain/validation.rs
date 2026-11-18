@@ -15,6 +15,12 @@ pub const BRAZILIAN_STATES: [&str; 27] = [
 /// 5. Domínio: pelo menos dois rótulos separados por `.`, cada rótulo com apenas `a-z`, `0-9` e hífen `-` (sem hífen no início/fim).
 /// 6. TLD: no mínimo 2 caracteres (`a-z`, `0-9` ou `-`, sem hífen no início/fim).
 pub fn validate_email(email: &str) -> CoreResult<String> {
+    if !email.is_ascii() {
+        return Err(CoreError::Validation(
+            "O e-mail deve conter apenas caracteres ASCII.".to_string(),
+        ));
+    }
+
     if email.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err(CoreError::Validation(
             "O e-mail não pode conter espaços ou caracteres de controle.".to_string(),
@@ -197,7 +203,7 @@ pub fn normalize_and_validate_phone(phone: &str, country: Option<&str>) -> CoreR
         if digits.starts_with("55") {
             digits = digits[2..].to_string();
             if digits.len() == 10 || digits.len() == 11 {
-                return Ok(digits);
+                return Ok(format!("+55{digits}"));
             }
             return Err(CoreError::Validation(
                 "Telefone inválido: para o Brasil (+55) deve conter 10 ou 11 dígitos com DDD (ex: 11987654321).".to_string(),
@@ -205,7 +211,7 @@ pub fn normalize_and_validate_phone(phone: &str, country: Option<&str>) -> CoreR
         }
 
         if (8..=15).contains(&digits.len()) {
-            return Ok(digits);
+            return Ok(format!("+{digits}"));
         }
         return Err(CoreError::Validation(
             "Telefone internacional inválido: deve conter entre 8 e 15 dígitos.".to_string(),
@@ -221,17 +227,35 @@ pub fn normalize_and_validate_phone(phone: &str, country: Option<&str>) -> CoreR
             digits = digits[2..].to_string();
         }
         if digits.len() == 10 || digits.len() == 11 {
-            Ok(digits)
+            Ok(format!("+55{digits}"))
         } else {
             Err(CoreError::Validation(
                 "Telefone inválido: para o Brasil deve conter 10 ou 11 dígitos com DDD (ex: 11987654321).".to_string(),
             ))
         }
     } else if (8..=15).contains(&digits.len()) {
-        Ok(digits)
+        Ok(format!("+{digits}"))
     } else {
         Err(CoreError::Validation(
             "Telefone inválido: para outros países deve conter entre 8 e 15 dígitos.".to_string(),
         ))
     }
+}
+
+/// Valida e normaliza o nome de usuário / proprietário (1 a 100 caracteres, sem caracteres de controle, já aparado).
+pub fn validate_user_name(name: &str) -> CoreResult<String> {
+    let trimmed = name.trim();
+    if trimmed.chars().any(|c| c.is_control()) {
+        return Err(CoreError::Validation(
+            "O nome do usuário não pode conter caracteres de controle ou quebras de linha."
+                .to_string(),
+        ));
+    }
+    let char_count = trimmed.chars().count();
+    if !(1..=100).contains(&char_count) {
+        return Err(CoreError::Validation(
+            "O nome do usuário deve conter entre 1 e 100 caracteres.".to_string(),
+        ));
+    }
+    Ok(trimmed.to_string())
 }

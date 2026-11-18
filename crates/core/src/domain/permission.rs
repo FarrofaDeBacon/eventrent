@@ -6,6 +6,8 @@ pub const PERM_BRANDING_READ: &str = "branding:read";
 pub const PERM_BRANDING_MANAGE: &str = "branding:manage";
 pub const PERM_CUSTOMER_READ: &str = "customer:read";
 pub const PERM_CUSTOMER_MANAGE: &str = "customer:manage";
+pub const PERM_SUPPLIER_READ: &str = "supplier:read";
+pub const PERM_SUPPLIER_MANAGE: &str = "supplier:manage";
 pub const PERM_CATALOG_READ: &str = "catalog:read";
 pub const PERM_CATALOG_MANAGE: &str = "catalog:manage";
 pub const PERM_RESERVATION_READ: &str = "reservation:read";
@@ -35,6 +37,8 @@ pub const ALL_PERMISSIONS: &[&str] = &[
     PERM_BRANDING_MANAGE,
     PERM_CUSTOMER_READ,
     PERM_CUSTOMER_MANAGE,
+    PERM_SUPPLIER_READ,
+    PERM_SUPPLIER_MANAGE,
     PERM_CATALOG_READ,
     PERM_CATALOG_MANAGE,
     PERM_RESERVATION_READ,
@@ -73,6 +77,7 @@ pub const SYSTEM_ROLES: &[SystemRoleSpec] = &[
         permissions: &[
             PERM_CUSTOMER_READ,
             PERM_CUSTOMER_MANAGE,
+            PERM_SUPPLIER_READ,
             PERM_CATALOG_READ,
             PERM_RESERVATION_READ,
             PERM_RESERVATION_MANAGE,
@@ -86,6 +91,8 @@ pub const SYSTEM_ROLES: &[SystemRoleSpec] = &[
         slug: ROLE_SLUG_WAREHOUSE,
         description: "Gestão do catálogo de equipamentos, patrimônio, separação e conferência.",
         permissions: &[
+            PERM_SUPPLIER_READ,
+            PERM_SUPPLIER_MANAGE,
             PERM_CATALOG_READ,
             PERM_CATALOG_MANAGE,
             PERM_RESERVATION_READ,
@@ -113,6 +120,8 @@ pub const SYSTEM_ROLES: &[SystemRoleSpec] = &[
         description: "Gestão de faturamento, contas a pagar/receber, contratos e auditoria.",
         permissions: &[
             PERM_CUSTOMER_READ,
+            PERM_SUPPLIER_READ,
+            PERM_SUPPLIER_MANAGE,
             PERM_QUOTE_READ,
             PERM_RESERVATION_READ,
             PERM_FINANCE_READ,

@@ -64,6 +64,7 @@ function createSystemRoles(tenantId: string): RoleWithPermissions[] {
         PERMISSIONS.CATALOG_READ,
         PERMISSIONS.CUSTOMER_READ,
         PERMISSIONS.CUSTOMER_MANAGE,
+        PERMISSIONS.SUPPLIER_READ,
         PERMISSIONS.QUOTE_READ,
         PERMISSIONS.QUOTE_MANAGE,
         PERMISSIONS.RESERVATION_READ,
@@ -84,6 +85,8 @@ function createSystemRoles(tenantId: string): RoleWithPermissions[] {
       is_system: true,
       permissions: [
         PERMISSIONS.BRANDING_READ,
+        PERMISSIONS.SUPPLIER_READ,
+        PERMISSIONS.SUPPLIER_MANAGE,
         PERMISSIONS.CATALOG_READ,
         PERMISSIONS.CATALOG_MANAGE,
         PERMISSIONS.WAREHOUSE_READ,
@@ -126,6 +129,8 @@ function createSystemRoles(tenantId: string): RoleWithPermissions[] {
       permissions: [
         PERMISSIONS.BRANDING_READ,
         PERMISSIONS.CUSTOMER_READ,
+        PERMISSIONS.SUPPLIER_READ,
+        PERMISSIONS.SUPPLIER_MANAGE,
         PERMISSIONS.QUOTE_READ,
         PERMISSIONS.RESERVATION_READ,
         PERMISSIONS.FINANCE_READ,

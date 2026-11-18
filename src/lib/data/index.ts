@@ -96,7 +96,12 @@ export function hasPermission(
   permission: string,
 ): boolean {
   if (!session) return false;
-  return session.permissions.includes(permission);
+  if (session.permissions.includes(permission)) return true;
+  if (permission.endsWith(":read")) {
+    const impliedManage = `${permission.slice(0, -5)}:manage`;
+    return session.permissions.includes(impliedManage);
+  }
+  return false;
 }
 
 /**
@@ -112,7 +117,19 @@ export function canAccessRoute(
   if (!session) return false;
 
   if (pathname.startsWith("/customers/new")) {
-    return hasPermission(session, PERMISSIONS.CUSTOMER_MANAGE);
+    return (
+      hasPermission(session, PERMISSIONS.CUSTOMER_MANAGE) ||
+      hasPermission(session, PERMISSIONS.SUPPLIER_MANAGE)
+    );
+  }
+  if (pathname.startsWith("/suppliers")) {
+    return hasPermission(session, PERMISSIONS.SUPPLIER_READ);
+  }
+  if (pathname.startsWith("/customers/")) {
+    return (
+      hasPermission(session, PERMISSIONS.CUSTOMER_READ) ||
+      hasPermission(session, PERMISSIONS.SUPPLIER_READ)
+    );
   }
   if (pathname.startsWith("/customers")) {
     return hasPermission(session, PERMISSIONS.CUSTOMER_READ);

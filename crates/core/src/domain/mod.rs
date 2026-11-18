@@ -14,10 +14,11 @@ pub use branding::{BrandingValidator, PublicBranding, TenantBranding, UpdateBran
 pub use config::{AppConfig, InitialSetupInput, InitialSetupResult, OperationMode};
 pub use customer::{
     build_customer_search_text, build_name_sort, normalize_for_search, remove_diacritics,
-    validate_addresses, validate_contacts, validate_customer_common_fields, CreateAddressInput,
-    CreateContactInput, CreateCustomerInput, Customer, CustomerAddress, CustomerContact,
-    CustomerCursor, CustomerFilter, CustomerPage, CustomerWithDetails, PersonType,
-    UpdateAddressInput, UpdateContactInput, UpdateCustomerInput,
+    validate_addresses, validate_contacts, validate_customer_common_fields,
+    validate_roles_and_categories, CreateAddressInput, CreateContactInput, CreateCustomerInput,
+    Customer, CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter, CustomerPage,
+    CustomerRoleFilter, CustomerWithDetails, PersonType, SupplierCategory, UpdateAddressInput,
+    UpdateContactInput, UpdateCustomerInput,
 };
 pub use document::{
     format_cnpj, format_cpf, mask_document_for_audit, mask_email_for_audit,
@@ -34,5 +35,5 @@ pub use user::{
 };
 pub use validation::{
     normalize_and_validate_phone, normalize_and_validate_postal_code, validate_brazilian_state,
-    validate_country_code, validate_email, BRAZILIAN_STATES,
+    validate_country_code, validate_email, validate_user_name, BRAZILIAN_STATES,
 };
