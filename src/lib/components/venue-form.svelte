@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import {
     MapPin,
     Layers,
@@ -13,7 +13,11 @@
     Star,
   } from "lucide-svelte";
   import {
+    appSession,
+    getSettingsRepository,
     getVenueRepository,
+    hasPermission,
+    PERMISSIONS,
     type CreateVenueInput,
     type VenueSpaceInput,
     type VenueContactInput,
@@ -56,7 +60,25 @@
   let postalCode = $state(seed?.postal_code ?? "");
   let country = $state(seed?.country ?? "BR");
   let accessHours = $state(seed?.access_hours ?? "");
+  let internalTransferMinutes = $state(
+    seed?.internal_transfer_minutes !== null &&
+      seed?.internal_transfer_minutes !== undefined
+      ? String(seed.internal_transfer_minutes)
+      : "",
+  );
+  let defaultInternalTransferMinutes = $state(20);
   let parkingNotes = $state(seed?.parking_notes ?? "");
+
+  onMount(async () => {
+    if (hasPermission(appSession.session, PERMISSIONS.SETTINGS_READ)) {
+      try {
+        const s = await getSettingsRepository().getAllocationSettings();
+        defaultInternalTransferMinutes = s.default_internal_transfer_minutes;
+      } catch {
+        // mantém padrão 20 min
+      }
+    }
+  });
   let loadingDockNotes = $state(seed?.loading_dock_notes ?? "");
   let notes = $state(seed?.notes ?? "");
 
@@ -67,7 +89,6 @@
     capacity_people: string;
     area_sqm: string;
     ceiling_height_m: string;
-    internal_transfer_minutes: string;
     power_available: string;
     loading_access: string;
     rigging_points: string;
@@ -109,7 +130,6 @@
         sp.ceiling_height_m !== null && sp.ceiling_height_m !== undefined
           ? String(sp.ceiling_height_m)
           : "",
-      internal_transfer_minutes: String(sp.internal_transfer_minutes ?? 0),
       power_available: sp.power_available ?? "",
       loading_access: sp.loading_access ?? "",
       rigging_points: sp.rigging_points ?? "",
@@ -163,7 +183,6 @@
         capacity_people: "",
         area_sqm: "",
         ceiling_height_m: "",
-        internal_transfer_minutes: "0",
         power_available: "",
         loading_access: "",
         rigging_points: "",
@@ -244,18 +263,23 @@
       return;
     }
 
+    const parsedTransfer = parseOptionalInt(internalTransferMinutes);
+    if (
+      parsedTransfer !== null &&
+      (parsedTransfer < 0 || parsedTransfer > 240)
+    ) {
+      activeTab = "dados";
+      formError =
+        "O deslocamento interno do local deve estar entre 0 e 240 minutos.";
+      return;
+    }
+
     const spaceInputs: VenueSpaceInput[] = [];
     for (let i = 0; i < spaces.length; i++) {
       const sp = spaces[i];
       if (!sp.name.trim()) {
         activeTab = "espacos";
         formError = `Informe o nome do espaço #${i + 1}.`;
-        return;
-      }
-      const transfer = parseOptionalInt(sp.internal_transfer_minutes) ?? 0;
-      if (transfer < 0 || transfer > 240) {
-        activeTab = "espacos";
-        formError = `O deslocamento interno de "${sp.name}" deve estar entre 0 e 240 minutos.`;
         return;
       }
       spaceInputs.push({
@@ -268,7 +292,6 @@
         loading_access: sp.loading_access.trim() || null,
         rigging_points: sp.rigging_points.trim() || null,
         acoustics_notes: sp.acoustics_notes.trim() || null,
-        internal_transfer_minutes: transfer,
         notes: sp.notes.trim() || null,
         active: sp.active,
         sort_order: i,
@@ -309,6 +332,7 @@
       postal_code: postalCode.trim() || null,
       country: country.trim() || "BR",
       access_hours: accessHours.trim() || null,
+      internal_transfer_minutes: parsedTransfer,
       parking_notes: parkingNotes.trim() || null,
       loading_dock_notes: loadingDockNotes.trim() || null,
       notes: notes.trim() || null,
@@ -508,7 +532,7 @@
             </div>
           </div>
 
-          <div class="space-y-1.5 sm:col-span-2">
+          <div class="space-y-1.5">
             <label for="venue-access-hours" class="text-sm font-medium">
               Horários de acesso / montagem
             </label>
@@ -518,6 +542,25 @@
               disabled={readOnly}
               bind:value={accessHours}
             />
+          </div>
+
+          <div class="space-y-1.5">
+            <label for="venue-internal-transfer" class="text-sm font-medium">
+              Deslocamento interno (min)
+            </label>
+            <Input
+              id="venue-internal-transfer"
+              type="number"
+              min={0}
+              max={240}
+              placeholder={`Padrão da empresa (${defaultInternalTransferMinutes} min)`}
+              disabled={readOnly}
+              bind:value={internalTransferMinutes}
+            />
+            <p class="text-xs text-muted-foreground">
+              Deixe em branco para usar o padrão da empresa ({defaultInternalTransferMinutes}
+              min). Informe 0 se não houver deslocamento interno.
+            </p>
           </div>
 
           <div class="space-y-1.5">
@@ -626,7 +669,7 @@
                 </div>
               </div>
 
-              <div class="grid gap-4 sm:grid-cols-5">
+              <div class="grid gap-4 sm:grid-cols-4">
                 <div class="space-y-1.5 sm:col-span-2">
                   <label
                     for={`sp-name-${sp.localKey}`}
@@ -672,23 +715,6 @@
                     step="0.1"
                     disabled={readOnly}
                     bind:value={sp.area_sqm}
-                  />
-                </div>
-
-                <div class="space-y-1.5">
-                  <label
-                    for={`sp-transfer-${sp.localKey}`}
-                    class="text-sm font-medium"
-                  >
-                    Desloc. interno (min)
-                  </label>
-                  <Input
-                    id={`sp-transfer-${sp.localKey}`}
-                    type="number"
-                    min={0}
-                    max={240}
-                    disabled={readOnly}
-                    bind:value={sp.internal_transfer_minutes}
                   />
                 </div>
               </div>

@@ -36,6 +36,7 @@ test.describe("E2E — Locais de Evento, Espaços e Operação (Fase 1D)", () =>
     await page.getByLabel("Montagem padrão (min)", { exact: true }).fill("45");
     await page.getByLabel("Desmontagem padrão (min)").fill("25");
     await page.getByLabel("Buffer de giro (min)").fill("90");
+    await page.getByLabel("Deslocamento interno padrão (min)").fill("35");
     await page.getByRole("button", { name: "Salvar configurações" }).click();
     await expect(
       page.getByText("Configurações operacionais salvas com sucesso."),
@@ -50,6 +51,10 @@ test.describe("E2E — Locais de Evento, Espaços e Operação (Fase 1D)", () =>
     await page.getByLabel("Nome do local *").fill("Riocentro");
     await page.getByLabel("Cidade").fill("Rio de Janeiro");
     await page.getByLabel("UF").fill("RJ");
+    await expect(page.getByLabel("Deslocamento interno (min)")).toHaveAttribute(
+      "placeholder",
+      /Padrão da empresa \(35 min\)/,
+    );
 
     await page.getByRole("tab", { name: /Espaços/i }).click();
     for (const [idx, pav] of [
@@ -59,10 +64,6 @@ test.describe("E2E — Locais de Evento, Espaços e Operação (Fase 1D)", () =>
     ].entries()) {
       await page.getByRole("button", { name: "Adicionar espaço" }).click();
       await page.getByLabel("Nome do espaço *").nth(idx).fill(pav);
-      await page
-        .getByLabel("Desloc. interno (min)")
-        .nth(idx)
-        .fill(String((idx + 1) * 10));
     }
 
     await page.getByRole("tab", { name: /Contatos/i }).click();

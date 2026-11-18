@@ -101,14 +101,6 @@ export class MockVenueRepository implements VenueRepository {
         );
       }
       seenSpaces.add(spNorm);
-      if (
-        sp.internal_transfer_minutes < 0 ||
-        sp.internal_transfer_minutes > 240
-      ) {
-        throw new Error(
-          "Deslocamento interno deve estar entre 0 e 240 minutos.",
-        );
-      }
       return {
         id: genId(),
         tenant_id: "mock-tenant",
@@ -122,7 +114,6 @@ export class MockVenueRepository implements VenueRepository {
         loading_access: sp.loading_access ?? null,
         rigging_points: sp.rigging_points ?? null,
         acoustics_notes: sp.acoustics_notes ?? null,
-        internal_transfer_minutes: sp.internal_transfer_minutes ?? 0,
         notes: sp.notes ?? null,
         active: sp.active ?? true,
         sort_order: sp.sort_order ?? idx,
@@ -174,6 +165,7 @@ export class MockVenueRepository implements VenueRepository {
       parking_notes: input.parking_notes ?? null,
       loading_dock_notes: input.loading_dock_notes ?? null,
       access_hours: input.access_hours ?? null,
+      internal_transfer_minutes: input.internal_transfer_minutes ?? null,
       notes: input.notes ?? null,
       active: true,
       search_text: searchParts.join(" "),
@@ -233,7 +225,6 @@ export class MockVenueRepository implements VenueRepository {
         loading_access: sp.loading_access ?? null,
         rigging_points: sp.rigging_points ?? null,
         acoustics_notes: sp.acoustics_notes ?? null,
-        internal_transfer_minutes: sp.internal_transfer_minutes ?? 0,
         notes: sp.notes ?? null,
         active: sp.active ?? true,
         sort_order: sp.sort_order ?? spIdx,
@@ -288,6 +279,7 @@ export class MockVenueRepository implements VenueRepository {
       parking_notes: input.parking_notes ?? null,
       loading_dock_notes: input.loading_dock_notes ?? null,
       access_hours: input.access_hours ?? null,
+      internal_transfer_minutes: input.internal_transfer_minutes ?? null,
       notes: input.notes ?? null,
       search_text: searchParts.join(" "),
       name_sort: normalizeSearch(nameTrimmed),

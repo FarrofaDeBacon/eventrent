@@ -76,10 +76,11 @@ Com a conclusão do cadastro unificado de clientes e fornecedores (Fases 1B.2 e 
 ## Adendo (Fase 1D — 2026-11-17)
 
 - Implementado na Fase 1D (`0007_venues_and_settings.sql`):
-  - `venue_space.internal_transfer_minutes` (`0..=240` minutos, padrão `0`) para modelar o tempo de deslocamento interno entre doca/estoque e o espaço específico do local.
+  - `venue.internal_transfer_minutes` (`INTEGER NULL`, `0..=240` minutos; `NULL` = usar o padrão da empresa `allocation.default_internal_transfer_minutes`, padrão `20`) para modelar o tempo de deslocamento interno do local.
   - Chaves em `tenant_setting` para defaults globais do tenant:
     - `allocation.default_setup_minutes` (padrão `30`)
     - `allocation.default_teardown_minutes` (padrão `20`)
     - `allocation.default_turnover_buffer_minutes` (padrão `60`)
+    - `allocation.default_internal_transfer_minutes` (padrão `20`)
   - Todos validados no intervalo `0..=240` minutos e editáveis em **Configurações → Operação** (`/settings/operation`).
   - Na Fase 4, espaços referenciados em eventos terão sua remoção bloqueada pelo domínio, orientando a desativação (`active = false`).

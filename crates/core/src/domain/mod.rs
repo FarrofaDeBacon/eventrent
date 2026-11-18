@@ -32,9 +32,10 @@ pub use permission::*;
 pub use role::{Role, RoleWithPermissions};
 pub use settings::{
     validate_allocation_settings, AllocationSettings, TenantSetting, UpdateAllocationSettingsInput,
-    DEFAULT_SETUP_MINUTES, DEFAULT_TEARDOWN_MINUTES, DEFAULT_TURNOVER_BUFFER_MINUTES,
-    MAX_ALLOCATION_MINUTES, SETTING_DEFAULT_SETUP_MINUTES, SETTING_DEFAULT_TEARDOWN_MINUTES,
-    SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
+    DEFAULT_INTERNAL_TRANSFER_MINUTES, DEFAULT_SETUP_MINUTES, DEFAULT_TEARDOWN_MINUTES,
+    DEFAULT_TURNOVER_BUFFER_MINUTES, MAX_ALLOCATION_MINUTES,
+    SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES, SETTING_DEFAULT_SETUP_MINUTES,
+    SETTING_DEFAULT_TEARDOWN_MINUTES, SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
 };
 pub use tenant::Tenant;
 pub use user::{
@@ -46,10 +47,10 @@ pub use validation::{
     validate_country_code, validate_email, validate_user_name, BRAZILIAN_STATES,
 };
 pub use venue::{
-    build_venue_name_sort, build_venue_search_text, validate_venue_contacts, validate_venue_fields,
-    validate_venue_spaces, CreateVenueInput, UpdateVenueInput, ValidatedVenueFields, Venue,
-    VenueContact, VenueContactInput, VenueCursor, VenueFilter, VenueListItem, VenuePage,
-    VenueSpace, VenueSpaceInput, VenueWithDetails, MAX_INTERNAL_TRANSFER_MINUTES,
-    MAX_VENUE_CONTACTS, MAX_VENUE_NAME_LEN, MAX_VENUE_SPACES, MAX_VENUE_SPACE_NAME_LEN,
-    MAX_VENUE_TECH_FIELD_LEN,
+    build_venue_name_sort, build_venue_search_text, resolve_venue_internal_transfer_minutes,
+    validate_venue_contacts, validate_venue_fields, validate_venue_spaces, CreateVenueInput,
+    UpdateVenueInput, ValidatedVenueFields, Venue, VenueContact, VenueContactInput, VenueCursor,
+    VenueFilter, VenueListItem, VenuePage, VenueSpace, VenueSpaceInput, VenueWithDetails,
+    MAX_INTERNAL_TRANSFER_MINUTES, MAX_VENUE_CONTACTS, MAX_VENUE_NAME_LEN, MAX_VENUE_SPACES,
+    MAX_VENUE_SPACE_NAME_LEN, MAX_VENUE_TECH_FIELD_LEN,
 };

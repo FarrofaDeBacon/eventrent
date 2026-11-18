@@ -10,6 +10,7 @@ const DEFAULT_SETTINGS: AllocationSettings = {
   default_setup_minutes: 30,
   default_teardown_minutes: 20,
   default_turnover_buffer_minutes: 60,
+  default_internal_transfer_minutes: 20,
 };
 
 export class MockSettingsRepository implements SettingsRepository {
@@ -36,6 +37,10 @@ export class MockSettingsRepository implements SettingsRepository {
           typeof parsed.default_turnover_buffer_minutes === "number"
             ? parsed.default_turnover_buffer_minutes
             : DEFAULT_SETTINGS.default_turnover_buffer_minutes,
+        default_internal_transfer_minutes:
+          typeof parsed.default_internal_transfer_minutes === "number"
+            ? parsed.default_internal_transfer_minutes
+            : DEFAULT_SETTINGS.default_internal_transfer_minutes,
       };
     } catch {
       return { ...DEFAULT_SETTINGS };
@@ -59,6 +64,10 @@ export class MockSettingsRepository implements SettingsRepository {
         label: "Buffer padrão de giro",
         value: input.default_turnover_buffer_minutes,
       },
+      {
+        label: "Deslocamento interno padrão",
+        value: input.default_internal_transfer_minutes,
+      },
     ];
     for (const f of fields) {
       if (!Number.isInteger(f.value) || f.value < 0 || f.value > 240) {
@@ -69,6 +78,8 @@ export class MockSettingsRepository implements SettingsRepository {
       default_setup_minutes: input.default_setup_minutes,
       default_teardown_minutes: input.default_teardown_minutes,
       default_turnover_buffer_minutes: input.default_turnover_buffer_minutes,
+      default_internal_transfer_minutes:
+        input.default_internal_transfer_minutes,
     };
     if (typeof window !== "undefined") {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));

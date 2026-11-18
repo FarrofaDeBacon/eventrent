@@ -327,12 +327,14 @@ export interface AllocationSettings {
   default_setup_minutes: number;
   default_teardown_minutes: number;
   default_turnover_buffer_minutes: number;
+  default_internal_transfer_minutes: number;
 }
 
 export interface UpdateAllocationSettingsInput {
   default_setup_minutes: number;
   default_teardown_minutes: number;
   default_turnover_buffer_minutes: number;
+  default_internal_transfer_minutes: number;
 }
 
 export interface Venue {
@@ -350,6 +352,7 @@ export interface Venue {
   parking_notes?: string | null;
   loading_dock_notes?: string | null;
   access_hours?: string | null;
+  internal_transfer_minutes?: number | null;
   notes?: string | null;
   active: boolean;
   search_text: string;
@@ -373,7 +376,6 @@ export interface VenueSpace {
   loading_access?: string | null;
   rigging_points?: string | null;
   acoustics_notes?: string | null;
-  internal_transfer_minutes: number;
   notes?: string | null;
   active: boolean;
   sort_order: number;
@@ -431,7 +433,6 @@ export interface VenueSpaceInput {
   loading_access?: string | null;
   rigging_points?: string | null;
   acoustics_notes?: string | null;
-  internal_transfer_minutes: number;
   notes?: string | null;
   active?: boolean;
   sort_order?: number;
@@ -459,6 +460,7 @@ export interface CreateVenueInput {
   parking_notes?: string | null;
   loading_dock_notes?: string | null;
   access_hours?: string | null;
+  internal_transfer_minutes?: number | null;
   notes?: string | null;
   spaces: VenueSpaceInput[];
   contacts: VenueContactInput[];

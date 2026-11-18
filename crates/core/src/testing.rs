@@ -3565,14 +3565,15 @@ mod unit_tests {
 
         assert!(matches!(
             validate_venue_fields(
-                "   ", None, None, None, None, None, None, None, "BR", None, None, None, None
+                "   ", None, None, None, None, None, None, None, "BR", None, None, None, None, None
             ),
             Err(CoreError::Validation(_))
         ));
         let long_name = "A".repeat(MAX_VENUE_NAME_LEN + 1);
         assert!(matches!(
             validate_venue_fields(
-                &long_name, None, None, None, None, None, None, None, "BR", None, None, None, None
+                &long_name, None, None, None, None, None, None, None, "BR", None, None, None, None,
+                None
             ),
             Err(CoreError::Validation(_))
         ));
@@ -3590,6 +3591,26 @@ mod unit_tests {
                 None,
                 None,
                 None,
+                None,
+                None
+            ),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            validate_venue_fields(
+                "Riocentro",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                "BR",
+                None,
+                None,
+                None,
+                Some(MAX_INTERNAL_TRANSFER_MINUTES + 1),
                 None
             ),
             Err(CoreError::Validation(_))
@@ -3609,6 +3630,24 @@ mod unit_tests {
             None,
             None,
             None,
+            None,
+        )
+        .is_ok());
+        assert!(validate_venue_fields(
+            "Riocentro",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "BR",
+            None,
+            None,
+            None,
+            Some(0),
+            None,
         )
         .is_ok());
 
@@ -3623,7 +3662,6 @@ mod unit_tests {
                 loading_access: None,
                 rigging_points: None,
                 acoustics_notes: None,
-                internal_transfer_minutes: 15,
                 notes: None,
                 active: true,
                 sort_order: 0,
@@ -3638,7 +3676,6 @@ mod unit_tests {
                 loading_access: None,
                 rigging_points: None,
                 acoustics_notes: None,
-                internal_transfer_minutes: 0,
                 notes: None,
                 active: true,
                 sort_order: 1,
@@ -3646,26 +3683,6 @@ mod unit_tests {
         ];
         assert!(matches!(
             validate_venue_spaces(&mut dup_spaces),
-            Err(CoreError::Validation(_))
-        ));
-
-        let mut bad_transfer = vec![VenueSpaceInput {
-            id: None,
-            name: "Auditório".to_string(),
-            capacity_people: None,
-            area_sqm: None,
-            ceiling_height_m: None,
-            power_available: None,
-            loading_access: None,
-            rigging_points: None,
-            acoustics_notes: None,
-            internal_transfer_minutes: MAX_INTERNAL_TRANSFER_MINUTES + 1,
-            notes: None,
-            active: true,
-            sort_order: 0,
-        }];
-        assert!(matches!(
-            validate_venue_spaces(&mut bad_transfer),
             Err(CoreError::Validation(_))
         ));
 
@@ -3680,7 +3697,6 @@ mod unit_tests {
                 loading_access: None,
                 rigging_points: None,
                 acoustics_notes: None,
-                internal_transfer_minutes: 0,
                 notes: None,
                 active: true,
                 sort_order: i as i64,
@@ -3701,7 +3717,6 @@ mod unit_tests {
             loading_access: None,
             rigging_points: None,
             acoustics_notes: None,
-            internal_transfer_minutes: 0,
             notes: None,
             active: true,
             sort_order: 0,
@@ -3749,6 +3764,7 @@ mod unit_tests {
                 default_setup_minutes: 0,
                 default_teardown_minutes: 240,
                 default_turnover_buffer_minutes: 60,
+                default_internal_transfer_minutes: 20,
             })
             .is_ok()
         );
@@ -3757,8 +3773,51 @@ mod unit_tests {
                 default_setup_minutes: -1,
                 default_teardown_minutes: 20,
                 default_turnover_buffer_minutes: 60,
+                default_internal_transfer_minutes: 20,
             }),
             Err(CoreError::Validation(_))
         ));
+
+        // Local sem internal_transfer_minutes usa padrão (20); local com 0 explícito usa 0
+        use crate::domain::{resolve_venue_internal_transfer_minutes, AllocationSettings, Venue};
+        let default_settings = AllocationSettings::default();
+        assert_eq!(default_settings.default_internal_transfer_minutes, 20);
+        let venue_null = Venue {
+            id: "v-1".to_string(),
+            tenant_id: "t-1".to_string(),
+            name: "Local Sem Tempo".to_string(),
+            street: None,
+            number: None,
+            complement: None,
+            neighborhood: None,
+            city: None,
+            state: None,
+            postal_code: None,
+            country: "BR".to_string(),
+            parking_notes: None,
+            loading_dock_notes: None,
+            access_hours: None,
+            internal_transfer_minutes: None,
+            notes: None,
+            active: true,
+            search_text: "local sem tempo".to_string(),
+            name_sort: "local sem tempo".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            deleted_at: None,
+            created_by: None,
+        };
+        assert_eq!(
+            resolve_venue_internal_transfer_minutes(&venue_null, &default_settings),
+            20
+        );
+        let venue_zero = Venue {
+            internal_transfer_minutes: Some(0),
+            ..venue_null
+        };
+        assert_eq!(
+            resolve_venue_internal_transfer_minutes(&venue_zero, &default_settings),
+            0
+        );
     }
 }

@@ -12,11 +12,12 @@ use crate::domain::{
     RoleWithPermissions, SessionInfo, Tenant, TenantBranding, TenantSetting,
     UpdateAllocationSettingsInput, UpdateBrandingInput, UpdateCustomerInput, UpdateUserInput,
     UpdateVenueInput, UserRecord, UserWithRole, Venue, VenueContact, VenueCursor, VenueFilter,
-    VenuePage, VenueSpace, VenueWithDetails, DEFAULT_SETUP_MINUTES, DEFAULT_TEARDOWN_MINUTES,
-    DEFAULT_TURNOVER_BUFFER_MINUTES, PERM_BRANDING_MANAGE, PERM_BRANDING_READ,
-    PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_SETTINGS_MANAGE,
-    PERM_SETTINGS_READ, PERM_SUPPLIER_MANAGE, PERM_SUPPLIER_READ, PERM_USER_MANAGE, PERM_USER_READ,
-    PERM_VENUE_MANAGE, PERM_VENUE_READ, ROLE_SLUG_OWNER, SETTING_DEFAULT_SETUP_MINUTES,
+    VenuePage, VenueSpace, VenueWithDetails, DEFAULT_INTERNAL_TRANSFER_MINUTES,
+    DEFAULT_SETUP_MINUTES, DEFAULT_TEARDOWN_MINUTES, DEFAULT_TURNOVER_BUFFER_MINUTES,
+    PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ,
+    PERM_ROLE_READ, PERM_SETTINGS_MANAGE, PERM_SETTINGS_READ, PERM_SUPPLIER_MANAGE,
+    PERM_SUPPLIER_READ, PERM_USER_MANAGE, PERM_USER_READ, PERM_VENUE_MANAGE, PERM_VENUE_READ,
+    ROLE_SLUG_OWNER, SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES, SETTING_DEFAULT_SETUP_MINUTES,
     SETTING_DEFAULT_TEARDOWN_MINUTES, SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES, SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
@@ -2389,6 +2390,7 @@ impl CoreServices {
             input.parking_notes.clone(),
             input.loading_dock_notes.clone(),
             input.access_hours.clone(),
+            input.internal_transfer_minutes,
             input.notes.clone(),
         )?;
 
@@ -2418,6 +2420,7 @@ impl CoreServices {
             parking_notes: fields.parking_notes,
             loading_dock_notes: fields.loading_dock_notes,
             access_hours: fields.access_hours,
+            internal_transfer_minutes: fields.internal_transfer_minutes,
             notes: fields.notes,
             active: true,
             search_text,
@@ -2445,7 +2448,6 @@ impl CoreServices {
                 loading_access: sp.loading_access,
                 rigging_points: sp.rigging_points,
                 acoustics_notes: sp.acoustics_notes,
-                internal_transfer_minutes: sp.internal_transfer_minutes,
                 notes: sp.notes,
                 active: sp.active,
                 sort_order: if sp.sort_order == 0 {
@@ -2542,6 +2544,7 @@ impl CoreServices {
             input.parking_notes.clone(),
             input.loading_dock_notes.clone(),
             input.access_hours.clone(),
+            input.internal_transfer_minutes,
             input.notes.clone(),
         )?;
 
@@ -2576,6 +2579,7 @@ impl CoreServices {
             let parking_notes = fields.parking_notes.clone();
             let loading_dock_notes = fields.loading_dock_notes.clone();
             let access_hours = fields.access_hours.clone();
+            let internal_transfer_minutes = fields.internal_transfer_minutes;
             let notes = fields.notes.clone();
             let search_text = search_text.clone();
             let name_sort = name_sort.clone();
@@ -2642,7 +2646,6 @@ impl CoreServices {
                         loading_access: sp.loading_access,
                         rigging_points: sp.rigging_points,
                         acoustics_notes: sp.acoustics_notes,
-                        internal_transfer_minutes: sp.internal_transfer_minutes,
                         notes: sp.notes,
                         active: sp.active,
                         sort_order: if sp.sort_order == 0 {
@@ -2716,6 +2719,7 @@ impl CoreServices {
                     parking_notes,
                     loading_dock_notes,
                     access_hours,
+                    internal_transfer_minutes,
                     notes,
                     active: existing.venue.active,
                     search_text,
@@ -2962,6 +2966,10 @@ impl CoreServices {
                         SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
                         DEFAULT_TURNOVER_BUFFER_MINUTES.to_string(),
                     ),
+                    (
+                        SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES,
+                        DEFAULT_INTERNAL_TRANSFER_MINUTES.to_string(),
+                    ),
                 ];
 
                 for (key, val) in &defaults {
@@ -2985,6 +2993,7 @@ impl CoreServices {
                             SETTING_DEFAULT_SETUP_MINUTES,
                             SETTING_DEFAULT_TEARDOWN_MINUTES,
                             SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
+                            SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES,
                         ],
                     )
                     .await?;
@@ -2999,6 +3008,9 @@ impl CoreServices {
                             }
                             SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES => {
                                 result.default_turnover_buffer_minutes = parsed
+                            }
+                            SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES => {
+                                result.default_internal_transfer_minutes = parsed
                             }
                             _ => {}
                         }
@@ -3040,6 +3052,10 @@ impl CoreServices {
                         SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
                         input.default_turnover_buffer_minutes.to_string(),
                     ),
+                    (
+                        SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES,
+                        input.default_internal_transfer_minutes.to_string(),
+                    ),
                 ];
 
                 for (key, val) in pairs {
@@ -3057,10 +3073,11 @@ impl CoreServices {
                 }
 
                 let detail = format!(
-                    "Configurações de alocação atualizadas: montagem={}min, desmontagem={}min, giro={}min",
+                    "Configurações de alocação atualizadas: montagem={}min, desmontagem={}min, giro={}min, deslocamento={}min",
                     input.default_setup_minutes,
                     input.default_teardown_minutes,
-                    input.default_turnover_buffer_minutes
+                    input.default_turnover_buffer_minutes,
+                    input.default_internal_transfer_minutes
                 );
                 stores
                     .audit()
@@ -3078,6 +3095,7 @@ impl CoreServices {
                     default_setup_minutes: input.default_setup_minutes,
                     default_teardown_minutes: input.default_teardown_minutes,
                     default_turnover_buffer_minutes: input.default_turnover_buffer_minutes,
+                    default_internal_transfer_minutes: input.default_internal_transfer_minutes,
                 })
             })
         })

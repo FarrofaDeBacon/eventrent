@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::customer::{build_name_sort, normalize_for_search, CustomerCursor};
 use crate::domain::document::{mask_email_for_audit, mask_phone_for_audit};
+use crate::domain::settings::AllocationSettings;
 use crate::domain::validation::{
     normalize_and_validate_phone, normalize_and_validate_postal_code, validate_brazilian_state,
     validate_country_code, validate_email,
@@ -107,6 +108,7 @@ pub struct Venue {
     pub parking_notes: Option<String>,
     pub loading_dock_notes: Option<String>,
     pub access_hours: Option<String>,
+    pub internal_transfer_minutes: Option<i64>,
     pub notes: Option<String>,
     pub active: bool,
     pub search_text: String,
@@ -131,7 +133,6 @@ pub struct VenueSpace {
     pub loading_access: Option<String>,
     pub rigging_points: Option<String>,
     pub acoustics_notes: Option<String>,
-    pub internal_transfer_minutes: i64,
     pub notes: Option<String>,
     pub active: bool,
     pub sort_order: i64,
@@ -214,8 +215,6 @@ pub struct VenueSpaceInput {
     pub loading_access: Option<String>,
     pub rigging_points: Option<String>,
     pub acoustics_notes: Option<String>,
-    #[serde(default)]
-    pub internal_transfer_minutes: i64,
     pub notes: Option<String>,
     #[serde(default = "default_true")]
     pub active: bool,
@@ -262,6 +261,7 @@ pub struct CreateVenueInput {
     pub parking_notes: Option<String>,
     pub loading_dock_notes: Option<String>,
     pub access_hours: Option<String>,
+    pub internal_transfer_minutes: Option<i64>,
     pub notes: Option<String>,
     #[serde(default)]
     pub spaces: Vec<VenueSpaceInput>,
@@ -285,6 +285,7 @@ pub struct UpdateVenueInput {
     pub parking_notes: Option<String>,
     pub loading_dock_notes: Option<String>,
     pub access_hours: Option<String>,
+    pub internal_transfer_minutes: Option<i64>,
     pub notes: Option<String>,
     #[serde(default)]
     pub spaces: Vec<VenueSpaceInput>,
@@ -306,6 +307,7 @@ pub struct ValidatedVenueFields {
     pub parking_notes: Option<String>,
     pub loading_dock_notes: Option<String>,
     pub access_hours: Option<String>,
+    pub internal_transfer_minutes: Option<i64>,
     pub notes: Option<String>,
 }
 
@@ -323,6 +325,7 @@ pub fn validate_venue_fields(
     parking_notes: Option<String>,
     loading_dock_notes: Option<String>,
     access_hours: Option<String>,
+    internal_transfer_minutes: Option<i64>,
     notes: Option<String>,
 ) -> CoreResult<ValidatedVenueFields> {
     let name = validate_required_text(name, "Nome do local", MAX_VENUE_NAME_LEN, false)?;
@@ -353,6 +356,13 @@ pub fn validate_venue_fields(
         true,
     )?;
     let access_hours = validate_optional_text(access_hours, "Horários de acesso", 200, false)?;
+    if let Some(mins) = internal_transfer_minutes {
+        if !(0..=MAX_INTERNAL_TRANSFER_MINUTES).contains(&mins) {
+            return Err(CoreError::Validation(format!(
+                "Deslocamento interno deve estar entre 0 e {MAX_INTERNAL_TRANSFER_MINUTES} minutos."
+            )));
+        }
+    }
     let notes = validate_optional_text(notes, "Observações", MAX_VENUE_TECH_FIELD_LEN, true)?;
 
     Ok(ValidatedVenueFields {
@@ -368,8 +378,18 @@ pub fn validate_venue_fields(
         parking_notes,
         loading_dock_notes,
         access_hours,
+        internal_transfer_minutes,
         notes,
     })
+}
+
+pub fn resolve_venue_internal_transfer_minutes(
+    venue: &Venue,
+    settings: &AllocationSettings,
+) -> i64 {
+    venue
+        .internal_transfer_minutes
+        .unwrap_or(settings.default_internal_transfer_minutes)
 }
 
 pub fn validate_venue_spaces(spaces: &mut [VenueSpaceInput]) -> CoreResult<()> {
@@ -413,11 +433,6 @@ pub fn validate_venue_spaces(spaces: &mut [VenueSpaceInput]) -> CoreResult<()> {
                     "Pé-direito (m) deve ser um número válido entre 0 e 500.".to_string(),
                 ));
             }
-        }
-        if !(0..=MAX_INTERNAL_TRANSFER_MINUTES).contains(&space.internal_transfer_minutes) {
-            return Err(CoreError::Validation(format!(
-                "Deslocamento interno deve estar entre 0 e {MAX_INTERNAL_TRANSFER_MINUTES} minutos."
-            )));
         }
         space.power_available = validate_optional_text(
             space.power_available.take(),

@@ -28,6 +28,7 @@
   let defaultSetupMinutes = $state("30");
   let defaultTeardownMinutes = $state("20");
   let defaultTurnoverBufferMinutes = $state("60");
+  let defaultInternalTransferMinutes = $state("20");
   let fieldErrors = $state<Record<string, string>>({});
 
   onMount(async () => {
@@ -37,6 +38,9 @@
       defaultTeardownMinutes = String(settings.default_teardown_minutes);
       defaultTurnoverBufferMinutes = String(
         settings.default_turnover_buffer_minutes,
+      );
+      defaultInternalTransferMinutes = String(
+        settings.default_internal_transfer_minutes,
       );
     } catch (err) {
       toast.error(
@@ -87,8 +91,18 @@
       "turnover",
       "Buffer padrão de giro",
     );
+    const internalTransfer = parseMinutes(
+      defaultInternalTransferMinutes,
+      "internalTransfer",
+      "Deslocamento interno padrão",
+    );
 
-    if (setup === null || teardown === null || turnover === null) {
+    if (
+      setup === null ||
+      teardown === null ||
+      turnover === null ||
+      internalTransfer === null
+    ) {
       toast.error("Corrija os campos destacados antes de salvar.");
       return;
     }
@@ -99,11 +113,15 @@
         default_setup_minutes: setup,
         default_teardown_minutes: teardown,
         default_turnover_buffer_minutes: turnover,
+        default_internal_transfer_minutes: internalTransfer,
       });
       defaultSetupMinutes = String(updated.default_setup_minutes);
       defaultTeardownMinutes = String(updated.default_teardown_minutes);
       defaultTurnoverBufferMinutes = String(
         updated.default_turnover_buffer_minutes,
+      );
+      defaultInternalTransferMinutes = String(
+        updated.default_internal_transfer_minutes,
       );
       toast.success("Configurações operacionais salvas com sucesso.");
     } catch (err) {
@@ -160,7 +178,7 @@
       </CardHeader>
       <CardContent>
         <form onsubmit={handleSave} class="space-y-5">
-          <div class="grid gap-5 sm:grid-cols-3">
+          <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
             <div class="space-y-2">
               <label for="setup-minutes" class="text-sm font-medium">
                 Montagem padrão (min)
@@ -223,6 +241,30 @@
               {:else}
                 <p class="text-xs text-muted-foreground">
                   Intervalo entre devolução e nova saída (padrão: 60 min).
+                </p>
+              {/if}
+            </div>
+
+            <div class="space-y-2">
+              <label for="transfer-minutes" class="text-sm font-medium">
+                Deslocamento interno padrão (min)
+              </label>
+              <Input
+                id="transfer-minutes"
+                type="number"
+                min={0}
+                max={240}
+                step={1}
+                disabled={!canEdit || isSaving}
+                bind:value={defaultInternalTransferMinutes}
+              />
+              {#if fieldErrors.internalTransfer}
+                <p class="text-xs text-destructive">
+                  {fieldErrors.internalTransfer}
+                </p>
+              {:else}
+                <p class="text-xs text-muted-foreground">
+                  Usado em locais sem deslocamento próprio (padrão: 20 min).
                 </p>
               {/if}
             </div>

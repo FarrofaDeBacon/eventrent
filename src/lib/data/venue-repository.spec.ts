@@ -57,10 +57,8 @@ describe("Venues & Settings RBAC + MockRepositories (Fase 1D)", () => {
       city: "Rio de Janeiro",
       state: "RJ",
       country: "BR",
-      spaces: [
-        { name: "Pavilhão 1", internal_transfer_minutes: 10 },
-        { name: "Pavilhão 2", internal_transfer_minutes: 20 },
-      ],
+      internal_transfer_minutes: null,
+      spaces: [{ name: "Pavilhão 1" }, { name: "Pavilhão 2" }],
       contacts: [
         {
           name: "Carlos Doca",
@@ -94,11 +92,10 @@ describe("Venues & Settings RBAC + MockRepositories (Fase 1D)", () => {
       city: "Rio de Janeiro",
       state: "RJ",
       country: "BR",
-      spaces: [{ id: p1Id, name: "Pavilhão 1", internal_transfer_minutes: 15 }],
+      spaces: [{ id: p1Id, name: "Pavilhão 1" }],
       contacts: [],
     });
     expect(updated.spaces[0].id).toBe(p1Id);
-    expect(updated.spaces[0].internal_transfer_minutes).toBe(15);
 
     await expect(
       repo.update({
@@ -112,27 +109,31 @@ describe("Venues & Settings RBAC + MockRepositories (Fase 1D)", () => {
     ).rejects.toThrow(/alterado por outra pessoa/i);
   });
 
-  it("MockSettingsRepository retorna defaults (30, 20, 60) e valida faixa 0..240", async () => {
+  it("MockSettingsRepository retorna defaults (30, 20, 60, 20) e valida faixa 0..240", async () => {
     const repo = new MockSettingsRepository();
     const initial = await repo.getAllocationSettings();
     expect(initial).toEqual({
       default_setup_minutes: 30,
       default_teardown_minutes: 20,
       default_turnover_buffer_minutes: 60,
+      default_internal_transfer_minutes: 20,
     });
 
     const saved = await repo.updateAllocationSettings({
       default_setup_minutes: 45,
       default_teardown_minutes: 30,
       default_turnover_buffer_minutes: 90,
+      default_internal_transfer_minutes: 25,
     });
     expect(saved.default_setup_minutes).toBe(45);
+    expect(saved.default_internal_transfer_minutes).toBe(25);
 
     await expect(
       repo.updateAllocationSettings({
         default_setup_minutes: 241,
         default_teardown_minutes: 20,
         default_turnover_buffer_minutes: 60,
+        default_internal_transfer_minutes: 20,
       }),
     ).rejects.toThrow(/0 e 240/);
   });

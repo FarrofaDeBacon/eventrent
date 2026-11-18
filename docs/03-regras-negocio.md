@@ -151,8 +151,8 @@ Criados de forma idempotente por `ensure_system_roles` para cada tenant:
   - **Regra Obrigatória da Fase 4 (Eventos e Contratos)**: Espaços já referenciados por eventos/orçamentos/contratos **não poderão ser excluídos** na atualização do local nem o local poderá sofrer exclusão lógica; o usuário deverá utilizar a desativação (`active = false`).
   - Duplicidade de `nome + cidade` dentro do mesmo tenant gera **aviso não bloqueante** na interface para permitir múltiplas unidades quando necessário.
 - **Tempos Operacionais e Configurações do Tenant (`tenant_setting`)**:
-  - Chaves padrão: `allocation.default_setup_minutes` (padrão `30`), `allocation.default_teardown_minutes` (padrão `20`) e `allocation.default_turnover_buffer_minutes` (padrão `60`).
-  - Todos os tempos operacionais (`setup`, `teardown`, `turnover_buffer` e `internal_transfer_minutes` por espaço) aceitam valores inteiros entre `0` e `240` minutos.
+  - Chaves padrão: `allocation.default_setup_minutes` (padrão `30`), `allocation.default_teardown_minutes` (padrão `20`), `allocation.default_turnover_buffer_minutes` (padrão `60`) e `allocation.default_internal_transfer_minutes` (padrão `20`).
+  - Todos os tempos operacionais (`setup`, `teardown`, `turnover_buffer` e `internal_transfer_minutes` opcional por local — onde `NULL` usa o padrão da empresa e `0` explícito representa zero) aceitam valores inteiros entre `0` e `240` minutos.
   - Leitura exige `settings:read` e alteração exige `settings:manage` com registro em `audit_log`.
 - **Autorização (RBAC) de Locais**:
   - `venue:read`: **Proprietário**, **Comercial**, **Estoque**, **Técnico**, **Financeiro**.
