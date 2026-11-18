@@ -8,6 +8,7 @@ import {
   type CustomerContact,
   type CustomerFilter,
   type CustomerPage,
+  type CustomerRole,
   type CustomerWithDetails,
   type DocumentType,
   type SessionInfo,
@@ -548,7 +549,7 @@ export class MockCustomerRepository implements CustomerRepository {
     const { docType, cleanDoc } = validateInput(input);
 
     if (cleanDoc) {
-      const duplicate = store.customers.some(
+      const duplicate = store.customers.find(
         (entry) =>
           entry.customer.tenant_id === session.tenant_id &&
           !entry.customer.deleted_at &&
@@ -556,8 +557,16 @@ export class MockCustomerRepository implements CustomerRepository {
           entry.customer.document_number === cleanDoc,
       );
       if (duplicate) {
+        const canReadExisting =
+          (duplicate.customer.is_customer && canReadCustomer(session)) ||
+          (duplicate.customer.is_supplier && canReadSupplier(session));
+        if (canReadExisting) {
+          throw new Error(
+            `Já existe um cadastro com este documento (id: ${duplicate.customer.id}).`,
+          );
+        }
         throw new Error(
-          "Já existe um cliente cadastrado com este documento (ativo ou inativo).",
+          "Este documento já está cadastrado. Se precisar usá-lo neste papel, peça a quem gerencia o cadastro existente.",
         );
       }
     }
@@ -827,5 +836,47 @@ export class MockCustomerRepository implements CustomerRepository {
     target.customer.deleted_at = new Date().toISOString();
     target.customer.updated_at = target.customer.deleted_at;
     persistStore();
+  }
+
+  async addCustomerRole(
+    id: string,
+    role: CustomerRole,
+  ): Promise<CustomerWithDetails> {
+    const session = requireMockSession();
+    const requiredPerm =
+      role === "customer"
+        ? PERMISSIONS.CUSTOMER_MANAGE
+        : PERMISSIONS.SUPPLIER_MANAGE;
+    if (!session.permissions.includes(requiredPerm)) {
+      throw new Error(`Permissão insuficiente: requer '${requiredPerm}'.`);
+    }
+
+    const store = loadStore(session.tenant_id);
+    const target = store.customers.find(
+      (entry) =>
+        entry.customer.id === id &&
+        entry.customer.tenant_id === session.tenant_id &&
+        !entry.customer.deleted_at,
+    );
+    if (!target) {
+      throw new Error("Cadastro não encontrado.");
+    }
+
+    const already =
+      role === "customer"
+        ? target.customer.is_customer
+        : target.customer.is_supplier;
+    if (already) {
+      return structuredClone(target);
+    }
+
+    if (role === "customer") {
+      target.customer.is_customer = true;
+    } else {
+      target.customer.is_supplier = true;
+    }
+    target.customer.updated_at = new Date().toISOString();
+    persistStore();
+    return structuredClone(target);
   }
 }

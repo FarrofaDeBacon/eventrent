@@ -97,6 +97,10 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
         name: "delete_customer",
         is_public: false,
     },
+    CommandDefinition {
+        name: "add_customer_role",
+        is_public: false,
+    },
 ];
 
 /// Guarda central de autenticação para comandos protegidos do Tauri.

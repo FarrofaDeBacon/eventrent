@@ -1506,6 +1506,164 @@ pub async fn contract_supplier_rbac_and_dual_roles(
         )
         .await;
     assert!(matches!(warehouse_edit_dual, Err(CoreError::Forbidden(_))));
+
+    // 7. add_customer_role + anti-vazamento na criação por documento duplicado
+    use crate::domain::document::testing_utils::generate_valid_cpf_from_base;
+    use crate::domain::CustomerRole;
+    let shared_cpf = generate_valid_cpf_from_base([7, 7, 7, 1, 2, 3, 4, 5, 6]);
+    let cust_only = services
+        .create_customer(
+            &commercial_session,
+            &CreateCustomerInput {
+                person_type: PersonType::Individual,
+                name: "Cliente CPF Compartilhado".to_string(),
+                trade_name: None,
+                document_type: DocumentType::Cpf,
+                document_number: Some(shared_cpf.clone()),
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: true,
+                is_supplier: false,
+                supplier_categories: vec![],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Contato".to_string(),
+                    email: Some("cpf@compartilhado.com.br".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+            },
+        )
+        .await
+        .expect("Comercial cria cliente com CPF");
+
+    // Estoque NÃO pode ler cliente puro: ao tentar criar fornecedor com mesmo CPF, NÃO vaza o id
+    let err_warehouse_dup = services
+        .create_customer(
+            &warehouse_session,
+            &CreateCustomerInput {
+                person_type: PersonType::Individual,
+                name: "Tentativa Fornecedor".to_string(),
+                trade_name: None,
+                document_type: DocumentType::Cpf,
+                document_number: Some(shared_cpf.clone()),
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: false,
+                is_supplier: true,
+                supplier_categories: vec![],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Contato".to_string(),
+                    email: Some("cpf2@compartilhado.com.br".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+            },
+        )
+        .await;
+    match err_warehouse_dup {
+        Err(CoreError::Conflict(msg)) => {
+            assert!(msg.contains("Este documento já está cadastrado"));
+            assert!(!msg.contains(&cust_only.customer.id));
+        }
+        other => panic!("Esperava Conflict anti-vazamento, obteve {other:?}"),
+    }
+
+    // Proprietário (pode ler) recebe o id do cadastro existente
+    let err_owner_dup = services
+        .create_customer(
+            owner_session,
+            &CreateCustomerInput {
+                person_type: PersonType::Individual,
+                name: "Tentativa Owner".to_string(),
+                trade_name: None,
+                document_type: DocumentType::Cpf,
+                document_number: Some(shared_cpf),
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: true,
+                is_supplier: false,
+                supplier_categories: vec![],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Contato".to_string(),
+                    email: Some("cpf3@compartilhado.com.br".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+            },
+        )
+        .await;
+    match err_owner_dup {
+        Err(CoreError::Conflict(msg)) => assert!(msg.contains(&cust_only.customer.id)),
+        other => panic!("Esperava Conflict com id, obteve {other:?}"),
+    }
+
+    // Permissões de add_customer_role:
+    // - Técnico (nenhum): bloqueado
+    assert!(matches!(
+        services
+            .add_customer_role(
+                &tech_session,
+                &cust_only.customer.id,
+                CustomerRole::Supplier
+            )
+            .await,
+        Err(CoreError::Forbidden(_))
+    ));
+    // - Comercial (só leitura em fornecedor): bloqueado para adicionar Supplier
+    assert!(matches!(
+        services
+            .add_customer_role(
+                &commercial_session,
+                &cust_only.customer.id,
+                CustomerRole::Supplier
+            )
+            .await,
+        Err(CoreError::Forbidden(_))
+    ));
+    // - Estoque (só supplier:manage): bloqueado para adicionar Customer em supplier_only
+    assert!(matches!(
+        services
+            .add_customer_role(
+                &warehouse_session,
+                &supplier_only.customer.id,
+                CustomerRole::Customer
+            )
+            .await,
+        Err(CoreError::Forbidden(_))
+    ));
+    // - Estoque (só supplier:manage): CONSEGUE adicionar Supplier ao cliente existente
+    let promoted = services
+        .add_customer_role(
+            &warehouse_session,
+            &cust_only.customer.id,
+            CustomerRole::Supplier,
+        )
+        .await
+        .expect("Estoque adiciona papel Fornecedor em cadastro existente");
+    assert!(promoted.customer.is_customer && promoted.customer.is_supplier);
+
+    // - Comercial (só customer:manage): CONSEGUE adicionar Customer ao fornecedor puro
+    let promoted_supplier = services
+        .add_customer_role(
+            &commercial_session,
+            &supplier_only.customer.id,
+            CustomerRole::Customer,
+        )
+        .await
+        .expect("Comercial adiciona papel Cliente em fornecedor existente");
+    assert!(promoted_supplier.customer.is_customer && promoted_supplier.customer.is_supplier);
 }
 
 #[cfg(test)]

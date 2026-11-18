@@ -17,8 +17,8 @@ pub use customer::{
     validate_addresses, validate_contacts, validate_customer_common_fields,
     validate_roles_and_categories, CreateAddressInput, CreateContactInput, CreateCustomerInput,
     Customer, CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter, CustomerPage,
-    CustomerRoleFilter, CustomerWithDetails, PersonType, SupplierCategory, UpdateAddressInput,
-    UpdateContactInput, UpdateCustomerInput,
+    CustomerRole, CustomerRoleFilter, CustomerWithDetails, PersonType, SupplierCategory,
+    UpdateAddressInput, UpdateContactInput, UpdateCustomerInput,
 };
 pub use document::{
     format_cnpj, format_cpf, mask_document_for_audit, mask_email_for_audit,

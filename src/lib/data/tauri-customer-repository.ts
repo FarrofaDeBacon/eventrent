@@ -4,6 +4,7 @@ import type {
   CreateCustomerInput,
   CustomerFilter,
   CustomerPage,
+  CustomerRole,
   CustomerWithDetails,
   UpdateCustomerInput,
 } from "./types";
@@ -42,5 +43,15 @@ export class TauriCustomerRepository implements CustomerRepository {
 
   async deleteCustomer(id: string): Promise<void> {
     await invoke<void>("delete_customer", { id });
+  }
+
+  async addCustomerRole(
+    id: string,
+    role: CustomerRole,
+  ): Promise<CustomerWithDetails> {
+    return await invoke<CustomerWithDetails>("add_customer_role", {
+      id,
+      role,
+    });
   }
 }

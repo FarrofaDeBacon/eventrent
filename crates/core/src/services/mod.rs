@@ -4,14 +4,14 @@ use crate::domain::{
     validate_contacts, validate_customer_common_fields, validate_email,
     validate_roles_and_categories, validate_user_name, AuditLogEntry, BrandingValidator,
     CreateCustomerInput, CreateUserInput, Customer, CustomerAddress, CustomerContact,
-    CustomerCursor, CustomerFilter, CustomerPage, CustomerRoleFilter, CustomerWithDetails,
-    DocumentType, InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode,
-    PersonType, PublicBranding, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput,
-    Role, RoleWithPermissions, SessionInfo, Tenant, TenantBranding, UpdateBrandingInput,
-    UpdateCustomerInput, UpdateUserInput, UserRecord, UserWithRole, PERM_BRANDING_MANAGE,
-    PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ,
-    PERM_SUPPLIER_MANAGE, PERM_SUPPLIER_READ, PERM_USER_MANAGE, PERM_USER_READ, ROLE_SLUG_OWNER,
-    SYSTEM_ROLES,
+    CustomerCursor, CustomerFilter, CustomerPage, CustomerRole, CustomerRoleFilter,
+    CustomerWithDetails, DocumentType, InitialSetupInput, InitialSetupResult, LoginInput,
+    LoginPolicy, OperationMode, PersonType, PublicBranding, RecoverPasswordInput,
+    RecoverPasswordResult, ResetPasswordInput, Role, RoleWithPermissions, SessionInfo, Tenant,
+    TenantBranding, UpdateBrandingInput, UpdateCustomerInput, UpdateUserInput, UserRecord,
+    UserWithRole, PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE,
+    PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_SUPPLIER_MANAGE, PERM_SUPPLIER_READ, PERM_USER_MANAGE,
+    PERM_USER_READ, ROLE_SLUG_OWNER, SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
@@ -1703,14 +1703,26 @@ impl CoreServices {
             Box::pin(async move {
                 // Leitura DENTRO da transação: unicidade do documento ativo ou inativo
                 if let Some(ref raw) = doc_raw {
-                    if stores
+                    if let Some(existing_doc) = stores
                         .customers()
                         .find_by_document(&session.tenant_id, customer.document_type, raw)
                         .await?
-                        .is_some()
                     {
+                        let can_read_cust = session.has_permission(PERM_CUSTOMER_READ)
+                            || session.has_permission(PERM_CUSTOMER_MANAGE);
+                        let can_read_supp = session.has_permission(PERM_SUPPLIER_READ)
+                            || session.has_permission(PERM_SUPPLIER_MANAGE);
+                        let can_read_existing = (existing_doc.is_customer && can_read_cust)
+                            || (existing_doc.is_supplier && can_read_supp);
+
+                        if can_read_existing {
+                            return Err(CoreError::Conflict(format!(
+                                "Já existe um cadastro com este documento (id: {}).",
+                                existing_doc.id
+                            )));
+                        }
                         return Err(CoreError::Conflict(
-                            "Já existe um cliente cadastrado com este documento (ativo ou inativo)."
+                            "Este documento já está cadastrado. Se precisar usá-lo neste papel, peça a quem gerencia o cadastro existente."
                                 .to_string(),
                         ));
                     }
@@ -2238,6 +2250,92 @@ impl CoreServices {
                     .await?;
 
                 Ok(())
+            })
+        })
+        .await
+    }
+
+    /// Ativa um papel (`Customer` ou `Supplier`) em um cadastro de terceiro já existente.
+    /// Exige `manage` SOMENTE do papel que está sendo adicionado.
+    pub async fn add_customer_role(
+        &self,
+        session: &SessionInfo,
+        id: &str,
+        role: CustomerRole,
+    ) -> Result<CustomerWithDetails> {
+        let required_perm = match role {
+            CustomerRole::Customer => PERM_CUSTOMER_MANAGE,
+            CustomerRole::Supplier => PERM_SUPPLIER_MANAGE,
+        };
+        self.check_session_and_permission(session, required_perm)?;
+
+        let session_clone = session.clone();
+        let id_str = id.to_string();
+        let now = Utc::now().to_rfc3339();
+
+        self.run_transaction(|stores| {
+            let session = session_clone.clone();
+            let id = id_str.clone();
+            let now = now.clone();
+
+            Box::pin(async move {
+                let mut existing = stores
+                    .customers()
+                    .find_by_id(&session.tenant_id, &id)
+                    .await?
+                    .ok_or_else(|| CoreError::NotFound("Cadastro não encontrado.".to_string()))?;
+
+                let already_has_role = match role {
+                    CustomerRole::Customer => existing.customer.is_customer,
+                    CustomerRole::Supplier => existing.customer.is_supplier,
+                };
+                if already_has_role {
+                    return Ok(existing);
+                }
+
+                match role {
+                    CustomerRole::Customer => existing.customer.is_customer = true,
+                    CustomerRole::Supplier => existing.customer.is_supplier = true,
+                }
+                existing.customer.updated_at = now;
+
+                stores
+                    .customers()
+                    .update(
+                        &existing.customer,
+                        &existing.contacts,
+                        &existing.addresses,
+                        &existing.supplier_categories,
+                    )
+                    .await?;
+
+                let masked_audit_name = if existing.customer.person_type == PersonType::Individual {
+                    mask_individual_name_for_audit(&existing.customer.name)
+                } else {
+                    existing.customer.name.clone()
+                };
+                let added_label = match role {
+                    CustomerRole::Customer => "Cliente",
+                    CustomerRole::Supplier => "Fornecedor",
+                };
+                let audit_detail = format!(
+                    "Papel '{added_label}' adicionado ao cadastro '{}' (id: {})",
+                    masked_audit_name, existing.customer.id
+                );
+
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &session.tenant_id,
+                        Some(&session.user_id),
+                        "customer.role_added",
+                        "customer",
+                        &existing.customer.id,
+                        &audit_detail,
+                    ))
+                    .await?;
+
+                Ok(existing)
             })
         })
         .await

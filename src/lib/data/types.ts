@@ -197,6 +197,7 @@ export type SupplierCategory =
   | "servicos"
   | "outros";
 export type CustomerRoleFilter = "customer" | "supplier" | "both" | "all";
+export type CustomerRole = "customer" | "supplier";
 
 export interface Customer {
   id: string;

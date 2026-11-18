@@ -16,6 +16,8 @@
 
   let submitting = $state(false);
   let submitError = $state<string | null>(null);
+  let existingConflictId = $state<string | null>(null);
+  let addingRole = $state(false);
 
   let canManageCustomer = $derived(
     hasPermission(appSession.session, PERMISSIONS.CUSTOMER_MANAGE),
@@ -39,15 +41,36 @@
   async function handleCreate(input: CreateCustomerInput) {
     submitting = true;
     submitError = null;
+    existingConflictId = null;
     try {
       const created = await getCustomerRepository().createCustomer(input);
       toast.success($_("customers.createSuccessToast"));
       await goto(`/customers/${created.customer.id}`);
     } catch (err) {
       submitError = err instanceof Error ? err.message : String(err);
+      const match = /\(id:\s*([^)]+)\)/.exec(submitError);
+      existingConflictId = match ? match[1].trim() : null;
       toast.error(submitError);
     } finally {
       submitting = false;
+    }
+  }
+
+  async function handleAddRoleToExisting(role: "customer" | "supplier") {
+    if (!existingConflictId) return;
+    addingRole = true;
+    try {
+      const updated = await getCustomerRepository().addCustomerRole(
+        existingConflictId,
+        role,
+      );
+      toast.success("Papel adicionado ao cadastro existente!");
+      await goto(`/customers/${updated.customer.id}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(msg);
+    } finally {
+      addingRole = false;
     }
   }
 </script>
@@ -73,6 +96,42 @@
       {$_("customers.newDescription")}
     </p>
   </div>
+
+  {#if existingConflictId}
+    <div
+      class="flex flex-wrap items-center gap-3 rounded-[var(--radius)] border border-border bg-muted/40 p-4"
+      data-testid="existing-document-actions"
+    >
+      <Button
+        variant="outline"
+        size="sm"
+        onclick={() => goto(`/customers/${existingConflictId}`)}
+        data-testid="open-existing-customer-btn"
+      >
+        Abrir cadastro
+      </Button>
+      {#if canManageCustomer}
+        <Button
+          size="sm"
+          disabled={addingRole}
+          onclick={() => handleAddRoleToExisting("customer")}
+          data-testid="add-role-customer-btn"
+        >
+          Adicionar papel Cliente
+        </Button>
+      {/if}
+      {#if canManageSupplier}
+        <Button
+          size="sm"
+          disabled={addingRole}
+          onclick={() => handleAddRoleToExisting("supplier")}
+          data-testid="add-role-supplier-btn"
+        >
+          Adicionar papel Fornecedor
+        </Button>
+      {/if}
+    </div>
+  {/if}
 
   <CustomerForm
     {defaultIsCustomer}

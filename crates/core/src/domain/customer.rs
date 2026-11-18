@@ -67,6 +67,13 @@ pub enum CustomerRoleFilter {
     All,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CustomerRole {
+    Customer,
+    Supplier,
+}
+
 fn default_true() -> bool {
     true
 }

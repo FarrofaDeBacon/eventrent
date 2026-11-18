@@ -2,6 +2,7 @@ import type {
   CreateCustomerInput,
   CustomerFilter,
   CustomerPage,
+  CustomerRole,
   CustomerWithDetails,
   UpdateCustomerInput,
 } from "./types";
@@ -16,4 +17,5 @@ export interface CustomerRepository {
   ): Promise<CustomerWithDetails>;
   setCustomerActive(id: string, active: boolean): Promise<CustomerWithDetails>;
   deleteCustomer(id: string): Promise<void>;
+  addCustomerRole(id: string, role: CustomerRole): Promise<CustomerWithDetails>;
 }

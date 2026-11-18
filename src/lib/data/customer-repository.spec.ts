@@ -137,7 +137,7 @@ describe("CustomerRepository (CRUD, Busca, Paginação por Cursor e RBAC)", () =
           },
         ],
       }),
-    ).rejects.toThrow(/Já existe um cliente cadastrado com este documento/i);
+    ).rejects.toThrow(/Já existe um cadastro com este documento/i);
 
     // Atualiza e consulta por ID
     const updated = await customerRepo.updateCustomer(created.customer.id, {
