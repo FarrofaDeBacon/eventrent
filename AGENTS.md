@@ -73,8 +73,11 @@ Este documento estabelece as diretrizes arquiteturais, de qualidade de código, 
 12. **Escopo de Migrações**:
     - Migrações contêm apenas estrutura, nunca dados de negócio. Dados iniciais do ambiente desktop (como o tenant padrão) são garantidos via código idempotente na inicialização.
 13. **Imutabilidade e Congelamento de Migrações (Fase 1B.0+)**:
-    - As migrações existentes `0001_init_tenant_and_branding.sql` e `0002_users_roles_and_audit.sql` estão permanentemente congeladas e não podem sofrer qualquer alteração.
-    - Qualquer alteração ou extensão de esquema a partir da Fase 1B deve ser feita obrigatoriamente através de novas migrações versionadas incrementais (`0003_...`, etc.). O CI valida e bloqueia alterações nas migrações congeladas em pull requests.
+    - As migrações existentes na `main` estão permanentemente congeladas e não podem sofrer qualquer alteração.
+    - Qualquer alteração ou extensão de esquema deve ser feita obrigatoriamente através de novas migrações versionadas incrementais. O CI valida e bloqueia alterações nas migrações congeladas em pull requests.
+14. **Proibição de Reconstrução de Tabelas (`DROP`/`CREATE`)**:
+    - Preferir sempre `ALTER TABLE ... ADD COLUMN` e novos índices incrementais em novas migrações.
+    - É estritamente proibido reconstruir tabelas (`DROP TABLE` + `CREATE TABLE`) sem ADR específico aprovado e sem teste automatizado de migração que comprove preservação integral dos dados existentes.
 
 ---
 
