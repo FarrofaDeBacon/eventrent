@@ -138,3 +138,6 @@ Criados de forma idempotente por `ensure_system_roles` para cada tenant:
 - **Autorização (RBAC)**:
   - Consulta permitida com `customer:read` (**Proprietário**, **Comercial**, **Financeiro**).
   - Criação, edição e exclusão lógica exigem `customer:manage` (**Proprietário**, **Comercial**).
+- **Telefones em E.164 e Seletor de DDI**:
+  - Todo telefone é normalizado e armazenado em formato **E.164 com prefixo `+`** (`+55...` para Brasil; `+DDI...` com 8 a 15 dígitos para outros países).
+  - No `core`, qualquer telefone informado **sem `+`** é tratado como número brasileiro (ganha `+55` e exige 10 ou 11 dígitos). Por isso, o frontend disponibiliza seletor de DDI (padrão `+55`) em todos os campos de telefone e envia números de outros países sempre em E.164 com `+`.

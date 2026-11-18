@@ -240,3 +240,60 @@ export function maskPhone(input: string): string {
   }
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7, 11)}`;
 }
+
+export const PHONE_DDI_OPTIONS = [
+  { code: "+55", label: "+55 (BR)" },
+  { code: "+1", label: "+1 (US/CA)" },
+  { code: "+351", label: "+351 (PT)" },
+  { code: "+54", label: "+54 (AR)" },
+  { code: "+44", label: "+44 (UK)" },
+  { code: "+34", label: "+34 (ES)" },
+  { code: "+33", label: "+33 (FR)" },
+  { code: "+49", label: "+49 (DE)" },
+  { code: "+39", label: "+39 (IT)" },
+  { code: "+", label: "Outro (+)" },
+] as const;
+
+/** Separa um telefone (E.164 ou local) em código DDI (padrão `+55`) e número local formatado. */
+export function splitPhoneDdi(raw: string): { ddi: string; local: string } {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) return { ddi: "+55", local: "" };
+  if (!trimmed.startsWith("+")) {
+    return { ddi: "+55", local: maskPhone(trimmed) };
+  }
+  const knownCodes = PHONE_DDI_OPTIONS.map((o) => o.code)
+    .filter((c) => c !== "+")
+    .sort((a, b) => b.length - a.length);
+  for (const code of knownCodes) {
+    if (trimmed.startsWith(code)) {
+      const rest = digitsOnly(trimmed.slice(code.length));
+      return {
+        ddi: code,
+        local: code === "+55" ? maskPhone(rest) : rest,
+      };
+    }
+  }
+  return { ddi: "+", local: digitsOnly(trimmed) };
+}
+
+/** Compõe o telefone em E.164 (`+<DDI><numero>`) a partir do DDI selecionado e do texto local. */
+export function composePhoneE164(ddi: string, localInput: string): string {
+  const trimmed = localInput.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("+")) {
+    return normalizePhoneE164(trimmed);
+  }
+  const d = digitsOnly(trimmed);
+  if (!d) return "";
+  if (ddi === "+") {
+    return `+${d}`;
+  }
+  if (
+    ddi === "+55" &&
+    d.startsWith("55") &&
+    (d.length === 12 || d.length === 13)
+  ) {
+    return `+55${d.slice(2)}`;
+  }
+  return `${ddi}${d}`;
+}
