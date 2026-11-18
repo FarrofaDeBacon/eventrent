@@ -2764,9 +2764,206 @@ mod unit_tests {
                 unreachable!()
             }
         }
+        #[async_trait::async_trait]
+        impl crate::store::CatalogStore for DummyStore {
+            async fn list_brands(
+                &self,
+                _: &str,
+                _: bool,
+            ) -> crate::error::Result<Vec<crate::domain::Brand>> {
+                unreachable!()
+            }
+            async fn find_brand_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::Brand>> {
+                unreachable!()
+            }
+            async fn find_brand_by_name_normalized(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::Brand>> {
+                unreachable!()
+            }
+            async fn create_brand(&self, _: &crate::domain::Brand) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update_brand(&self, _: &crate::domain::Brand) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn soft_delete_brand(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn count_models_by_brand(&self, _: &str, _: &str) -> crate::error::Result<i64> {
+                unreachable!()
+            }
+            async fn list_categories(
+                &self,
+                _: &str,
+                _: bool,
+            ) -> crate::error::Result<Vec<crate::domain::EquipmentCategory>> {
+                unreachable!()
+            }
+            async fn find_category_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::EquipmentCategory>> {
+                unreachable!()
+            }
+            async fn find_category_by_parent_and_name(
+                &self,
+                _: &str,
+                _: Option<&str>,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::EquipmentCategory>> {
+                unreachable!()
+            }
+            async fn create_category(
+                &self,
+                _: &crate::domain::EquipmentCategory,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update_category(
+                &self,
+                _: &crate::domain::EquipmentCategory,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn soft_delete_category(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn count_child_categories(&self, _: &str, _: &str) -> crate::error::Result<i64> {
+                unreachable!()
+            }
+            async fn count_models_by_category(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<i64> {
+                unreachable!()
+            }
+            async fn count_models_per_category(
+                &self,
+                _: &str,
+            ) -> crate::error::Result<Vec<(String, i64)>> {
+                unreachable!()
+            }
+            async fn list_all_attribute_definitions(
+                &self,
+                _: &str,
+            ) -> crate::error::Result<Vec<crate::domain::AttributeDefinition>> {
+                unreachable!()
+            }
+            async fn list_attribute_definitions_by_category(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Vec<crate::domain::AttributeDefinition>> {
+                unreachable!()
+            }
+            async fn find_attribute_definition_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::AttributeDefinition>> {
+                unreachable!()
+            }
+            async fn create_attribute_definition(
+                &self,
+                _: &crate::domain::AttributeDefinition,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update_attribute_definition(
+                &self,
+                _: &crate::domain::AttributeDefinition,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn soft_delete_attribute_definition(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn list_models(
+                &self,
+                _: &str,
+                _: &crate::domain::CatalogListFilter,
+                _: Option<&[String]>,
+            ) -> crate::error::Result<crate::domain::CatalogListResult> {
+                unreachable!()
+            }
+            async fn find_model_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::EquipmentModel>> {
+                unreachable!()
+            }
+            async fn list_model_attribute_values(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Vec<crate::domain::EquipmentModelAttributeValue>>
+            {
+                unreachable!()
+            }
+            async fn create_model(
+                &self,
+                _: &crate::domain::EquipmentModel,
+                _: &[crate::domain::EquipmentModelAttributeValue],
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update_model(
+                &self,
+                _: &crate::domain::EquipmentModel,
+                _: &[crate::domain::EquipmentModelAttributeValue],
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn set_model_active(
+                &self,
+                _: &str,
+                _: &str,
+                _: bool,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn soft_delete_model(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn count_active_models(&self, _: &str) -> crate::error::Result<u64> {
+                unreachable!()
+            }
+        }
 
         let dummy = Arc::new(DummyStore);
         let res = StoreBundle::new(
+            dummy.clone(),
             dummy.clone(),
             dummy.clone(),
             dummy.clone(),
@@ -2852,6 +3049,9 @@ mod unit_tests {
                 unreachable!()
             }
             fn settings(&self) -> &dyn crate::store::TenantSettingStore {
+                unreachable!()
+            }
+            fn catalog(&self) -> &dyn crate::store::CatalogStore {
                 unreachable!()
             }
             async fn commit(self: Box<Self>) -> Result<()> {
@@ -2987,6 +3187,9 @@ mod unit_tests {
                 unreachable!()
             }
             fn settings(&self) -> &dyn crate::store::TenantSettingStore {
+                unreachable!()
+            }
+            fn catalog(&self) -> &dyn crate::store::CatalogStore {
                 unreachable!()
             }
             async fn commit(self: Box<Self>) -> Result<()> {

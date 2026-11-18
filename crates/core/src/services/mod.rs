@@ -1,3 +1,5 @@
+mod catalog;
+
 use crate::domain::{
     build_customer_search_text, build_name_sort, build_venue_name_sort, build_venue_search_text,
     mask_email_for_audit, mask_individual_name_for_audit, normalize_for_search,
@@ -301,6 +303,9 @@ impl<'a> TxStoreBundle for PassthroughTxStoreBundle<'a> {
     }
     fn settings(&self) -> &dyn crate::store::TenantSettingStore {
         self.stores.settings.as_ref()
+    }
+    fn catalog(&self) -> &dyn crate::store::CatalogStore {
+        self.stores.catalog.as_ref()
     }
     async fn commit(self: Box<Self>) -> Result<()> {
         Ok(())

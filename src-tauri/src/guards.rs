@@ -137,6 +137,82 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
         name: "update_allocation_settings",
         is_public: false,
     },
+    CommandDefinition {
+        name: "list_brands",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "create_brand",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "update_brand",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "delete_brand",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "list_categories_tree",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "get_category_effective_attributes",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "create_category",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "update_category",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "delete_category",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "create_attribute_definition",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "update_attribute_definition",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "delete_attribute_definition",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "list_equipment_models",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "get_equipment_model",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "create_equipment_model",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "update_equipment_model",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "set_equipment_model_active",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "delete_equipment_model",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "load_suggested_catalog_categories",
+        is_public: false,
+    },
 ];
 
 /// Guarda central de autenticação para comandos protegidos do Tauri.

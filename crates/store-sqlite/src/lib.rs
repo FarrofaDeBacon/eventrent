@@ -1,13 +1,15 @@
+mod catalog;
+
 use async_trait::async_trait;
 use chrono::Utc;
 use eventrent_core::{
-    normalize_for_search, run_in_tx, AuditLogEntry, AuditStore, BrandingStore, CoreError, Customer,
-    CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter, CustomerPage, CustomerStore,
-    CustomerWithDetails, DocumentType, Result, Role, RoleStore, RoleWithPermissions, StoreBundle,
-    Tenant, TenantBranding, TenantSetting, TenantSettingStore, TenantStore, TransactionManager,
-    TransactionPolicy, TxStoreBundle, UpdateBrandingInput, UserRecord, UserStore, UserWithRole,
-    Venue, VenueContact, VenueCursor, VenueFilter, VenueListItem, VenuePage, VenueSpace,
-    VenueStore, VenueWithDetails,
+    normalize_for_search, run_in_tx, AuditLogEntry, AuditStore, BrandingStore, CatalogStore,
+    CoreError, Customer, CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter,
+    CustomerPage, CustomerStore, CustomerWithDetails, DocumentType, Result, Role, RoleStore,
+    RoleWithPermissions, StoreBundle, Tenant, TenantBranding, TenantSetting, TenantSettingStore,
+    TenantStore, TransactionManager, TransactionPolicy, TxStoreBundle, UpdateBrandingInput,
+    UserRecord, UserStore, UserWithRole, Venue, VenueContact, VenueCursor, VenueFilter,
+    VenueListItem, VenuePage, VenueSpace, VenueStore, VenueWithDetails,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, Row, Sqlite};
@@ -210,7 +212,8 @@ impl TransactionManager for SqliteTxManager {
             audit: arc.clone(),
             customers: arc.clone(),
             venues: arc.clone(),
-            settings: arc,
+            settings: arc.clone(),
+            catalog: arc,
         }))
     }
 }
@@ -225,6 +228,7 @@ pub struct SqliteTxStoreBundle {
     pub customers: Arc<dyn CustomerStore>,
     pub venues: Arc<dyn VenueStore>,
     pub settings: Arc<dyn TenantSettingStore>,
+    pub catalog: Arc<dyn CatalogStore>,
 }
 
 #[async_trait]
@@ -259,6 +263,10 @@ impl TxStoreBundle for SqliteTxStoreBundle {
 
     fn settings(&self) -> &dyn TenantSettingStore {
         self.settings.as_ref()
+    }
+
+    fn catalog(&self) -> &dyn CatalogStore {
+        self.catalog.as_ref()
     }
 
     async fn commit(self: Box<Self>) -> Result<()> {
@@ -319,7 +327,8 @@ impl SqliteStore {
             audit: arc.clone(),
             customers: arc.clone(),
             venues: arc.clone(),
-            settings: arc,
+            settings: arc.clone(),
+            catalog: arc,
             tx_manager,
         }
     }
@@ -3182,7 +3191,8 @@ mod tests {
                 audit: failing_audit,
                 customers: store.clone(),
                 venues: store.clone(),
-                settings: store,
+                settings: store.clone(),
+                catalog: store,
             }))
         }
     }
@@ -3207,6 +3217,7 @@ mod tests {
             customers: Arc::new(normal_store.clone()),
             venues: Arc::new(normal_store.clone()),
             settings: Arc::new(normal_store.clone()),
+            catalog: Arc::new(normal_store),
             tx_manager: Some(tx_manager),
         };
         let services = CoreServices::new(bundle.clone());
@@ -3747,6 +3758,7 @@ mod tests {
             customers: store.clone(),
             venues: store.clone(),
             settings: store.clone(),
+            catalog: store.clone(),
             tx_manager: None,
         };
 

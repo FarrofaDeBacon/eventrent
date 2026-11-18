@@ -1,3 +1,4 @@
+use crate::domain::catalog::*;
 use crate::domain::{
     AuditLogEntry, Customer, CustomerAddress, CustomerContact, CustomerFilter, CustomerPage,
     CustomerWithDetails, DocumentType, Role, RoleWithPermissions, SupplierCategory, Tenant,
@@ -205,6 +206,100 @@ pub trait TenantSettingStore: Send + Sync {
     async fn upsert(&self, setting: &TenantSetting) -> Result<()>;
 }
 
+#[async_trait]
+pub trait CatalogStore: Send + Sync {
+    async fn list_brands(&self, tenant_id: &str, include_inactive: bool) -> Result<Vec<Brand>>;
+    async fn find_brand_by_id(&self, tenant_id: &str, id: &str) -> Result<Option<Brand>>;
+    async fn find_brand_by_name_normalized(
+        &self,
+        tenant_id: &str,
+        name_normalized: &str,
+    ) -> Result<Option<Brand>>;
+    async fn create_brand(&self, brand: &Brand) -> Result<()>;
+    async fn update_brand(&self, brand: &Brand) -> Result<()>;
+    async fn soft_delete_brand(&self, tenant_id: &str, id: &str, deleted_at: &str) -> Result<()>;
+    async fn count_models_by_brand(&self, tenant_id: &str, brand_id: &str) -> Result<i64>;
+
+    async fn list_categories(
+        &self,
+        tenant_id: &str,
+        include_inactive: bool,
+    ) -> Result<Vec<EquipmentCategory>>;
+    async fn find_category_by_id(
+        &self,
+        tenant_id: &str,
+        id: &str,
+    ) -> Result<Option<EquipmentCategory>>;
+    async fn find_category_by_parent_and_name(
+        &self,
+        tenant_id: &str,
+        parent_id: Option<&str>,
+        name_normalized: &str,
+    ) -> Result<Option<EquipmentCategory>>;
+    async fn create_category(&self, category: &EquipmentCategory) -> Result<()>;
+    async fn update_category(&self, category: &EquipmentCategory) -> Result<()>;
+    async fn soft_delete_category(&self, tenant_id: &str, id: &str, deleted_at: &str)
+        -> Result<()>;
+    async fn count_child_categories(&self, tenant_id: &str, category_id: &str) -> Result<i64>;
+    async fn count_models_by_category(&self, tenant_id: &str, category_id: &str) -> Result<i64>;
+    async fn count_models_per_category(&self, tenant_id: &str) -> Result<Vec<(String, i64)>>;
+
+    async fn list_all_attribute_definitions(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Vec<AttributeDefinition>>;
+    async fn list_attribute_definitions_by_category(
+        &self,
+        tenant_id: &str,
+        category_id: &str,
+    ) -> Result<Vec<AttributeDefinition>>;
+    async fn find_attribute_definition_by_id(
+        &self,
+        tenant_id: &str,
+        id: &str,
+    ) -> Result<Option<AttributeDefinition>>;
+    async fn create_attribute_definition(&self, def: &AttributeDefinition) -> Result<()>;
+    async fn update_attribute_definition(&self, def: &AttributeDefinition) -> Result<()>;
+    async fn soft_delete_attribute_definition(
+        &self,
+        tenant_id: &str,
+        id: &str,
+        deleted_at: &str,
+    ) -> Result<()>;
+
+    async fn list_models(
+        &self,
+        tenant_id: &str,
+        filter: &CatalogListFilter,
+        descendant_category_ids: Option<&[String]>,
+    ) -> Result<CatalogListResult>;
+    async fn find_model_by_id(&self, tenant_id: &str, id: &str) -> Result<Option<EquipmentModel>>;
+    async fn list_model_attribute_values(
+        &self,
+        tenant_id: &str,
+        model_id: &str,
+    ) -> Result<Vec<EquipmentModelAttributeValue>>;
+    async fn create_model(
+        &self,
+        model: &EquipmentModel,
+        values: &[EquipmentModelAttributeValue],
+    ) -> Result<()>;
+    async fn update_model(
+        &self,
+        model: &EquipmentModel,
+        values: &[EquipmentModelAttributeValue],
+    ) -> Result<()>;
+    async fn set_model_active(
+        &self,
+        tenant_id: &str,
+        id: &str,
+        active: bool,
+        updated_at: &str,
+    ) -> Result<()>;
+    async fn soft_delete_model(&self, tenant_id: &str, id: &str, deleted_at: &str) -> Result<()>;
+    async fn count_active_models(&self, tenant_id: &str) -> Result<u64>;
+}
+
 #[derive(Clone)]
 pub struct StoreBundle {
     pub tenants: Arc<dyn TenantStore>,
@@ -215,6 +310,7 @@ pub struct StoreBundle {
     pub customers: Arc<dyn CustomerStore>,
     pub venues: Arc<dyn VenueStore>,
     pub settings: Arc<dyn TenantSettingStore>,
+    pub catalog: Arc<dyn CatalogStore>,
     pub tx_manager: Option<Arc<dyn TransactionManager>>,
 }
 
@@ -229,6 +325,7 @@ impl StoreBundle {
         customers: Arc<dyn CustomerStore>,
         venues: Arc<dyn VenueStore>,
         settings: Arc<dyn TenantSettingStore>,
+        catalog: Arc<dyn CatalogStore>,
         tx_manager: Option<Arc<dyn TransactionManager>>,
     ) -> Result<Self> {
         let Some(tx) = tx_manager else {
@@ -245,6 +342,7 @@ impl StoreBundle {
             customers,
             venues,
             settings,
+            catalog,
             tx_manager: Some(tx),
         })
     }
@@ -265,6 +363,7 @@ pub trait TxStoreBundle: Send + Sync {
     fn customers(&self) -> &dyn CustomerStore;
     fn venues(&self) -> &dyn VenueStore;
     fn settings(&self) -> &dyn TenantSettingStore;
+    fn catalog(&self) -> &dyn CatalogStore;
 
     async fn commit(self: Box<Self>) -> Result<()>;
     async fn rollback(self: Box<Self>) -> Result<()>;

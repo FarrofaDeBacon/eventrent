@@ -1,5 +1,6 @@
 pub mod audit;
 pub mod branding;
+pub mod catalog;
 pub mod config;
 pub mod customer;
 pub mod document;
@@ -54,3 +55,5 @@ pub use venue::{
     MAX_INTERNAL_TRANSFER_MINUTES, MAX_VENUE_CONTACTS, MAX_VENUE_NAME_LEN, MAX_VENUE_SPACES,
     MAX_VENUE_SPACE_NAME_LEN, MAX_VENUE_TECH_FIELD_LEN,
 };
+
+pub use catalog::*;
