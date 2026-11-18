@@ -5126,6 +5126,29 @@ mod tests {
             .unwrap();
         assert_eq!(t2_list.items.len(), 0);
 
+        // 5b. Limites de busca em list_venues (100 caracteres e 8 termos)
+        let too_long_query = services
+            .list_venues(
+                &owner_session_t1,
+                &VenueFilter {
+                    query: Some("a".repeat(101)),
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert!(matches!(too_long_query, Err(CoreError::Validation(_))));
+
+        let too_many_terms = services
+            .list_venues(
+                &owner_session_t1,
+                &VenueFilter {
+                    query: Some("t1 t2 t3 t4 t5 t6 t7 t8 t9".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert!(matches!(too_many_terms, Err(CoreError::Validation(_))));
+
         // 6. FK composta no banco impede venue_space / venue_contact com tenant divergente
         let fk_space_err = sqlx::query(
             "INSERT INTO venue_space (id, tenant_id, venue_id, name, name_normalized, active, sort_order, created_at, updated_at) VALUES ('sp-cross', 'tenant-v2', ?, 'Invasor', 'invasor', 1, 0, ?, ?)",

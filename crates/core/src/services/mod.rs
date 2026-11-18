@@ -1463,19 +1463,7 @@ impl CoreServices {
             CustomerCursor::decode(cursor)?;
         }
 
-        if let Some(ref q) = filter.query {
-            let trimmed = q.trim();
-            if trimmed.chars().count() > 100 {
-                return Err(CoreError::Validation(
-                    "O termo de busca não pode exceder 100 caracteres.".to_string(),
-                ));
-            }
-            if trimmed.split_whitespace().count() > 8 {
-                return Err(CoreError::Validation(
-                    "O termo de busca não pode conter mais de 8 palavras.".to_string(),
-                ));
-            }
-        }
+        validate_search_query_limits(filter.query.as_deref())?;
 
         let sanitized_filter = CustomerFilter {
             query: filter.query.clone(),
@@ -2789,6 +2777,8 @@ impl CoreServices {
             VenueCursor::decode(cursor_str)?;
         }
 
+        validate_search_query_limits(filter.query.as_deref())?;
+
         let mut normalized_filter = filter.clone();
         if let Some(ref q) = normalized_filter.query {
             let trimmed = q.trim();
@@ -3084,4 +3074,21 @@ impl CoreServices {
         })
         .await
     }
+}
+
+fn validate_search_query_limits(query: Option<&str>) -> Result<()> {
+    if let Some(q) = query {
+        let trimmed = q.trim();
+        if trimmed.chars().count() > 100 {
+            return Err(CoreError::Validation(
+                "O termo de busca não pode exceder 100 caracteres.".to_string(),
+            ));
+        }
+        if trimmed.split_whitespace().count() > 8 {
+            return Err(CoreError::Validation(
+                "O termo de busca não pode conter mais de 8 palavras.".to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
