@@ -1508,9 +1508,8 @@ pub async fn contract_supplier_rbac_and_dual_roles(
     assert!(matches!(warehouse_edit_dual, Err(CoreError::Forbidden(_))));
 
     // 7. add_customer_role + anti-vazamento na criação por documento duplicado
-    use crate::domain::document::testing_utils::generate_valid_cpf_from_base;
     use crate::domain::CustomerRole;
-    let shared_cpf = generate_valid_cpf_from_base(&[7, 7, 7, 1, 2, 3, 4, 5, 6]);
+    let shared_cpf = "77712345694".to_string();
     let cust_only = services
         .create_customer(
             &commercial_session,

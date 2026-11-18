@@ -21,8 +21,8 @@ use crate::domain::{
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
-    run_in_tx, BrandingStore, RoleStore, StoreBundle, TenantSettingStore, TenantStore,
-    TransactionPolicy, TxBoxFuture, TxStoreBundle, VenueStore,
+    run_in_tx, BrandingStore, RoleStore, StoreBundle, TenantStore, TransactionPolicy, TxBoxFuture,
+    TxStoreBundle,
 };
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
@@ -296,10 +296,10 @@ impl<'a> TxStoreBundle for PassthroughTxStoreBundle<'a> {
     fn customers(&self) -> &dyn crate::store::CustomerStore {
         self.stores.customers.as_ref()
     }
-    fn venues(&self) -> &dyn VenueStore {
+    fn venues(&self) -> &dyn crate::store::VenueStore {
         self.stores.venues.as_ref()
     }
-    fn settings(&self) -> &dyn TenantSettingStore {
+    fn settings(&self) -> &dyn crate::store::TenantSettingStore {
         self.stores.settings.as_ref()
     }
     async fn commit(self: Box<Self>) -> Result<()> {
