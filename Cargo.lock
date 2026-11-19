@@ -1060,6 +1060,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "eventrent-core",
+ "eventrent-media-fs",
  "eventrent-store-sqlite",
  "serde",
  "serde_json",
@@ -1072,6 +1073,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -1089,6 +1091,16 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "eventrent-media-fs"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "eventrent-core",
+ "tokio",
  "uuid",
 ]
 
