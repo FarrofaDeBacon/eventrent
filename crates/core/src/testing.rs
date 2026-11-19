@@ -2973,6 +2973,28 @@ mod unit_tests {
             async fn count_active_models(&self, _: &str) -> crate::error::Result<u64> {
                 unreachable!()
             }
+            async fn list_models_by_brand(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Vec<crate::domain::EquipmentModel>> {
+                unreachable!()
+            }
+            async fn list_models_by_category(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Vec<crate::domain::EquipmentModel>> {
+                unreachable!()
+            }
+            async fn update_model_search_text(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
         }
 
         let dummy = Arc::new(DummyStore);

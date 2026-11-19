@@ -308,6 +308,22 @@ pub trait CatalogStore: Send + Sync {
     ) -> Result<()>;
     async fn soft_delete_model(&self, tenant_id: &str, id: &str, deleted_at: &str) -> Result<()>;
     async fn count_active_models(&self, tenant_id: &str) -> Result<u64>;
+    async fn list_models_by_brand(
+        &self,
+        tenant_id: &str,
+        brand_id: &str,
+    ) -> Result<Vec<EquipmentModel>>;
+    async fn list_models_by_category(
+        &self,
+        tenant_id: &str,
+        category_id: &str,
+    ) -> Result<Vec<EquipmentModel>>;
+    async fn update_model_search_text(
+        &self,
+        tenant_id: &str,
+        model_id: &str,
+        search_text: &str,
+    ) -> Result<()>;
 }
 
 #[derive(Clone)]

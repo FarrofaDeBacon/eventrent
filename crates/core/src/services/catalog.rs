@@ -140,6 +140,7 @@ impl CoreServices {
                         }
                     }
 
+                    let name_changed = existing.name != clean_name;
                     let updated = Brand {
                         id: existing.id,
                         tenant_id: existing.tenant_id,
@@ -153,6 +154,44 @@ impl CoreServices {
                     };
 
                     stores.catalog().update_brand(&updated).await?;
+                    if name_changed {
+                        let affected = stores
+                            .catalog()
+                            .list_models_by_brand(&session.tenant_id, &updated.id)
+                            .await?;
+                        if !affected.is_empty() {
+                            let all_cats = stores
+                                .catalog()
+                                .list_categories(&session.tenant_id, true)
+                                .await?;
+                            let cat_names: HashMap<String, String> =
+                                all_cats.into_iter().map(|c| (c.id, c.name)).collect();
+                            for m in affected {
+                                let cat_name = cat_names
+                                    .get(&m.category_id)
+                                    .map(String::as_str)
+                                    .unwrap_or("");
+                                let new_search = build_catalog_search_text(
+                                    &m.name,
+                                    m.model_code.as_deref(),
+                                    m.sku.as_deref(),
+                                    m.ean.as_deref(),
+                                    m.ncm.as_deref(),
+                                    cat_name,
+                                    Some(&updated.name),
+                                    m.description.as_deref(),
+                                );
+                                stores
+                                    .catalog()
+                                    .update_model_search_text(
+                                        &session.tenant_id,
+                                        &m.id,
+                                        &new_search,
+                                    )
+                                    .await?;
+                            }
+                        }
+                    }
                     stores
                         .audit()
                         .append(&build_audit_entry(
@@ -503,6 +542,8 @@ impl CoreServices {
                         }
                     }
 
+                    let name_or_parent_changed =
+                        existing.name != clean_name || existing.parent_id != parent_id;
                     let updated = EquipmentCategory {
                         id: existing.id,
                         tenant_id: existing.tenant_id,
@@ -519,6 +560,41 @@ impl CoreServices {
                     };
 
                     stores.catalog().update_category(&updated).await?;
+                    if name_or_parent_changed {
+                        let affected = stores
+                            .catalog()
+                            .list_models_by_category(&session.tenant_id, &updated.id)
+                            .await?;
+                        if !affected.is_empty() {
+                            let all_brands = stores
+                                .catalog()
+                                .list_brands(&session.tenant_id, true)
+                                .await?;
+                            let brand_names: HashMap<String, String> =
+                                all_brands.into_iter().map(|b| (b.id, b.name)).collect();
+                            for m in affected {
+                                let b_name = m
+                                    .brand_id
+                                    .as_ref()
+                                    .and_then(|bid| brand_names.get(bid))
+                                    .map(String::as_str);
+                                let new_search = build_catalog_search_text(
+                                    &m.name,
+                                    m.model_code.as_deref(),
+                                    m.sku.as_deref(),
+                                    m.ean.as_deref(),
+                                    m.ncm.as_deref(),
+                                    &updated.name,
+                                    b_name,
+                                    m.description.as_deref(),
+                                );
+                                stores
+                                    .catalog()
+                                    .update_model_search_text(&session.tenant_id, &m.id, &new_search)
+                                    .await?;
+                            }
+                        }
+                    }
                     stores
                         .audit()
                         .append(&build_audit_entry(

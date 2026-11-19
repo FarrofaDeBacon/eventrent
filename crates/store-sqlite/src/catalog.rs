@@ -1025,4 +1025,71 @@ impl CatalogStore for SqliteStore {
         let cnt: i64 = row.get("cnt");
         Ok(cnt.max(0) as u64)
     }
+
+    async fn list_models_by_brand(
+        &self,
+        tenant_id: &str,
+        brand_id: &str,
+    ) -> Result<Vec<EquipmentModel>> {
+        let rows = self
+            .fetch_all(
+                sqlx::query(
+                    "SELECT id, tenant_id, category_id, brand_id, name, name_sort,
+                            model_code, sku, ean, ncm, description, control_mode,
+                            weight_kg, length_cm, width_cm, height_cm, power_watts,
+                            voltage, amperage, requires_case, units_per_case,
+                            daily_rate_cents, replacement_value_cents, cost_price_cents,
+                            active, search_text, created_at, updated_at, deleted_at, created_by
+                     FROM equipment_model
+                     WHERE tenant_id = ? AND brand_id = ? AND deleted_at IS NULL",
+                )
+                .bind(tenant_id)
+                .bind(brand_id),
+            )
+            .await?;
+        rows.iter().map(parse_model_row).collect()
+    }
+
+    async fn list_models_by_category(
+        &self,
+        tenant_id: &str,
+        category_id: &str,
+    ) -> Result<Vec<EquipmentModel>> {
+        let rows = self
+            .fetch_all(
+                sqlx::query(
+                    "SELECT id, tenant_id, category_id, brand_id, name, name_sort,
+                            model_code, sku, ean, ncm, description, control_mode,
+                            weight_kg, length_cm, width_cm, height_cm, power_watts,
+                            voltage, amperage, requires_case, units_per_case,
+                            daily_rate_cents, replacement_value_cents, cost_price_cents,
+                            active, search_text, created_at, updated_at, deleted_at, created_by
+                     FROM equipment_model
+                     WHERE tenant_id = ? AND category_id = ? AND deleted_at IS NULL",
+                )
+                .bind(tenant_id)
+                .bind(category_id),
+            )
+            .await?;
+        rows.iter().map(parse_model_row).collect()
+    }
+
+    async fn update_model_search_text(
+        &self,
+        tenant_id: &str,
+        model_id: &str,
+        search_text: &str,
+    ) -> Result<()> {
+        self.execute(
+            sqlx::query(
+                "UPDATE equipment_model SET search_text = ?
+                 WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL",
+            )
+            .bind(search_text)
+            .bind(tenant_id)
+            .bind(model_id),
+        )
+        .await?;
+        Ok(())
+    }
 }

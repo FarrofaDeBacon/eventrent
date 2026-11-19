@@ -5792,6 +5792,61 @@ mod tests {
             .await;
         assert!(matches!(dup_descendant_key, Err(CoreError::Conflict(_))));
 
+        // 8.3 Item 0.3: Renomear marca ou categoria recalcula search_text dos modelos afetados na mesma transação
+        let renamed_brand = services
+            .update_brand(
+                &warehouse_a,
+                &behringer.id,
+                &eventrent_core::UpdateBrandInput {
+                    name: "Behringer Pro Music".to_string(),
+                    active: true,
+                    expected_updated_at: behringer.updated_at.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        let search_by_new_brand = services
+            .list_equipment_models(
+                &tech_a,
+                &CatalogListFilter {
+                    query: Some("Pro Music".to_string()),
+                    limit: 50,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(search_by_new_brand.total_count, 1);
+
+        let renamed_cat = services
+            .update_category(
+                &warehouse_a,
+                &mesas.category.id,
+                &eventrent_core::UpdateCategoryInput {
+                    parent_id: mesas.category.parent_id.clone(),
+                    name: "Consoles Digitais".to_string(),
+                    description: None,
+                    sort_order: mesas.category.sort_order,
+                    active: true,
+                    expected_updated_at: mesas.category.updated_at.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        let _ = (renamed_brand, renamed_cat);
+        let search_by_new_cat = services
+            .list_equipment_models(
+                &tech_a,
+                &CatalogListFilter {
+                    query: Some("Consoles Digitais".to_string()),
+                    limit: 50,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(search_by_new_cat.total_count, 1);
+
         // 9. Isolamento multi-tenant + FK composta no banco
         let list_b = services
             .list_equipment_models(&warehouse_b, &CatalogListFilter::default())
