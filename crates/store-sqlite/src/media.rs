@@ -22,7 +22,7 @@ fn parse_media_blob_row(row: &sqlx::sqlite::SqliteRow) -> Result<MediaBlob> {
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         created_by: row.get("created_by"),
-        updated_by: row.get("updated_by"),
+        updated_by: None,
         deleted_at: row.get("deleted_at"),
     })
 }
@@ -57,7 +57,7 @@ fn parse_media_asset_row(row: &sqlx::sqlite::SqliteRow) -> Result<MediaAsset> {
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         created_by: row.get("created_by"),
-        updated_by: row.get("updated_by"),
+        updated_by: None,
         deleted_at: row.get("deleted_at"),
     })
 }
@@ -73,7 +73,7 @@ fn parse_model_media_link_row(row: &sqlx::sqlite::SqliteRow) -> EquipmentModelMe
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         created_by: row.get("created_by"),
-        updated_by: row.get("updated_by"),
+        updated_by: None,
         deleted_at: row.get("deleted_at"),
     }
 }
@@ -135,7 +135,7 @@ impl SqliteStore {
             .fetch_optional(
                 sqlx::query(
                     "SELECT id, tenant_id, sha256, mime_type, byte_size, width, height, storage_key,
-                            created_at, updated_at, created_by, updated_by, deleted_at
+                            created_at, updated_at, deleted_at, created_by
                      FROM media_blob
                      WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL",
                 )
@@ -156,7 +156,7 @@ impl SqliteStore {
             .fetch_optional(
                 sqlx::query(
                     "SELECT id, tenant_id, sha256, mime_type, byte_size, width, height, storage_key,
-                            created_at, updated_at, created_by, updated_by, deleted_at
+                            created_at, updated_at, deleted_at, created_by
                      FROM media_blob
                      WHERE tenant_id = ? AND sha256 = ? AND mime_type = ? AND deleted_at IS NULL",
                 )
@@ -173,8 +173,8 @@ impl SqliteStore {
             sqlx::query(
                 "INSERT INTO media_blob (
                     id, tenant_id, sha256, mime_type, byte_size, width, height, storage_key,
-                    created_at, updated_at, created_by, updated_by, deleted_at
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    created_at, updated_at, deleted_at, created_by
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&blob.id)
             .bind(&blob.tenant_id)
@@ -186,9 +186,8 @@ impl SqliteStore {
             .bind(&blob.storage_key)
             .bind(&blob.created_at)
             .bind(&blob.updated_at)
-            .bind(&blob.created_by)
-            .bind(&blob.updated_by)
-            .bind(&blob.deleted_at),
+            .bind(&blob.deleted_at)
+            .bind(&blob.created_by),
         )
         .await?;
         Ok(())
@@ -204,7 +203,7 @@ impl SqliteStore {
                 sqlx::query(
                     "SELECT id, tenant_id, kind, blob_id, thumb_blob_id, title, doc_type, origin,
                             credit_note, language, version_note, original_filename, width, height,
-                            byte_size, created_at, updated_at, created_by, updated_by, deleted_at
+                            byte_size, created_at, updated_at, deleted_at, created_by
                      FROM media_asset
                      WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL",
                 )
@@ -221,8 +220,8 @@ impl SqliteStore {
                 "INSERT INTO media_asset (
                     id, tenant_id, kind, blob_id, thumb_blob_id, title, doc_type, origin,
                     credit_note, language, version_note, original_filename, width, height,
-                    byte_size, created_at, updated_at, created_by, updated_by, deleted_at
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    byte_size, created_at, updated_at, deleted_at, created_by
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&asset.id)
             .bind(&asset.tenant_id)
@@ -241,9 +240,8 @@ impl SqliteStore {
             .bind(asset.byte_size)
             .bind(&asset.created_at)
             .bind(&asset.updated_at)
-            .bind(&asset.created_by)
-            .bind(&asset.updated_by)
-            .bind(&asset.deleted_at),
+            .bind(&asset.deleted_at)
+            .bind(&asset.created_by),
         )
         .await?;
         Ok(())
@@ -255,7 +253,7 @@ impl SqliteStore {
                 sqlx::query(
                     "UPDATE media_asset
                      SET title = ?, doc_type = ?, origin = ?, credit_note = ?, language = ?,
-                         version_note = ?, updated_at = ?, updated_by = ?
+                         version_note = ?, updated_at = ?
                      WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL",
                 )
                 .bind(&asset.title)
@@ -265,7 +263,6 @@ impl SqliteStore {
                 .bind(&asset.language)
                 .bind(&asset.version_note)
                 .bind(&asset.updated_at)
-                .bind(&asset.updated_by)
                 .bind(&asset.tenant_id)
                 .bind(&asset.id),
             )
@@ -319,7 +316,7 @@ impl SqliteStore {
             .fetch_optional(
                 sqlx::query(
                     "SELECT id, tenant_id, model_id, asset_id, is_primary, sort_order,
-                            created_at, updated_at, created_by, updated_by, deleted_at
+                            created_at, updated_at, deleted_at, created_by
                      FROM equipment_model_media
                      WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL",
                 )
@@ -391,8 +388,8 @@ impl SqliteStore {
             sqlx::query(
                 "INSERT INTO equipment_model_media (
                     id, tenant_id, model_id, asset_id, is_primary, sort_order,
-                    created_at, updated_at, created_by, updated_by, deleted_at
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    created_at, updated_at, deleted_at, created_by
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&link.id)
             .bind(&link.tenant_id)
@@ -402,9 +399,8 @@ impl SqliteStore {
             .bind(link.sort_order)
             .bind(&link.created_at)
             .bind(&link.updated_at)
-            .bind(&link.created_by)
-            .bind(&link.updated_by)
-            .bind(&link.deleted_at),
+            .bind(&link.deleted_at)
+            .bind(&link.created_by),
         )
         .await?;
         Ok(())
@@ -415,13 +411,12 @@ impl SqliteStore {
             .execute(
                 sqlx::query(
                     "UPDATE equipment_model_media
-                     SET is_primary = ?, sort_order = ?, updated_at = ?, updated_by = ?
+                     SET is_primary = ?, sort_order = ?, updated_at = ?
                      WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL",
                 )
                 .bind(if link.is_primary { 1 } else { 0 })
                 .bind(link.sort_order)
                 .bind(&link.updated_at)
-                .bind(&link.updated_by)
                 .bind(&link.tenant_id)
                 .bind(&link.id),
             )
@@ -439,16 +434,15 @@ impl SqliteStore {
         tenant_id: &str,
         model_id: &str,
         updated_at: &str,
-        updated_by: Option<&str>,
+        _updated_by: Option<&str>,
     ) -> Result<()> {
         self.execute(
             sqlx::query(
                 "UPDATE equipment_model_media
-                 SET is_primary = 0, updated_at = ?, updated_by = ?
+                 SET is_primary = 0, updated_at = ?
                  WHERE tenant_id = ? AND model_id = ? AND is_primary = 1 AND deleted_at IS NULL",
             )
             .bind(updated_at)
-            .bind(updated_by)
             .bind(tenant_id)
             .bind(model_id),
         )
@@ -461,18 +455,17 @@ impl SqliteStore {
         tenant_id: &str,
         link_id: &str,
         deleted_at: &str,
-        updated_by: Option<&str>,
+        _updated_by: Option<&str>,
     ) -> Result<()> {
         let rows = self
             .execute(
                 sqlx::query(
                     "UPDATE equipment_model_media
-                     SET is_primary = 0, deleted_at = ?, updated_at = ?, updated_by = ?
+                     SET is_primary = 0, deleted_at = ?, updated_at = ?
                      WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL",
                 )
                 .bind(deleted_at)
                 .bind(deleted_at)
-                .bind(updated_by)
                 .bind(tenant_id)
                 .bind(link_id),
             )
@@ -508,7 +501,7 @@ impl SqliteStore {
                     "SELECT ma.id, ma.tenant_id, ma.kind, ma.blob_id, ma.thumb_blob_id, ma.title,
                             ma.doc_type, ma.origin, ma.credit_note, ma.language, ma.version_note,
                             ma.original_filename, ma.width, ma.height, ma.byte_size,
-                            ma.created_at, ma.updated_at, ma.created_by, ma.updated_by, ma.deleted_at
+                            ma.created_at, ma.updated_at, ma.deleted_at, ma.created_by
                      FROM media_asset ma
                      WHERE ma.tenant_id = ?
                        AND NOT EXISTS (
@@ -547,7 +540,7 @@ impl SqliteStore {
                 sqlx::query(
                     "SELECT mb.id, mb.tenant_id, mb.sha256, mb.mime_type, mb.byte_size,
                             mb.width, mb.height, mb.storage_key,
-                            mb.created_at, mb.updated_at, mb.created_by, mb.updated_by, mb.deleted_at
+                            mb.created_at, mb.updated_at, mb.deleted_at, mb.created_by
                      FROM media_blob mb
                      WHERE mb.tenant_id = ?
                        AND NOT EXISTS (

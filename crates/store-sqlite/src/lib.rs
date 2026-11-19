@@ -6271,4 +6271,575 @@ mod tests {
             "FK composta deve impedir vínculo cross-tenant"
         );
     }
+
+    fn build_valid_test_webp(width: u32, height: u32, salt: u8) -> Vec<u8> {
+        let mut chunks = Vec::new();
+        chunks.extend_from_slice(b"WEBP");
+        chunks.extend_from_slice(b"VP8X");
+        chunks.extend_from_slice(&10u32.to_le_bytes());
+        let w = width.saturating_sub(1);
+        let h = height.saturating_sub(1);
+        chunks.extend_from_slice(&[
+            0x00,
+            0,
+            0,
+            salt,
+            (w & 0xFF) as u8,
+            ((w >> 8) & 0xFF) as u8,
+            ((w >> 16) & 0xFF) as u8,
+            (h & 0xFF) as u8,
+            ((h >> 8) & 0xFF) as u8,
+            ((h >> 16) & 0xFF) as u8,
+        ]);
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(chunks.len() as u32).to_le_bytes());
+        out.extend_from_slice(&chunks);
+        out
+    }
+
+    #[tokio::test]
+    async fn test_store_media_fks_dedup_primary_rbac_quotas_audit_and_gc() {
+        use eventrent_core::{
+            AttachModelDocumentInput, AttachModelPhotoInput, CatalogListFilter, ControlMode,
+            CoreServices, CreateCategoryInput, CreateEquipmentModelInput, InMemoryMediaStore,
+            MediaDocType, MediaKind, MediaOrigin, MediaStore, ReorderModelMediaInput, SessionInfo,
+            UpdateModelMediaInput, PERM_CATALOG_MANAGE, PERM_CATALOG_READ,
+        };
+
+        let pool = init_memory_db().await.unwrap();
+        let store = SqliteStore::new(pool.clone());
+        let media_store = Arc::new(InMemoryMediaStore::new());
+        let services = CoreServices::with_media_store(store.into_bundle(), media_store.clone());
+
+        let now = Utc::now().to_rfc3339();
+        for (tid, slug) in [("tenant-med-a", "med-a"), ("tenant-med-b", "med-b")] {
+            sqlx::query(
+                "INSERT INTO tenant (id, tenant_id, name, slug, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(tid)
+            .bind(tid)
+            .bind(slug)
+            .bind(slug)
+            .bind(&now)
+            .bind(&now)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+            let role_id = format!("r-{tid}");
+            sqlx::query(
+                "INSERT INTO role (id, tenant_id, name, slug, is_system, created_at, updated_at)
+                 VALUES (?, ?, 'Estoque', 'warehouse', 1, ?, ?)",
+            )
+            .bind(&role_id)
+            .bind(tid)
+            .bind(&now)
+            .bind(&now)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+            for role_slug in ["warehouse", "technician"] {
+                let uid = format!("u-{tid}-{role_slug}");
+                let email = format!("{uid}@eventrent.local");
+                sqlx::query(
+                    "INSERT INTO app_user (id, tenant_id, role_id, name, email, password_hash, active, created_at, updated_at)
+                     VALUES (?, ?, ?, 'Operador', ?, 'hash', 1, ?, ?)",
+                )
+                .bind(&uid)
+                .bind(tid)
+                .bind(&role_id)
+                .bind(&email)
+                .bind(&now)
+                .bind(&now)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        }
+
+        let make_session = |tenant_id: &str, role_slug: &str, perms: Vec<&str>| SessionInfo {
+            user_id: format!("u-{tenant_id}-{role_slug}"),
+            tenant_id: tenant_id.to_string(),
+            name: "Operador Mídia".to_string(),
+            email: "midia@eventrent.local".to_string(),
+            role_id: format!("r-{role_slug}"),
+            role_name: role_slug.to_string(),
+            role_slug: role_slug.to_string(),
+            permissions: perms.into_iter().map(|s| s.to_string()).collect(),
+            authenticated_at: now.clone(),
+            last_activity_at: now.clone(),
+            inactivity_timeout_minutes: 30,
+        };
+
+        let manager_a = make_session(
+            "tenant-med-a",
+            "warehouse",
+            vec![PERM_CATALOG_READ, PERM_CATALOG_MANAGE],
+        );
+        let tech_a = make_session("tenant-med-a", "technician", vec![PERM_CATALOG_READ]);
+        let manager_b = make_session(
+            "tenant-med-b",
+            "warehouse",
+            vec![PERM_CATALOG_READ, PERM_CATALOG_MANAGE],
+        );
+
+        let cat_a = services
+            .create_category(
+                &manager_a,
+                &CreateCategoryInput {
+                    parent_id: None,
+                    name: "DJ".to_string(),
+                    description: None,
+                    sort_order: 1,
+                    active: true,
+                },
+            )
+            .await
+            .unwrap();
+
+        let model_1 = services
+            .create_equipment_model(
+                &manager_a,
+                &CreateEquipmentModelInput {
+                    category_id: cat_a.id.clone(),
+                    brand_id: None,
+                    name: "CDJ-3000".to_string(),
+                    model_code: Some("CDJ-3000".to_string()),
+                    sku: Some("DJ-CDJ-3000".to_string()),
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: Some(50000),
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
+                    active: true,
+                    attribute_values: vec![],
+                },
+            )
+            .await
+            .unwrap();
+
+        let model_2 = services
+            .create_equipment_model(
+                &manager_a,
+                &CreateEquipmentModelInput {
+                    category_id: cat_a.id.clone(),
+                    brand_id: None,
+                    name: "DJM-A9".to_string(),
+                    model_code: Some("DJM-A9".to_string()),
+                    sku: Some("DJ-DJM-A9".to_string()),
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: Some(45000),
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
+                    active: true,
+                    attribute_values: vec![],
+                },
+            )
+            .await
+            .unwrap();
+
+        // 1. Primeira foto anexada vira automaticamente principal (is_primary = true)
+        let display_1 = build_valid_test_webp(1280, 720, 1);
+        let thumb_1 = build_valid_test_webp(256, 144, 1);
+        let photo_1 = services
+            .attach_model_photo(
+                &manager_a,
+                &AttachModelPhotoInput {
+                    model_id: model_1.model.id.clone(),
+                    title: "Painel Frontal CDJ".to_string(),
+                    origin: MediaOrigin::Manufacturer,
+                    credit_note: Some("Pioneer DJ".to_string()),
+                    original_filename: "cdj-frontal.webp".to_string(),
+                    display_mime_type: "image/webp".to_string(),
+                    display_bytes: display_1.clone(),
+                    thumb_mime_type: "image/webp".to_string(),
+                    thumb_bytes: thumb_1.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(photo_1.is_primary);
+        assert_eq!(photo_1.sort_order, 0);
+
+        // Lista de modelos agora traz primary_thumb_blob_id
+        let listed = services
+            .list_equipment_models(&tech_a, &CatalogListFilter::default())
+            .await
+            .unwrap();
+        let listed_m1 = listed
+            .items
+            .iter()
+            .find(|i| i.model.id == model_1.model.id)
+            .unwrap();
+        assert_eq!(listed_m1.primary_thumb_blob_id, photo_1.thumb_blob_id);
+
+        // 2. Deduplicação por SHA-256 no mesmo tenant: anexar os mesmos bytes ao model_2 reutiliza blob_id
+        let photo_m2 = services
+            .attach_model_photo(
+                &manager_a,
+                &AttachModelPhotoInput {
+                    model_id: model_2.model.id.clone(),
+                    title: "Foto Compartilhada".to_string(),
+                    origin: MediaOrigin::Own,
+                    credit_note: None,
+                    original_filename: "compartilhada.webp".to_string(),
+                    display_mime_type: "image/webp".to_string(),
+                    display_bytes: display_1.clone(),
+                    thumb_mime_type: "image/webp".to_string(),
+                    thumb_bytes: thumb_1.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            photo_1.blob_id, photo_m2.blob_id,
+            "Deduplicação CAS por SHA-256 deve reutilizar o mesmo media_blob"
+        );
+        assert_eq!(photo_1.thumb_blob_id, photo_m2.thumb_blob_id);
+
+        // 3. Segunda foto no model_1 entra como não-principal; definir principal e reordenar
+        let display_2 = build_valid_test_webp(1024, 768, 2);
+        let thumb_2 = build_valid_test_webp(256, 192, 2);
+        let photo_2 = services
+            .attach_model_photo(
+                &manager_a,
+                &AttachModelPhotoInput {
+                    model_id: model_1.model.id.clone(),
+                    title: "Painel Traseiro CDJ".to_string(),
+                    origin: MediaOrigin::Own,
+                    credit_note: None,
+                    original_filename: "cdj-traseiro.webp".to_string(),
+                    display_mime_type: "image/webp".to_string(),
+                    display_bytes: display_2.clone(),
+                    thumb_mime_type: "image/webp".to_string(),
+                    thumb_bytes: thumb_2.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(!photo_2.is_primary);
+
+        let promoted = services
+            .set_primary_model_photo(&manager_a, &photo_2.id)
+            .await
+            .unwrap();
+        assert!(promoted.is_primary);
+
+        let reordered = services
+            .reorder_model_media(
+                &manager_a,
+                &ReorderModelMediaInput {
+                    model_id: model_1.model.id.clone(),
+                    kind: MediaKind::Image,
+                    ordered_link_ids: vec![photo_2.id.clone(), photo_1.id.clone()],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(reordered[0].id, photo_2.id);
+        assert!(reordered[0].is_primary);
+        assert!(!reordered[1].is_primary);
+
+        // 4. Concorrência otimista ao editar metadados de mídia
+        let updated_meta = services
+            .update_model_media_metadata(
+                &manager_a,
+                &UpdateModelMediaInput {
+                    media_link_id: photo_2.id.clone(),
+                    title: "Conexões Traseiras XLR/RCA".to_string(),
+                    doc_type: None,
+                    origin: MediaOrigin::Website,
+                    credit_note: Some("Site Oficial".to_string()),
+                    language: None,
+                    version_note: None,
+                    expected_updated_at: reordered[0].updated_at.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated_meta.title, "Conexões Traseiras XLR/RCA");
+        assert_eq!(updated_meta.origin, MediaOrigin::Website);
+
+        // Tentativa com timestamp antigo deve falhar com Conflict
+        assert!(matches!(
+            services
+                .update_model_media_metadata(
+                    &manager_a,
+                    &UpdateModelMediaInput {
+                        media_link_id: photo_2.id.clone(),
+                        title: "Conflito".to_string(),
+                        doc_type: None,
+                        origin: MediaOrigin::Other,
+                        credit_note: None,
+                        language: None,
+                        version_note: None,
+                        expected_updated_at: "2020-01-01T00:00:00Z".to_string(),
+                    },
+                )
+                .await,
+            Err(CoreError::Conflict(_))
+        ));
+
+        // 5. RBAC: Técnico (somente catalog:read) pode listar e ler bytes, mas não pode enviar/editar/remover
+        let tech_list = services
+            .list_model_media(&tech_a, &model_1.model.id)
+            .await
+            .unwrap();
+        assert_eq!(tech_list.len(), 2);
+        let (_blob_meta, read_bytes) = services
+            .get_media_blob_bytes(&tech_a, &photo_1.blob_id)
+            .await
+            .unwrap();
+        assert_eq!(read_bytes, display_1);
+
+        assert!(matches!(
+            services.remove_model_media(&tech_a, &photo_1.id).await,
+            Err(CoreError::Forbidden(_))
+        ));
+        assert!(matches!(
+            services.collect_unreferenced_media(&tech_a).await,
+            Err(CoreError::Forbidden(_))
+        ));
+
+        // 6. Isolamento entre tenants e FKs compostas / índices parciais no banco
+        assert!(matches!(
+            services
+                .get_media_blob_bytes(&manager_b, &photo_1.blob_id)
+                .await,
+            Err(CoreError::NotFound(_))
+        ));
+
+        // Tentar inserir segundo principal direto no SQLite deve violar idx_equipment_model_media_one_primary_per_model
+        let dup_primary_sql = sqlx::query(
+            "UPDATE equipment_model_media SET is_primary = 1 WHERE tenant_id = ? AND id = ?",
+        )
+        .bind("tenant-med-a")
+        .bind(&photo_1.id)
+        .execute(&pool)
+        .await;
+        assert!(
+            dup_primary_sql.is_err(),
+            "Índice único parcial deve proibir duas fotos principais ativas no mesmo modelo"
+        );
+
+        // Tentar inserir vínculo cross-tenant em equipment_model_media deve violar FK composta
+        let cross_tenant_media_fk = sqlx::query(
+            "INSERT INTO equipment_model_media (
+                id, tenant_id, model_id, asset_id, is_primary, sort_order, created_at, updated_at
+             ) VALUES ('cross-emm', 'tenant-med-b', ?, ?, 0, 0, ?, ?)",
+        )
+        .bind(&model_1.model.id)
+        .bind(&photo_1.asset_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await;
+        assert!(
+            cross_tenant_media_fk.is_err(),
+            "FK composta deve impedir vínculo de mídia entre tenants distintos"
+        );
+
+        // 7. Quotas: máximo 12 fotos e 20 documentos por modelo
+        // model_1 já tem 2 fotos; adicionamos mais 10 (total 12) e a 13ª deve falhar
+        for i in 3..=12 {
+            let disp = build_valid_test_webp(640, 480, i as u8);
+            let th = build_valid_test_webp(128, 96, i as u8);
+            services
+                .attach_model_photo(
+                    &manager_a,
+                    &AttachModelPhotoInput {
+                        model_id: model_1.model.id.clone(),
+                        title: format!("Foto {i}"),
+                        origin: MediaOrigin::Own,
+                        credit_note: None,
+                        original_filename: format!("foto-{i}.webp"),
+                        display_mime_type: "image/webp".to_string(),
+                        display_bytes: disp,
+                        thumb_mime_type: "image/webp".to_string(),
+                        thumb_bytes: th,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        assert!(matches!(
+            services
+                .attach_model_photo(
+                    &manager_a,
+                    &AttachModelPhotoInput {
+                        model_id: model_1.model.id.clone(),
+                        title: "Foto 13 Excedente".to_string(),
+                        origin: MediaOrigin::Own,
+                        credit_note: None,
+                        original_filename: "foto-13.webp".to_string(),
+                        display_mime_type: "image/webp".to_string(),
+                        display_bytes: build_valid_test_webp(640, 480, 99),
+                        thumb_mime_type: "image/webp".to_string(),
+                        thumb_bytes: build_valid_test_webp(128, 96, 99),
+                    },
+                )
+                .await,
+            Err(CoreError::Validation(msg)) if msg.contains("12 fotos")
+        ));
+
+        for i in 1..=20 {
+            let pdf_bytes = format!("%PDF-1.7\n% Documento {i}\n%%EOF").into_bytes();
+            services
+                .attach_model_document(
+                    &manager_a,
+                    &AttachModelDocumentInput {
+                        model_id: model_1.model.id.clone(),
+                        title: format!("Manual {i}"),
+                        doc_type: MediaDocType::Manual,
+                        origin: MediaOrigin::Manufacturer,
+                        credit_note: None,
+                        language: Some("pt-BR".to_string()),
+                        version_note: Some(format!("v{i}.0")),
+                        original_filename: format!("manual-{i}.pdf"),
+                        mime_type: "application/pdf".to_string(),
+                        bytes: pdf_bytes,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        assert!(matches!(
+            services
+                .attach_model_document(
+                    &manager_a,
+                    &AttachModelDocumentInput {
+                        model_id: model_1.model.id.clone(),
+                        title: "Documento 21 Excedente".to_string(),
+                        doc_type: MediaDocType::Other,
+                        origin: MediaOrigin::Other,
+                        credit_note: None,
+                        language: None,
+                        version_note: None,
+                        original_filename: "doc-21.pdf".to_string(),
+                        mime_type: "application/pdf".to_string(),
+                        bytes: b"%PDF-1.7\n% 21\n%%EOF".to_vec(),
+                    },
+                )
+                .await,
+            Err(CoreError::Validation(msg)) if msg.contains("20 documentos")
+        ));
+
+        // 8. Coleta de lixo (collect_unreferenced_media):
+        // Remover photo_2 (que só está em model_1) NÃO apaga o arquivo físico imediatamente:
+        let photo_2_sha = photo_2.blob_sha256.clone();
+        services
+            .remove_model_media(&manager_a, &photo_2.id)
+            .await
+            .unwrap();
+        assert!(
+            media_store
+                .exists_blob("tenant-med-a", &photo_2_sha)
+                .await
+                .unwrap(),
+            "Remover vínculo não deve apagar arquivo físico antes da coleta de lixo"
+        );
+
+        // Como photo_2 era a principal de model_1, a próxima foto (photo_1) foi promovida a principal!
+        let after_remove = services
+            .list_model_media(&manager_a, &model_1.model.id)
+            .await
+            .unwrap();
+        assert_eq!(after_remove[0].id, photo_1.id);
+        assert!(after_remove[0].is_primary);
+
+        // Remover photo_1 de model_1 (mas os mesmos blobs SHA-256 ainda estão vinculados a model_2 via photo_m2!)
+        let shared_sha = photo_1.blob_sha256.clone();
+        services
+            .remove_model_media(&manager_a, &photo_1.id)
+            .await
+            .unwrap();
+
+        // Executa coleta de lixo manual: photo_2_sha deve ser apagado, mas shared_sha DEVE permanecer!
+        let gc_1 = services
+            .collect_unreferenced_media(&manager_a)
+            .await
+            .unwrap();
+        assert!(gc_1.deleted_assets >= 2);
+        assert!(
+            !media_store
+                .exists_blob("tenant-med-a", &photo_2_sha)
+                .await
+                .unwrap(),
+            "Blob sem nenhum vínculo ativo deve ser apagado pela coleta de lixo"
+        );
+        assert!(
+            media_store
+                .exists_blob("tenant-med-a", &shared_sha)
+                .await
+                .unwrap(),
+            "Blob compartilhado ainda referenciado por outro modelo NÃO pode ser apagado pela coleta de lixo"
+        );
+
+        // Agora removemos o vínculo restante em model_2 e rodamos o GC novamente: shared_sha é apagado!
+        services
+            .remove_model_media(&manager_a, &photo_m2.id)
+            .await
+            .unwrap();
+        let gc_2 = services
+            .collect_unreferenced_media(&manager_a)
+            .await
+            .unwrap();
+        assert_eq!(gc_2.deleted_assets, 1);
+        assert!(
+            !media_store
+                .exists_blob("tenant-med-a", &shared_sha)
+                .await
+                .unwrap(),
+            "Após remover o último vínculo, a coleta de lixo deve apagar o arquivo físico"
+        );
+
+        // 9. Auditoria transacional sem conteúdo binário dos arquivos
+        let audit_entries = services
+            .stores
+            .audit
+            .list_by_tenant("tenant-med-a", 100)
+            .await
+            .unwrap();
+        assert!(audit_entries
+            .iter()
+            .any(|a| a.action == "catalog.model.photo_attached"));
+        assert!(audit_entries
+            .iter()
+            .any(|a| a.action == "catalog.model.document_attached"));
+        assert!(audit_entries
+            .iter()
+            .any(|a| a.action == "catalog.media.garbage_collected"));
+        for entry in &audit_entries {
+            assert!(
+                !entry.summary.contains("RIFF") && !entry.summary.contains("%PDF-"),
+                "Trilha de auditoria nunca deve armazenar o conteúdo binário do arquivo"
+            );
+        }
+    }
 }
