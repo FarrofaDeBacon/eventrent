@@ -135,3 +135,24 @@ Para manter o princípio do menor privilégio e evitar exposição desnecessári
 
 - **Dados sensíveis fora do cadastro unificado nesta fase:** **Chave PIX**, **dados bancários** (banco, agência, conta, titularidade) e **condições de pagamento** **NÃO são armazenados** nas tabelas `customer`, `customer_contact`, `customer_address` ou `customer_supplier_category` na Fase 1C.
 - **Planejamento para a Fase 6 (Financeiro):** Essas informações serão modeladas em tabela/domínio financeiro dedicado na **Fase 6**, protegidas por permissões financeiras restritas (`finance:read` e `finance:manage`), mascaramento/criptografia adequada e auditoria específica, impedindo acesso por perfis sem atribuição financeira.
+
+---
+
+## 9. Segurança de Mídia, Rejeição de EXIF, Isolamento de PDF e Backup (Fase 2M / ADR-0013)
+
+1. **Endereçamento por Conteúdo (SHA-256) e Contenção de Caminho (`FsMediaStore`)**:
+   - Nenhum caminho de arquivo no disco é derivado de nomes enviados pelo usuário. A chave de armazenamento é derivada exclusivamente de `<tenant_id>/<2_primeiros_hex_sha256>/<sha256_64_hex>` dentro de `<dados_do_app>/media/`, com verificação estrita de contenção de diretório e gravação atômica (`arquivo temporário` + `sync_all` + `rename`).
+   - O nome original do arquivo (`original_filename`) é saneado no Core (`sanitize_media_filename`), removendo prefixos de caminho, rejeitando `..` e caracteres de controle, e limitando-se a 150 caracteres.
+2. **Validação de Magic Bytes, Limites Pré-Processamento e Rejeição de EXIF**:
+   - A transferência binária ocorre pelo canal raw (`tauri::ipc::Request` / `tauri::ipc::Response`) do Tauri v2 sem Base64 gigante, com verificação de tamanho máximo aplicada no Rust **antes** de alocar ou processar o payload (`600 KB` para exibição, `60 KB` para miniatura, `25 MB` para PDF).
+   - O Core valida a coerência entre os magic bytes do cabeçalho e o `mime_type` declarado (`image/webp`, `image/jpeg`, `image/png`, `application/pdf`) e lê as dimensões reais do cabeçalho via `imagesize` (ADR-0010).
+   - **Privacidade e Proteção contra Vazamento de Geolocalização (EXIF)**: O frontend redimensiona e reencoda imagens via `<canvas>` (WebP com fallback JPEG) antes do envio — eliminando metadados de câmera e GPS — e o Core inspeciona os chunks binários e **rejeita obrigatoriamente** qualquer imagem que ainda contenha metadados EXIF (WebP chunk `EXIF` ou bit EXIF no `VP8X`, JPEG `APP1 Exif`, PNG chunk `eXIf`).
+3. **Proibição de Download por URL (Prevenção de SSRF) e Isolamento de PDFs**:
+   - O download automático de imagens ou documentos a partir de URLs externas é **estritamente proibido** na primeira versão para eliminar vetores de _Server-Side Request Forgery_ (SSRF).
+   - **Documentos PDF nunca são interpretados nem renderizados dentro do WebView do aplicativo**. A visualização grava uma cópia temporária com nome saneado em `<dados_do_app>/temp-media/<uuid>/<nome_saneado>` e a delega ao leitor nativo do sistema operacional (`tauri-plugin-opener`), ou exporta via diálogo nativo `"Salvar como..."` (`tauri-plugin-dialog`). A pasta `temp-media` é limpa integralmente ao iniciar e ao encerrar o aplicativo.
+4. **Exibição Segura via Blob URLs (Sem Protocolo `asset://` Amplo) e Auditoria Enxuta**:
+   - O protocolo de assets do Tauri com escopo amplo no sistema de arquivos não é utilizado. O frontend solicita os bytes via comando autenticado (`get_media_blob_bytes`, validado por `tenant_id` e `catalog:read`) e gerencia `Blob URL`s em um cache LRU em memória com limites de itens e bytes, revogando `URL.revokeObjectURL` automaticamente na evicção.
+   - A trilha de auditoria (`audit_log`) registra o `sha256`, tamanho em bytes, dimensões e nome saneado na mesma transação, **jamais armazenando os bytes binários** do arquivo.
+5. **Backup, Migração para Nuvem (Fase 2.6) e Antivírus na Nuvem (Fase 2.5)**:
+   - Os blobs da árvore `<dados_do_app>/media/` integram obrigatoriamente o pacote de backup local e o assistente de migração local para nuvem (Fase 2.6), com verificação de integridade SHA-256 ponta a ponta.
+   - Na operação em nuvem (Fase 2.5), todo blob enviado passará por verificação assíncrona de antivírus/antimalware em quarentena antes de ser disponibilizado para download pelos usuários do tenant.

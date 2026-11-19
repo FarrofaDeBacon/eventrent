@@ -173,3 +173,28 @@ Criados de forma idempotente por `ensure_system_roles` para cada tenant:
   - `catalog:read`: **Proprietário**, **Estoque**, **Comercial**, **Técnico**.
   - `catalog:manage`: **Proprietário**, **Estoque**.
   - **Financeiro**: sem acesso ao catálogo.
+
+---
+
+### Endurecimento do Catálogo (Tarefa 0) e Mídia de Modelos (Fase 2M / ADR-0013)
+
+- **Proteção de Definições de Atributos e Chaves Efetivas**:
+  - É proibido alterar `data_type` de um atributo técnico quando já existem modelos com valores preenchidos (erro `Conflict` informando quantos modelos utilizam o campo), bem como remover opções de lista (`select`) que estejam em uso (erro `Conflict` listando as opções em uso; adicionar novas opções é livre).
+  - `field_key` é único em toda a cadeia efetiva (ancestrais e descendentes) ao criar/editar atributo ou ao mover uma subárvore de categoria.
+- **Sincronização Transacional de Busca e Marcas/Categorias Inativas**:
+  - Renomear marca ou renomear/mover categoria recalcula o `search_text` de todos os modelos afetados na **mesma transação**.
+  - Marcas ou categorias inativas não podem ser atribuídas a modelos novos nem ao trocar a marca/categoria de um modelo existente (modelos que já as utilizavam permanecem válidos ao editar outros campos).
+  - `list_models` aplica limite padrão `50` (quando ausente ou `0`) e teto máximo `100`, escapando `%`, `_` e `\` com `ESCAPE '\'`.
+  - Pré-checagem explícita de duplicidade de `SKU` e `(marca + código do modelo)` informa o nome do modelo que já utiliza o valor.
+  - A carga sugerida idempotente inclui as raízes **"DJ"** (`Players (CDJ)`, `Mixers DJ`, `Controladoras DJ`) e **"Acessórios"** (`Pedestais e suportes`, `Cases e racks`, `Fitas e consumíveis`).
+- **Mídia de Modelos (Fotos e Documentos Técnicos PDF)**:
+  - **Limites por Modelo**: no máximo **12 fotos** e **20 documentos PDF** por modelo de equipamento.
+  - **Validação Binária no Core**:
+    - Imagens (`image/webp`, `image/jpeg`, `image/png`) validadas por magic bytes coerentes com o MIME declarado, dimensões lidas via `imagesize` (exibição até **2048 px** no maior lado e **600 KB**; miniatura até **512 px** e **60 KB**) e **rejeição obrigatória de metadados EXIF** (WebP chunk `EXIF` / flag `VP8X`, JPEG `APP1 Exif`, PNG chunk `eXIf`).
+    - Documentos PDF (`application/pdf`) validados por assinatura `%PDF-` e limite de **25 MB**.
+    - Metadados: `title` de `1..=150` caracteres, `credit_note` e `version_note` até `300` caracteres, e `original_filename` saneado (sem diretórios, sem `..`, sem caracteres de controle, até `150` caracteres).
+  - **Foto Principal e Coleta de Lixo Manual**:
+    - A primeira foto anexada a um modelo torna-se automaticamente a foto principal (`is_primary = true`); ao remover a foto principal, a próxima foto ativa por `sort_order` é promovida automaticamente.
+    - Remover um vínculo (`remove_model_media`) apenas desfaz o vínculo do modelo; o arquivo físico no `MediaStore` só é removido pela **coleta de lixo manual** (`collect_unreferenced_media`) quando nenhum vínculo ativo no tenant referencia o blob SHA-256.
+  - **Importação em Lote de Fotos (`/catalog/import-photos`)**:
+    - O nome do arquivo (sem extensão e normalizado) é casado automaticamente na ordem estrita: **1º SKU**, **2º Código do Modelo** e **3º EAN**, exibindo pré-visualização (`Casado`, `Ambíguo`, `Sem correspondência`) para revisão/correção manual antes da confirmação e processando cada arquivo individualmente sem abortar o lote.
