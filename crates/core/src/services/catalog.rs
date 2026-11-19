@@ -1085,6 +1085,12 @@ impl CoreServices {
                         .ok_or_else(|| {
                             CoreError::NotFound("Categoria selecionada não encontrada.".to_string())
                         })?;
+                    if !category.active {
+                        return Err(CoreError::Validation(format!(
+                            "A categoria '{}' está inativa e não pode ser atribuída a um novo modelo.",
+                            category.name
+                        )));
+                    }
 
                     let brand_name = if let Some(ref bid) = brand_id {
                         let b = stores
@@ -1094,6 +1100,12 @@ impl CoreServices {
                             .ok_or_else(|| {
                                 CoreError::NotFound("Marca selecionada não encontrada.".to_string())
                             })?;
+                        if !b.active {
+                            return Err(CoreError::Validation(format!(
+                                "A marca '{}' está inativa e não pode ser atribuída a um novo modelo.",
+                                b.name
+                            )));
+                        }
                         Some(b.name)
                     } else {
                         None
@@ -1274,6 +1286,12 @@ impl CoreServices {
                         .ok_or_else(|| {
                             CoreError::NotFound("Categoria selecionada não encontrada.".to_string())
                         })?;
+                    if category.id != existing.category_id && !category.active {
+                        return Err(CoreError::Validation(format!(
+                            "A categoria '{}' está inativa e não pode ser atribuída ao modelo.",
+                            category.name
+                        )));
+                    }
 
                     let brand_name = if let Some(ref bid) = brand_id {
                         let b = stores
@@ -1283,6 +1301,12 @@ impl CoreServices {
                             .ok_or_else(|| {
                                 CoreError::NotFound("Marca selecionada não encontrada.".to_string())
                             })?;
+                        if existing.brand_id.as_deref() != Some(b.id.as_str()) && !b.active {
+                            return Err(CoreError::Validation(format!(
+                                "A marca '{}' está inativa e não pode ser atribuída ao modelo.",
+                                b.name
+                            )));
+                        }
                         Some(b.name)
                     } else {
                         None

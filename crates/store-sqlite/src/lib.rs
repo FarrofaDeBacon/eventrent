@@ -6000,6 +6000,138 @@ mod tests {
             .unwrap();
         assert_eq!(only_pct.total_count, 0);
 
+        // 8.6 Item 0.6: Marca ou categoria inativa não pode ser atribuída a modelo novo nem ao trocar (modelo existente mantém)
+        let inactive_brand = services
+            .create_brand(
+                &warehouse_a,
+                &CreateBrandInput {
+                    name: "Marca Inativa".to_string(),
+                    active: false,
+                },
+            )
+            .await
+            .unwrap();
+        let inactive_cat = services
+            .create_category(
+                &warehouse_a,
+                &eventrent_core::CreateCategoryInput {
+                    parent_id: None,
+                    name: "Categoria Inativa".to_string(),
+                    description: None,
+                    sort_order: 99,
+                    active: false,
+                },
+            )
+            .await
+            .unwrap();
+
+        let new_with_inactive_brand = services
+            .create_equipment_model(
+                &warehouse_a,
+                &CreateEquipmentModelInput {
+                    category_id: mesas.category.id.clone(),
+                    brand_id: Some(inactive_brand.id.clone()),
+                    name: "Modelo Marca Inativa".to_string(),
+                    model_code: None,
+                    sku: None,
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: None,
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
+                    active: true,
+                    attribute_values: vec![],
+                },
+            )
+            .await;
+        assert!(matches!(
+            new_with_inactive_brand,
+            Err(CoreError::Validation(_))
+        ));
+
+        let new_with_inactive_cat = services
+            .create_equipment_model(
+                &warehouse_a,
+                &CreateEquipmentModelInput {
+                    category_id: inactive_cat.id.clone(),
+                    brand_id: None,
+                    name: "Modelo Cat Inativa".to_string(),
+                    model_code: None,
+                    sku: None,
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: None,
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
+                    active: true,
+                    attribute_values: vec![],
+                },
+            )
+            .await;
+        assert!(matches!(
+            new_with_inactive_cat,
+            Err(CoreError::Validation(_))
+        ));
+
+        let switch_to_inactive_brand = services
+            .update_equipment_model(
+                &warehouse_a,
+                &created.model.id,
+                &UpdateEquipmentModelInput {
+                    category_id: mesas.category.id.clone(),
+                    brand_id: Some(inactive_brand.id.clone()),
+                    name: "X32 Compact".to_string(),
+                    model_code: Some("X32C".to_string()),
+                    sku: Some("AUD-X32C".to_string()),
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: None,
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
+                    active: true,
+                    attribute_values: vec![],
+                    expected_updated_at: current_model.model.updated_at.clone(),
+                },
+            )
+            .await;
+        assert!(matches!(
+            switch_to_inactive_brand,
+            Err(CoreError::Validation(_))
+        ));
+
         // 9. Isolamento multi-tenant + FK composta no banco
         let list_b = services
             .list_equipment_models(&warehouse_b, &CatalogListFilter::default())
