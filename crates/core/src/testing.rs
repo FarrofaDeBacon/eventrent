@@ -2902,6 +2902,20 @@ mod unit_tests {
             ) -> crate::error::Result<()> {
                 unreachable!()
             }
+            async fn count_models_using_attribute_definition(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<i64> {
+                unreachable!()
+            }
+            async fn list_distinct_text_values_for_attribute_definition(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Vec<String>> {
+                unreachable!()
+            }
             async fn list_models(
                 &self,
                 _: &str,

@@ -736,6 +736,38 @@ impl CoreServices {
                         )));
                     }
 
+                    if input.data_type != existing.data_type {
+                        let used_count = stores
+                            .catalog()
+                            .count_models_using_attribute_definition(&session.tenant_id, &existing.id)
+                            .await?;
+                        if used_count > 0 {
+                            return Err(CoreError::Conflict(format!(
+                                "Não é possível alterar o tipo do atributo '{}' pois ele já possui valores preenchidos em {} modelo(s).",
+                                existing.label, used_count
+                            )));
+                        }
+                    } else if existing.data_type == AttributeDataType::Select {
+                        let used_values = stores
+                            .catalog()
+                            .list_distinct_text_values_for_attribute_definition(
+                                &session.tenant_id,
+                                &existing.id,
+                            )
+                            .await?;
+                        let removed_in_use: Vec<String> = used_values
+                            .into_iter()
+                            .filter(|val| !clean_choices.iter().any(|c| c == val))
+                            .collect();
+                        if !removed_in_use.is_empty() {
+                            return Err(CoreError::Conflict(format!(
+                                "Não é possível remover opções do atributo '{}' que já estão em uso: {}.",
+                                existing.label,
+                                removed_in_use.join(", ")
+                            )));
+                        }
+                    }
+
                     let updated = AttributeDefinition {
                         id: existing.id,
                         tenant_id: existing.tenant_id,

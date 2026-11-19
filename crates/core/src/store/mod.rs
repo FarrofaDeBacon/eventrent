@@ -266,6 +266,16 @@ pub trait CatalogStore: Send + Sync {
         id: &str,
         deleted_at: &str,
     ) -> Result<()>;
+    async fn count_models_using_attribute_definition(
+        &self,
+        tenant_id: &str,
+        definition_id: &str,
+    ) -> Result<i64>;
+    async fn list_distinct_text_values_for_attribute_definition(
+        &self,
+        tenant_id: &str,
+        definition_id: &str,
+    ) -> Result<Vec<String>>;
 
     async fn list_models(
         &self,

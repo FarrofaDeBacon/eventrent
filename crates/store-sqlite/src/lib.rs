@@ -5628,6 +5628,133 @@ mod tests {
             .await;
         assert!(matches!(stale_update, Err(CoreError::Conflict(_))));
 
+        // 8.1 Item 0.1: Proibir mudar data_type de atributo com valor preenchido e proibir remover opção de select em uso
+        let proto_def = effective
+            .iter()
+            .find(|a| a.definition.field_key == "protocolo_digital")
+            .expect("protocolo_digital");
+        let change_type_err = services
+            .update_attribute_definition(
+                &warehouse_a,
+                &canais_def.definition.id,
+                &eventrent_core::UpdateAttributeDefinitionInput {
+                    field_key: "canais".to_string(),
+                    label: "Canais".to_string(),
+                    data_type: eventrent_core::AttributeDataType::Boolean,
+                    unit: None,
+                    choices: vec![],
+                    is_required: false,
+                    sort_order: 1,
+                    active: true,
+                    expected_updated_at: canais_def.definition.updated_at.clone(),
+                },
+            )
+            .await;
+        match change_type_err {
+            Err(CoreError::Conflict(msg)) => {
+                assert!(msg.contains("1 modelo(s)"), "Mensagem: {msg}")
+            }
+            other => panic!("Esperava Conflict ao mudar data_type em uso, obteve {other:?}"),
+        }
+
+        // Preenche opção "Dante" no modelo e tenta remover "Dante" da lista
+        let updated_with_dante = services
+            .update_equipment_model(
+                &warehouse_a,
+                &created.model.id,
+                &UpdateEquipmentModelInput {
+                    category_id: mesas.category.id.clone(),
+                    brand_id: Some(behringer.id.clone()),
+                    name: "X32 Compact".to_string(),
+                    model_code: Some("X32C".to_string()),
+                    sku: Some("AUD-X32C".to_string()),
+                    ean: Some("7891000315507".to_string()),
+                    ncm: Some("85437099".to_string()),
+                    description: Some("Console digital 32 canais".to_string()),
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: Some(15.4),
+                    length_cm: Some(62.5),
+                    width_cm: Some(50.6),
+                    height_cm: Some(21.5),
+                    power_watts: Some(120),
+                    voltage: Some(VoltageOption::Bivolt),
+                    amperage: Some(1.5),
+                    requires_case: true,
+                    units_per_case: Some(1),
+                    daily_rate_cents: Some(35_000),
+                    replacement_value_cents: Some(1_800_000),
+                    cost_price_cents: Some(1_200_000),
+                    active: true,
+                    attribute_values: vec![
+                        AttributeValueInput {
+                            definition_id: canais_def.definition.id.clone(),
+                            value_text: None,
+                            value_number: Some(32.0),
+                            value_bool: None,
+                        },
+                        AttributeValueInput {
+                            definition_id: proto_def.definition.id.clone(),
+                            value_text: Some("Dante".to_string()),
+                            value_number: None,
+                            value_bool: None,
+                        },
+                    ],
+                    expected_updated_at: created.model.updated_at.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        let _ = updated_with_dante;
+
+        let remove_dante_err = services
+            .update_attribute_definition(
+                &warehouse_a,
+                &proto_def.definition.id,
+                &eventrent_core::UpdateAttributeDefinitionInput {
+                    field_key: "protocolo_digital".to_string(),
+                    label: "Protocolo Digital".to_string(),
+                    data_type: eventrent_core::AttributeDataType::Select,
+                    unit: None,
+                    choices: vec!["Analógica".to_string(), "AES50".to_string()],
+                    is_required: false,
+                    sort_order: 2,
+                    active: true,
+                    expected_updated_at: proto_def.definition.updated_at.clone(),
+                },
+            )
+            .await;
+        match remove_dante_err {
+            Err(CoreError::Conflict(msg)) => assert!(msg.contains("Dante"), "Mensagem: {msg}"),
+            other => panic!("Esperava Conflict ao remover opção em uso, obteve {other:?}"),
+        }
+
+        // Adicionar nova opção mantendo "Dante" é permitido
+        let add_choice_ok = services
+            .update_attribute_definition(
+                &warehouse_a,
+                &proto_def.definition.id,
+                &eventrent_core::UpdateAttributeDefinitionInput {
+                    field_key: "protocolo_digital".to_string(),
+                    label: "Protocolo Digital".to_string(),
+                    data_type: eventrent_core::AttributeDataType::Select,
+                    unit: None,
+                    choices: vec![
+                        "Analógica".to_string(),
+                        "Dante".to_string(),
+                        "AES50".to_string(),
+                        "MADI".to_string(),
+                        "USB".to_string(),
+                        "AVB".to_string(),
+                    ],
+                    is_required: false,
+                    sort_order: 2,
+                    active: true,
+                    expected_updated_at: proto_def.definition.updated_at.clone(),
+                },
+            )
+            .await;
+        assert!(add_choice_ok.is_ok());
+
         // 9. Isolamento multi-tenant + FK composta no banco
         let list_b = services
             .list_equipment_models(&warehouse_b, &CatalogListFilter::default())

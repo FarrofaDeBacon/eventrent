@@ -570,6 +570,51 @@ impl CatalogStore for SqliteStore {
         Ok(())
     }
 
+    async fn count_models_using_attribute_definition(
+        &self,
+        tenant_id: &str,
+        definition_id: &str,
+    ) -> Result<i64> {
+        let row = self
+            .fetch_one(
+                sqlx::query(
+                    "SELECT COUNT(DISTINCT v.model_id) AS cnt
+                     FROM equipment_model_attribute_value v
+                     INNER JOIN equipment_model m ON m.tenant_id = v.tenant_id AND m.id = v.model_id
+                     WHERE v.tenant_id = ? AND v.definition_id = ?
+                       AND v.deleted_at IS NULL AND m.deleted_at IS NULL
+                       AND (v.value_text IS NOT NULL OR v.value_number IS NOT NULL OR v.value_bool IS NOT NULL)",
+                )
+                .bind(tenant_id)
+                .bind(definition_id),
+            )
+            .await?;
+        Ok(row.get("cnt"))
+    }
+
+    async fn list_distinct_text_values_for_attribute_definition(
+        &self,
+        tenant_id: &str,
+        definition_id: &str,
+    ) -> Result<Vec<String>> {
+        let rows = self
+            .fetch_all(
+                sqlx::query(
+                    "SELECT DISTINCT v.value_text AS val
+                     FROM equipment_model_attribute_value v
+                     INNER JOIN equipment_model m ON m.tenant_id = v.tenant_id AND m.id = v.model_id
+                     WHERE v.tenant_id = ? AND v.definition_id = ?
+                       AND v.deleted_at IS NULL AND m.deleted_at IS NULL
+                       AND v.value_text IS NOT NULL
+                     ORDER BY v.value_text ASC",
+                )
+                .bind(tenant_id)
+                .bind(definition_id),
+            )
+            .await?;
+        Ok(rows.iter().map(|r| r.get("val")).collect())
+    }
+
     async fn list_models(
         &self,
         tenant_id: &str,

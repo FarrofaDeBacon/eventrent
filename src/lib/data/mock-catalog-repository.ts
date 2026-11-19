@@ -520,6 +520,39 @@ export class MockCatalogRepository implements CatalogRepository {
       input.data_type === "select"
         ? input.choices.map((c) => c.trim()).filter(Boolean)
         : [];
+    const activeValues = this.attrValues.filter(
+      (v) =>
+        v.tenant_id === tid &&
+        v.definition_id === id &&
+        !v.deleted_at &&
+        this.models.some(
+          (m) => m.tenant_id === tid && m.id === v.model_id && !m.deleted_at,
+        ) &&
+        (v.value_text !== null ||
+          v.value_number !== null ||
+          v.value_bool !== null),
+    );
+    if (input.data_type !== existing.data_type && activeValues.length > 0) {
+      throw new Error(
+        `Não é possível alterar o tipo do atributo '${existing.label}' pois ele já possui valores preenchidos em ${activeValues.length} modelo(s).`,
+      );
+    }
+    if (existing.data_type === "select" && input.data_type === "select") {
+      const removedInUse = Array.from(
+        new Set(
+          activeValues
+            .map((v) => v.value_text)
+            .filter(
+              (val): val is string => Boolean(val) && !choices.includes(val!),
+            ),
+        ),
+      );
+      if (removedInUse.length > 0) {
+        throw new Error(
+          `Não é possível remover opções do atributo '${existing.label}' que já estão em uso: ${removedInUse.join(", ")}.`,
+        );
+      }
+    }
     const updated: AttributeDefinition = {
       ...existing,
       field_key: fieldKey,
