@@ -1138,4 +1138,54 @@ impl CatalogStore for SqliteStore {
         .await?;
         Ok(())
     }
+
+    async fn find_model_by_sku_normalized(
+        &self,
+        tenant_id: &str,
+        sku_normalized: &str,
+    ) -> Result<Option<EquipmentModel>> {
+        let row = self
+            .fetch_optional(
+                sqlx::query(
+                    "SELECT id, tenant_id, category_id, brand_id, name, name_sort,
+                            model_code, sku, ean, ncm, description, control_mode,
+                            weight_kg, length_cm, width_cm, height_cm, power_watts,
+                            voltage, amperage, requires_case, units_per_case,
+                            daily_rate_cents, replacement_value_cents, cost_price_cents,
+                            active, search_text, created_at, updated_at, deleted_at, created_by
+                     FROM equipment_model
+                     WHERE tenant_id = ? AND sku_normalized = ? AND deleted_at IS NULL",
+                )
+                .bind(tenant_id)
+                .bind(sku_normalized),
+            )
+            .await?;
+        row.as_ref().map(parse_model_row).transpose()
+    }
+
+    async fn find_model_by_brand_and_code_normalized(
+        &self,
+        tenant_id: &str,
+        brand_id: &str,
+        model_code_normalized: &str,
+    ) -> Result<Option<EquipmentModel>> {
+        let row = self
+            .fetch_optional(
+                sqlx::query(
+                    "SELECT id, tenant_id, category_id, brand_id, name, name_sort,
+                            model_code, sku, ean, ncm, description, control_mode,
+                            weight_kg, length_cm, width_cm, height_cm, power_watts,
+                            voltage, amperage, requires_case, units_per_case,
+                            daily_rate_cents, replacement_value_cents, cost_price_cents,
+                            active, search_text, created_at, updated_at, deleted_at, created_by
+                     FROM equipment_model
+                     WHERE tenant_id = ? AND brand_id = ? AND model_code_normalized = ? AND deleted_at IS NULL",
+                )
+                .bind(tenant_id)
+                .bind(brand_id)
+                .bind(model_code_normalized),
+            )
+            .await?;
+        row.as_ref().map(parse_model_row).transpose()
+    }
 }

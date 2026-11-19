@@ -2995,6 +2995,21 @@ mod unit_tests {
             ) -> crate::error::Result<()> {
                 unreachable!()
             }
+            async fn find_model_by_sku_normalized(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::EquipmentModel>> {
+                unreachable!()
+            }
+            async fn find_model_by_brand_and_code_normalized(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::EquipmentModel>> {
+                unreachable!()
+            }
         }
 
         let dummy = Arc::new(DummyStore);

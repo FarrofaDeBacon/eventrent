@@ -6166,6 +6166,87 @@ mod tests {
             Err(CoreError::Validation(_))
         ));
 
+        // 8.7 Item 0.8: Mensagens claras de duplicidade de SKU e (marca + código do modelo) com nome do modelo existente
+        let dup_sku_err = services
+            .create_equipment_model(
+                &warehouse_a,
+                &CreateEquipmentModelInput {
+                    category_id: mesas.category.id.clone(),
+                    brand_id: Some(behringer.id.clone()),
+                    name: "Outro Console".to_string(),
+                    model_code: Some("OUTRO-CODE".to_string()),
+                    sku: Some("aud-x32c".to_string()),
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: None,
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
+                    active: true,
+                    attribute_values: vec![],
+                },
+            )
+            .await;
+        match dup_sku_err {
+            Err(CoreError::Conflict(msg)) => {
+                assert!(
+                    msg.contains("X32 Compact"),
+                    "Mensagem deve citar modelo que já usa o SKU: {msg}"
+                );
+            }
+            other => panic!("Esperava Conflict de SKU duplicado, obteve {other:?}"),
+        }
+
+        let dup_brand_code_err = services
+            .create_equipment_model(
+                &warehouse_a,
+                &CreateEquipmentModelInput {
+                    category_id: mesas.category.id.clone(),
+                    brand_id: Some(behringer.id.clone()),
+                    name: "Outro Console 2".to_string(),
+                    model_code: Some("x32c".to_string()),
+                    sku: Some("AUD-NOVO-SKU".to_string()),
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: None,
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
+                    active: true,
+                    attribute_values: vec![],
+                },
+            )
+            .await;
+        match dup_brand_code_err {
+            Err(CoreError::Conflict(msg)) => {
+                assert!(
+                    msg.contains("X32 Compact"),
+                    "Mensagem deve citar modelo que já usa o código na marca: {msg}"
+                );
+            }
+            other => panic!("Esperava Conflict de código duplicado na marca, obteve {other:?}"),
+        }
+
         // 9. Isolamento multi-tenant + FK composta no banco
         let list_b = services
             .list_equipment_models(&warehouse_b, &CatalogListFilter::default())

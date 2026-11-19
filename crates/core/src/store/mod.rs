@@ -324,6 +324,17 @@ pub trait CatalogStore: Send + Sync {
         model_id: &str,
         search_text: &str,
     ) -> Result<()>;
+    async fn find_model_by_sku_normalized(
+        &self,
+        tenant_id: &str,
+        sku_normalized: &str,
+    ) -> Result<Option<EquipmentModel>>;
+    async fn find_model_by_brand_and_code_normalized(
+        &self,
+        tenant_id: &str,
+        brand_id: &str,
+        model_code_normalized: &str,
+    ) -> Result<Option<EquipmentModel>>;
 }
 
 #[derive(Clone)]

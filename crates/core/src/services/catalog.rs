@@ -1139,6 +1139,39 @@ impl CoreServices {
                         })
                         .collect();
 
+                    if let Some(ref sku_norm) = v.sku_normalized {
+                        if let Some(other) = stores
+                            .catalog()
+                            .find_model_by_sku_normalized(&session.tenant_id, sku_norm)
+                            .await?
+                        {
+                            return Err(CoreError::Conflict(format!(
+                                "O SKU '{}' já está em uso pelo modelo '{}'.",
+                                v.sku.as_deref().unwrap_or(sku_norm),
+                                other.name
+                            )));
+                        }
+                    }
+                    if let (Some(ref bid), Some(ref code_norm)) =
+                        (&brand_id, &v.model_code_normalized)
+                    {
+                        if let Some(other) = stores
+                            .catalog()
+                            .find_model_by_brand_and_code_normalized(
+                                &session.tenant_id,
+                                bid,
+                                code_norm,
+                            )
+                            .await?
+                        {
+                            return Err(CoreError::Conflict(format!(
+                                "O código '{}' já está em uso para esta marca pelo modelo '{}'.",
+                                v.model_code.as_deref().unwrap_or(code_norm),
+                                other.name
+                            )));
+                        }
+                    }
+
                     let search_text = build_catalog_search_text(
                         &v.name,
                         v.model_code.as_deref(),
@@ -1330,6 +1363,43 @@ impl CoreServices {
                         .into_iter()
                         .map(|v| (v.definition_id.clone(), v))
                         .collect();
+
+                    if let Some(ref sku_norm) = v.sku_normalized {
+                        if let Some(other) = stores
+                            .catalog()
+                            .find_model_by_sku_normalized(&session.tenant_id, sku_norm)
+                            .await?
+                        {
+                            if other.id != existing.id {
+                                return Err(CoreError::Conflict(format!(
+                                    "O SKU '{}' já está em uso pelo modelo '{}'.",
+                                    v.sku.as_deref().unwrap_or(sku_norm),
+                                    other.name
+                                )));
+                            }
+                        }
+                    }
+                    if let (Some(ref bid), Some(ref code_norm)) =
+                        (&brand_id, &v.model_code_normalized)
+                    {
+                        if let Some(other) = stores
+                            .catalog()
+                            .find_model_by_brand_and_code_normalized(
+                                &session.tenant_id,
+                                bid,
+                                code_norm,
+                            )
+                            .await?
+                        {
+                            if other.id != existing.id {
+                                return Err(CoreError::Conflict(format!(
+                                    "O código '{}' já está em uso para esta marca pelo modelo '{}'.",
+                                    v.model_code.as_deref().unwrap_or(code_norm),
+                                    other.name
+                                )));
+                            }
+                        }
+                    }
 
                     let attr_values: Vec<EquipmentModelAttributeValue> = validated_attrs
                         .into_iter()
