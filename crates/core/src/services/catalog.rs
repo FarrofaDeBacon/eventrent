@@ -1299,20 +1299,46 @@ impl CoreServices {
                         &input.attribute_values,
                     )?;
 
+                    let existing_attr_map: HashMap<String, EquipmentModelAttributeValue> = stores
+                        .catalog()
+                        .list_model_attribute_values(&session.tenant_id, &existing.id)
+                        .await?
+                        .into_iter()
+                        .map(|v| (v.definition_id.clone(), v))
+                        .collect();
+
                     let attr_values: Vec<EquipmentModelAttributeValue> = validated_attrs
                         .into_iter()
-                        .map(|av| EquipmentModelAttributeValue {
-                            id: Uuid::now_v7().to_string(),
-                            tenant_id: session.tenant_id.clone(),
-                            model_id: existing.id.clone(),
-                            definition_id: av.definition_id,
-                            value_text: av.value_text,
-                            value_number: av.value_number,
-                            value_bool: av.value_bool,
-                            created_at: now.clone(),
-                            updated_at: now.clone(),
-                            deleted_at: None,
-                            created_by: Some(session.user_id.clone()),
+                        .map(|av| {
+                            if let Some(prev) = existing_attr_map.get(&av.definition_id) {
+                                EquipmentModelAttributeValue {
+                                    id: prev.id.clone(),
+                                    tenant_id: session.tenant_id.clone(),
+                                    model_id: existing.id.clone(),
+                                    definition_id: av.definition_id,
+                                    value_text: av.value_text,
+                                    value_number: av.value_number,
+                                    value_bool: av.value_bool,
+                                    created_at: prev.created_at.clone(),
+                                    updated_at: now.clone(),
+                                    deleted_at: None,
+                                    created_by: prev.created_by.clone(),
+                                }
+                            } else {
+                                EquipmentModelAttributeValue {
+                                    id: Uuid::now_v7().to_string(),
+                                    tenant_id: session.tenant_id.clone(),
+                                    model_id: existing.id.clone(),
+                                    definition_id: av.definition_id,
+                                    value_text: av.value_text,
+                                    value_number: av.value_number,
+                                    value_bool: av.value_bool,
+                                    created_at: now.clone(),
+                                    updated_at: now.clone(),
+                                    deleted_at: None,
+                                    created_by: Some(session.user_id.clone()),
+                                }
+                            }
                         })
                         .collect();
 

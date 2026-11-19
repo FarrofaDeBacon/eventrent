@@ -941,38 +941,72 @@ impl CatalogStore for SqliteStore {
         )
         .await?;
 
+        let existing_vals = self
+            .list_model_attribute_values(&model.tenant_id, &model.id)
+            .await?;
+        for prev in &existing_vals {
+            if !values.iter().any(|v| v.definition_id == prev.definition_id) {
+                self.execute(
+                    sqlx::query(
+                        "DELETE FROM equipment_model_attribute_value
+                         WHERE tenant_id = ? AND model_id = ? AND definition_id = ?",
+                    )
+                    .bind(&model.tenant_id)
+                    .bind(&model.id)
+                    .bind(&prev.definition_id),
+                )
+                .await?;
+            }
+        }
         self.execute(
             sqlx::query(
-                "UPDATE equipment_model_attribute_value SET deleted_at = ?, updated_at = ?
-                 WHERE tenant_id = ? AND model_id = ? AND deleted_at IS NULL",
+                "DELETE FROM equipment_model_attribute_value
+                 WHERE tenant_id = ? AND model_id = ? AND deleted_at IS NOT NULL",
             )
-            .bind(&model.updated_at)
-            .bind(&model.updated_at)
             .bind(&model.tenant_id)
             .bind(&model.id),
         )
         .await?;
 
         for val in values {
-            self.execute(
-                sqlx::query(
-                    "INSERT INTO equipment_model_attribute_value (
-                        id, tenant_id, model_id, definition_id, value_text, value_number, value_bool, created_at, updated_at, deleted_at, created_by
-                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            let updated_res = self
+                .execute(
+                    sqlx::query(
+                        "UPDATE equipment_model_attribute_value
+                         SET value_text = ?, value_number = ?, value_bool = ?, updated_at = ?, deleted_at = NULL
+                         WHERE tenant_id = ? AND model_id = ? AND definition_id = ?",
+                    )
+                    .bind(&val.value_text)
+                    .bind(val.value_number)
+                    .bind(val.value_bool.map(|b| if b { 1 } else { 0 }))
+                    .bind(&val.updated_at)
+                    .bind(&val.tenant_id)
+                    .bind(&val.model_id)
+                    .bind(&val.definition_id),
                 )
-                .bind(&val.id)
-                .bind(&val.tenant_id)
-                .bind(&val.model_id)
-                .bind(&val.definition_id)
-                .bind(&val.value_text)
-                .bind(val.value_number)
-                .bind(val.value_bool.map(|b| if b { 1 } else { 0 }))
-                .bind(&val.created_at)
-                .bind(&val.updated_at)
-                .bind(&val.deleted_at)
-                .bind(&val.created_by),
-            )
-            .await?;
+                .await?;
+
+            if updated_res.rows_affected() == 0 {
+                self.execute(
+                    sqlx::query(
+                        "INSERT INTO equipment_model_attribute_value (
+                            id, tenant_id, model_id, definition_id, value_text, value_number, value_bool, created_at, updated_at, deleted_at, created_by
+                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    )
+                    .bind(&val.id)
+                    .bind(&val.tenant_id)
+                    .bind(&val.model_id)
+                    .bind(&val.definition_id)
+                    .bind(&val.value_text)
+                    .bind(val.value_number)
+                    .bind(val.value_bool.map(|b| if b { 1 } else { 0 }))
+                    .bind(&val.created_at)
+                    .bind(&val.updated_at)
+                    .bind(&val.deleted_at)
+                    .bind(&val.created_by),
+                )
+                .await?;
+            }
         }
         Ok(())
     }

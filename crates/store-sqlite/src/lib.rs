@@ -5847,6 +5847,73 @@ mod tests {
             .unwrap();
         assert_eq!(search_by_new_cat.total_count, 1);
 
+        // 8.4 Item 0.4: Editar um modelo 50 vezes mantém a contagem de linhas em equipment_model_attribute_value constante
+        let mut current_model = services
+            .get_equipment_model(&warehouse_a, &created.model.id)
+            .await
+            .unwrap();
+        for i in 1..=50 {
+            current_model = services
+                .update_equipment_model(
+                    &warehouse_a,
+                    &created.model.id,
+                    &UpdateEquipmentModelInput {
+                        category_id: mesas.category.id.clone(),
+                        brand_id: Some(behringer.id.clone()),
+                        name: "X32 Compact".to_string(),
+                        model_code: Some("X32C".to_string()),
+                        sku: Some("AUD-X32C".to_string()),
+                        ean: Some("7891000315507".to_string()),
+                        ncm: Some("85437099".to_string()),
+                        description: Some(format!("Revisão {i}")),
+                        control_mode: ControlMode::Serialized,
+                        weight_kg: Some(15.4),
+                        length_cm: Some(62.5),
+                        width_cm: Some(50.6),
+                        height_cm: Some(21.5),
+                        power_watts: Some(120),
+                        voltage: Some(VoltageOption::Bivolt),
+                        amperage: Some(1.5),
+                        requires_case: true,
+                        units_per_case: Some(1),
+                        daily_rate_cents: Some(35_000 + i),
+                        replacement_value_cents: Some(1_800_000),
+                        cost_price_cents: Some(1_200_000),
+                        active: true,
+                        attribute_values: vec![
+                            AttributeValueInput {
+                                definition_id: canais_def.definition.id.clone(),
+                                value_text: None,
+                                value_number: Some(32.0 + (i as f64)),
+                                value_bool: None,
+                            },
+                            AttributeValueInput {
+                                definition_id: proto_def.definition.id.clone(),
+                                value_text: Some("Dante".to_string()),
+                                value_number: None,
+                                value_bool: None,
+                            },
+                        ],
+                        expected_updated_at: current_model.model.updated_at.clone(),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        let total_attr_rows: i64 = sqlx::query(
+            "SELECT COUNT(*) AS cnt FROM equipment_model_attribute_value WHERE tenant_id = ? AND model_id = ?",
+        )
+        .bind("tenant-cat-a")
+        .bind(&created.model.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .get("cnt");
+        assert_eq!(
+            total_attr_rows, 2,
+            "50 edições devem manter exatamente 2 linhas físicas na tabela equipment_model_attribute_value"
+        );
+
         // 9. Isolamento multi-tenant + FK composta no banco
         let list_b = services
             .list_equipment_models(&warehouse_b, &CatalogListFilter::default())
