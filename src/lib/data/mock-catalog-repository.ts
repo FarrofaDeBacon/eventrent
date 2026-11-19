@@ -1132,6 +1132,88 @@ export class MockCatalogRepository implements CatalogRepository {
         sort_order: 2,
         attrs: [],
       },
+      {
+        name: "DJ",
+        sort_order: 7,
+        attrs: [],
+      },
+      {
+        parent: "DJ",
+        name: "Players (CDJ)",
+        sort_order: 1,
+        attrs: [
+          {
+            field_key: "pro_dj_link",
+            label: "Pro DJ Link",
+            data_type: "boolean",
+          },
+        ],
+      },
+      {
+        parent: "DJ",
+        name: "Mixers DJ",
+        sort_order: 2,
+        attrs: [
+          {
+            field_key: "canais",
+            label: "Canais",
+            data_type: "number",
+            unit: "ch",
+          },
+          { field_key: "efeitos", label: "Efeitos", data_type: "boolean" },
+        ],
+      },
+      {
+        parent: "DJ",
+        name: "Controladoras DJ",
+        sort_order: 3,
+        attrs: [
+          {
+            field_key: "canais",
+            label: "Canais",
+            data_type: "number",
+            unit: "ch",
+          },
+          { field_key: "efeitos", label: "Efeitos", data_type: "boolean" },
+        ],
+      },
+      {
+        name: "Acessórios",
+        sort_order: 8,
+        attrs: [],
+      },
+      {
+        parent: "Acessórios",
+        name: "Pedestais e suportes",
+        sort_order: 1,
+        attrs: [
+          {
+            field_key: "carga_maxima_kg",
+            label: "Carga Máxima",
+            data_type: "number",
+            unit: "kg",
+          },
+        ],
+      },
+      {
+        parent: "Acessórios",
+        name: "Cases e racks",
+        sort_order: 2,
+        attrs: [
+          {
+            field_key: "unidades_rack_u",
+            label: "Unidades de Rack",
+            data_type: "number",
+            unit: "U",
+          },
+        ],
+      },
+      {
+        parent: "Acessórios",
+        name: "Fitas e consumíveis",
+        sort_order: 3,
+        attrs: [],
+      },
     ];
 
     const rootIds = new Map<string, string>();

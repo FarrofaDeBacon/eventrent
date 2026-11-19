@@ -5482,6 +5482,40 @@ mod tests {
             .iter()
             .find(|i| i.category.name == "Áudio")
             .expect("Áudio");
+        assert!(
+            tree.iter().any(|i| i.category.name == "DJ"),
+            "Deve incluir raiz DJ"
+        );
+        assert!(
+            tree.iter().any(|i| i.category.name == "Players (CDJ)"),
+            "Deve incluir Players (CDJ)"
+        );
+        assert!(
+            tree.iter().any(|i| i.category.name == "Mixers DJ"),
+            "Deve incluir Mixers DJ"
+        );
+        assert!(
+            tree.iter().any(|i| i.category.name == "Controladoras DJ"),
+            "Deve incluir Controladoras DJ"
+        );
+        assert!(
+            tree.iter().any(|i| i.category.name == "Acessórios"),
+            "Deve incluir raiz Acessórios"
+        );
+        assert!(
+            tree.iter()
+                .any(|i| i.category.name == "Pedestais e suportes"),
+            "Deve incluir Pedestais e suportes"
+        );
+        assert!(
+            tree.iter().any(|i| i.category.name == "Cases e racks"),
+            "Deve incluir Cases e racks"
+        );
+        assert!(
+            tree.iter()
+                .any(|i| i.category.name == "Fitas e consumíveis"),
+            "Deve incluir Fitas e consumíveis"
+        );
         let mesas = tree
             .iter()
             .find(|i| i.category.name == "Mesas de som")

@@ -1796,6 +1796,102 @@ impl CoreServices {
                         sort_order: 2,
                         attrs: &[],
                     },
+                    SuggestedCat {
+                        parent_name: None,
+                        name: "DJ",
+                        sort_order: 7,
+                        attrs: &[],
+                    },
+                    SuggestedCat {
+                        parent_name: Some("DJ"),
+                        name: "Players (CDJ)",
+                        sort_order: 1,
+                        attrs: &[SuggestedAttr {
+                            field_key: "pro_dj_link",
+                            label: "Pro DJ Link",
+                            data_type: AttributeDataType::Boolean,
+                            unit: None,
+                            choices: &[],
+                        }],
+                    },
+                    SuggestedCat {
+                        parent_name: Some("DJ"),
+                        name: "Mixers DJ",
+                        sort_order: 2,
+                        attrs: &[
+                            SuggestedAttr {
+                                field_key: "canais",
+                                label: "Canais",
+                                data_type: AttributeDataType::Number,
+                                unit: Some("ch"),
+                                choices: &[],
+                            },
+                            SuggestedAttr {
+                                field_key: "efeitos",
+                                label: "Efeitos",
+                                data_type: AttributeDataType::Boolean,
+                                unit: None,
+                                choices: &[],
+                            },
+                        ],
+                    },
+                    SuggestedCat {
+                        parent_name: Some("DJ"),
+                        name: "Controladoras DJ",
+                        sort_order: 3,
+                        attrs: &[
+                            SuggestedAttr {
+                                field_key: "canais",
+                                label: "Canais",
+                                data_type: AttributeDataType::Number,
+                                unit: Some("ch"),
+                                choices: &[],
+                            },
+                            SuggestedAttr {
+                                field_key: "efeitos",
+                                label: "Efeitos",
+                                data_type: AttributeDataType::Boolean,
+                                unit: None,
+                                choices: &[],
+                            },
+                        ],
+                    },
+                    SuggestedCat {
+                        parent_name: None,
+                        name: "Acessórios",
+                        sort_order: 8,
+                        attrs: &[],
+                    },
+                    SuggestedCat {
+                        parent_name: Some("Acessórios"),
+                        name: "Pedestais e suportes",
+                        sort_order: 1,
+                        attrs: &[SuggestedAttr {
+                            field_key: "carga_maxima_kg",
+                            label: "Carga Máxima",
+                            data_type: AttributeDataType::Number,
+                            unit: Some("kg"),
+                            choices: &[],
+                        }],
+                    },
+                    SuggestedCat {
+                        parent_name: Some("Acessórios"),
+                        name: "Cases e racks",
+                        sort_order: 2,
+                        attrs: &[SuggestedAttr {
+                            field_key: "unidades_rack_u",
+                            label: "Unidades de Rack",
+                            data_type: AttributeDataType::Number,
+                            unit: Some("U"),
+                            choices: &[],
+                        }],
+                    },
+                    SuggestedCat {
+                        parent_name: Some("Acessórios"),
+                        name: "Fitas e consumíveis",
+                        sort_order: 3,
+                        attrs: &[],
+                    },
                 ];
 
                 let mut root_ids: HashMap<&'static str, String> = HashMap::new();
