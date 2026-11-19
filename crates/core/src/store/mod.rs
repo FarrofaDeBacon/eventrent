@@ -1,4 +1,5 @@
 use crate::domain::catalog::*;
+use crate::domain::media::{build_media_storage_key, compute_sha256_hex, validate_sha256_hex};
 use crate::domain::{
     AuditLogEntry, Customer, CustomerAddress, CustomerContact, CustomerFilter, CustomerPage,
     CustomerWithDetails, DocumentType, Role, RoleWithPermissions, SupplierCategory, Tenant,
@@ -335,6 +336,80 @@ pub trait CatalogStore: Send + Sync {
         brand_id: &str,
         model_code_normalized: &str,
     ) -> Result<Option<EquipmentModel>>;
+}
+
+/// Trait de armazenamento físico de blobs de mídia (CAS por SHA-256 e tenant_id — ADR-0013).
+#[async_trait]
+pub trait MediaStore: Send + Sync {
+    async fn put_blob(&self, tenant_id: &str, sha256: &str, bytes: &[u8]) -> Result<String>;
+    async fn get_blob(&self, tenant_id: &str, sha256: &str) -> Result<Vec<u8>>;
+    async fn delete_blob(&self, tenant_id: &str, sha256: &str) -> Result<()>;
+    async fn exists_blob(&self, tenant_id: &str, sha256: &str) -> Result<bool>;
+}
+
+#[derive(Default)]
+pub struct InMemoryMediaStore {
+    blobs: std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,
+}
+
+impl InMemoryMediaStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl MediaStore for InMemoryMediaStore {
+    async fn put_blob(&self, tenant_id: &str, sha256: &str, bytes: &[u8]) -> Result<String> {
+        let clean_sha = validate_sha256_hex(sha256)?;
+        let actual_sha = compute_sha256_hex(bytes);
+        if actual_sha != clean_sha {
+            return Err(CoreError::Validation(
+                "Integridade de mídia inválida: hash SHA-256 não confere com o conteúdo."
+                    .to_string(),
+            ));
+        }
+        let key = build_media_storage_key(tenant_id, &clean_sha)?;
+        let mut guard = self
+            .blobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.insert(key.clone(), bytes.to_vec());
+        Ok(key)
+    }
+
+    async fn get_blob(&self, tenant_id: &str, sha256: &str) -> Result<Vec<u8>> {
+        let key = build_media_storage_key(tenant_id, sha256)?;
+        let guard = self
+            .blobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.get(&key).cloned().ok_or_else(|| {
+            CoreError::NotFound(format!(
+                "Arquivo de mídia '{}' não encontrado no armazenamento.",
+                key
+            ))
+        })
+    }
+
+    async fn delete_blob(&self, tenant_id: &str, sha256: &str) -> Result<()> {
+        let key = build_media_storage_key(tenant_id, sha256)?;
+        let mut guard = self
+            .blobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.remove(&key);
+        Ok(())
+    }
+
+    async fn exists_blob(&self, tenant_id: &str, sha256: &str) -> Result<bool> {
+        let key = build_media_storage_key(tenant_id, sha256)?;
+        let guard = self
+            .blobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Ok(guard.contains_key(&key))
+    }
 }
 
 #[derive(Clone)]

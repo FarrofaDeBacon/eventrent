@@ -4,6 +4,7 @@ pub mod catalog;
 pub mod config;
 pub mod customer;
 pub mod document;
+pub mod media;
 pub mod permission;
 pub mod role;
 pub mod settings;
@@ -57,3 +58,4 @@ pub use venue::{
 };
 
 pub use catalog::*;
+pub use media::*;
