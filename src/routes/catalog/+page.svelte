@@ -1,7 +1,8 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
-  import { FolderTree, Plus, Search, Speaker } from "lucide-svelte";
+  import { FolderTree, Images, Plus, Search, Speaker } from "lucide-svelte";
   import { toast } from "svelte-sonner";
+  import CatalogThumb from "$lib/components/catalog-thumb.svelte";
   import VirtualList from "$lib/components/virtual-list.svelte";
   import {
     appSession,
@@ -136,12 +137,16 @@
       </div>
     </div>
 
-    <div class="flex items-center gap-2">
+    <div class="flex flex-wrap items-center gap-2">
       <Button variant="outline" href="/catalog/categories">
         <FolderTree class="mr-2 h-4 w-4" />
         Categorias e Atributos
       </Button>
       {#if canManage}
+        <Button variant="outline" href="/catalog/import-photos">
+          <Images class="mr-2 h-4 w-4" />
+          Importar fotos em lote
+        </Button>
         <Button href="/catalog/new">
           <Plus class="mr-2 h-4 w-4" />
           Novo modelo
@@ -261,6 +266,11 @@
             onclick={() => goto(`/catalog/${m.id}`)}
             class="flex h-[76px] w-full items-center justify-between gap-4 border-b border-border px-5 text-left transition-colors hover:bg-muted/40"
           >
+            <CatalogThumb
+              blobId={item.primary_thumb_blob_id}
+              mimeType={item.primary_thumb_mime_type}
+              alt={m.name}
+            />
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
                 <span class="truncate font-medium text-foreground"
