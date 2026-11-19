@@ -173,7 +173,10 @@ export function canAccessRoute(
   if (pathname.startsWith("/venues")) {
     return hasPermission(session, PERMISSIONS.VENUE_READ);
   }
-  if (pathname.startsWith("/catalog/new")) {
+  if (
+    pathname.startsWith("/catalog/new") ||
+    pathname.startsWith("/catalog/import-photos")
+  ) {
     return hasPermission(session, PERMISSIONS.CATALOG_MANAGE);
   }
   if (pathname.startsWith("/catalog")) {

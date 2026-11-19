@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
+import {
+  encodeDocumentIpcFrame,
+  encodePhotoIpcFrame,
+} from "$lib/utils/media-ipc-frame";
 import type {
+  AttachModelDocumentInput,
+  AttachModelPhotoInput,
   AttributeDefinition,
   Brand,
   CatalogListFilter,
@@ -11,13 +17,17 @@ import type {
   CreateEquipmentModelInput,
   EquipmentCategory,
   EquipmentCategoryTreeItem,
+  EquipmentModelMediaView,
   EquipmentModelWithDetails,
   InheritedAttributeDefinition,
+  MediaGarbageCollectionResult,
+  ReorderModelMediaInput,
   SuggestedCategoriesResult,
   UpdateAttributeDefinitionInput,
   UpdateBrandInput,
   UpdateCategoryInput,
   UpdateEquipmentModelInput,
+  UpdateModelMediaInput,
 } from "./catalog-repository";
 
 export class TauriCatalogRepository implements CatalogRepository {
@@ -133,5 +143,75 @@ export class TauriCatalogRepository implements CatalogRepository {
     return invoke<SuggestedCategoriesResult>(
       "load_suggested_catalog_categories",
     );
+  }
+
+  async listModelMedia(modelId: string): Promise<EquipmentModelMediaView[]> {
+    return invoke<EquipmentModelMediaView[]>("list_model_media", { modelId });
+  }
+
+  async getMediaBlobBytes(blobId: string): Promise<Uint8Array> {
+    const raw = await invoke<ArrayBuffer | Uint8Array | number[]>(
+      "get_media_blob_bytes",
+      { blobId },
+    );
+    if (raw instanceof Uint8Array) {
+      return raw;
+    }
+    if (raw instanceof ArrayBuffer) {
+      return new Uint8Array(raw);
+    }
+    return new Uint8Array(raw);
+  }
+
+  async attachModelPhoto(
+    input: AttachModelPhotoInput,
+  ): Promise<EquipmentModelMediaView> {
+    const frame = encodePhotoIpcFrame(input);
+    return invoke<EquipmentModelMediaView>("attach_model_photo", frame);
+  }
+
+  async attachModelDocument(
+    input: AttachModelDocumentInput,
+  ): Promise<EquipmentModelMediaView> {
+    const frame = encodeDocumentIpcFrame(input);
+    return invoke<EquipmentModelMediaView>("attach_model_document", frame);
+  }
+
+  async updateModelMediaMetadata(
+    input: UpdateModelMediaInput,
+  ): Promise<EquipmentModelMediaView> {
+    return invoke<EquipmentModelMediaView>("update_model_media_metadata", {
+      input,
+    });
+  }
+
+  async reorderModelMedia(
+    input: ReorderModelMediaInput,
+  ): Promise<EquipmentModelMediaView[]> {
+    return invoke<EquipmentModelMediaView[]>("reorder_model_media", { input });
+  }
+
+  async setPrimaryModelPhoto(
+    mediaLinkId: string,
+  ): Promise<EquipmentModelMediaView> {
+    return invoke<EquipmentModelMediaView>("set_primary_model_photo", {
+      mediaLinkId,
+    });
+  }
+
+  async removeModelMedia(mediaLinkId: string): Promise<void> {
+    return invoke<void>("remove_model_media", { mediaLinkId });
+  }
+
+  async collectUnreferencedMedia(): Promise<MediaGarbageCollectionResult> {
+    return invoke<MediaGarbageCollectionResult>("collect_unreferenced_media");
+  }
+
+  async openModelDocumentExternal(mediaLinkId: string): Promise<string> {
+    return invoke<string>("open_model_document_external", { mediaLinkId });
+  }
+
+  async saveModelDocumentAs(mediaLinkId: string): Promise<string | null> {
+    return invoke<string | null>("save_model_document_as", { mediaLinkId });
   }
 }

@@ -1,4 +1,6 @@
 import type {
+  AttachModelDocumentInput,
+  AttachModelPhotoInput,
   AttributeDefinition,
   Brand,
   CatalogListFilter,
@@ -13,13 +15,17 @@ import type {
   EquipmentModel,
   EquipmentModelAttributeValue,
   EquipmentModelListItem,
+  EquipmentModelMediaView,
   EquipmentModelWithDetails,
   InheritedAttributeDefinition,
+  MediaGarbageCollectionResult,
+  ReorderModelMediaInput,
   SuggestedCategoriesResult,
   UpdateAttributeDefinitionInput,
   UpdateBrandInput,
   UpdateCategoryInput,
   UpdateEquipmentModelInput,
+  UpdateModelMediaInput,
 } from "./catalog-repository";
 import { appSession } from "./session.svelte";
 import { PERMISSIONS } from "./types";
@@ -78,6 +84,8 @@ export class MockCatalogRepository implements CatalogRepository {
   private definitions: AttributeDefinition[] = [];
   private models: EquipmentModel[] = [];
   private attrValues: EquipmentModelAttributeValue[] = [];
+  private mediaItems: EquipmentModelMediaView[] = [];
+  private blobStore = new Map<string, Uint8Array>();
 
   private tenantId(): string {
     return appSession.session?.tenant_id ?? "tenant-demo";
@@ -645,14 +653,29 @@ export class MockCatalogRepository implements CatalogRepository {
     const next_cursor =
       offset + limit < total_count ? String(offset + limit) : null;
 
-    const items: EquipmentModelListItem[] = slice.map((m) => ({
-      model: m,
-      category_name:
-        this.categories.find((c) => c.id === m.category_id)?.name ?? "",
-      brand_name: m.brand_id
-        ? (this.brands.find((b) => b.id === m.brand_id)?.name ?? null)
-        : null,
-    }));
+    const items: EquipmentModelListItem[] = slice.map((m) => {
+      const primaryPhoto = this.mediaItems.find(
+        (mi) =>
+          mi.tenant_id === tid &&
+          mi.model_id === m.id &&
+          mi.kind === "image" &&
+          mi.is_primary,
+      );
+      return {
+        model: m,
+        category_name:
+          this.categories.find((c) => c.id === m.category_id)?.name ?? "",
+        brand_name: m.brand_id
+          ? (this.brands.find((b) => b.id === m.brand_id)?.name ?? null)
+          : null,
+        primary_thumb_blob_id: primaryPhoto
+          ? (primaryPhoto.thumb_blob_id ?? primaryPhoto.blob_id)
+          : null,
+        primary_thumb_mime_type: primaryPhoto
+          ? (primaryPhoto.thumb_mime_type ?? primaryPhoto.mime_type)
+          : null,
+      };
+    });
 
     return { items, next_cursor, total_count };
   }
@@ -1272,5 +1295,313 @@ export class MockCatalogRepository implements CatalogRepository {
     }
 
     return { categories_created, attributes_created };
+  }
+
+  async listModelMedia(modelId: string): Promise<EquipmentModelMediaView[]> {
+    this.assertPermission(PERMISSIONS.CATALOG_READ);
+    const tid = this.tenantId();
+    return this.mediaItems
+      .filter((m) => m.tenant_id === tid && m.model_id === modelId)
+      .sort(
+        (a, b) =>
+          Number(b.is_primary) - Number(a.is_primary) ||
+          a.sort_order - b.sort_order ||
+          a.created_at.localeCompare(b.created_at),
+      );
+  }
+
+  async getMediaBlobBytes(blobId: string): Promise<Uint8Array> {
+    this.assertPermission(PERMISSIONS.CATALOG_READ);
+    const bytes = this.blobStore.get(blobId);
+    if (!bytes) {
+      throw new Error("Blob de mídia não encontrado.");
+    }
+    return bytes;
+  }
+
+  async attachModelPhoto(
+    input: AttachModelPhotoInput,
+  ): Promise<EquipmentModelMediaView> {
+    this.assertPermission(PERMISSIONS.CATALOG_MANAGE);
+    const tid = this.tenantId();
+    const model = this.models.find(
+      (m) => m.tenant_id === tid && m.id === input.model_id && !m.deleted_at,
+    );
+    if (!model) throw new Error("Modelo de equipamento não encontrado.");
+
+    const existingPhotos = this.mediaItems.filter(
+      (m) =>
+        m.tenant_id === tid &&
+        m.model_id === input.model_id &&
+        m.kind === "image",
+    );
+    if (existingPhotos.length >= 12) {
+      throw new Error(
+        "Limite máximo de 12 fotos por modelo de equipamento atingido.",
+      );
+    }
+
+    const title = input.title.trim();
+    if (!title || title.length > 150) {
+      throw new Error("O título da mídia deve ter entre 1 e 150 caracteres.");
+    }
+
+    const blobId = makeId("blob");
+    const thumbBlobId = makeId("tblob");
+    this.blobStore.set(blobId, new Uint8Array(input.display_bytes));
+    this.blobStore.set(thumbBlobId, new Uint8Array(input.thumb_bytes));
+
+    const isPrimary = !existingPhotos.some((p) => p.is_primary);
+    const maxSort = existingPhotos.reduce(
+      (max, p) => Math.max(max, p.sort_order),
+      -1,
+    );
+    const ts = nowIso();
+
+    const item: EquipmentModelMediaView = {
+      id: makeId("emm"),
+      tenant_id: tid,
+      model_id: input.model_id,
+      asset_id: makeId("asset"),
+      kind: "image",
+      blob_id: blobId,
+      blob_sha256: blobId.padEnd(64, "0").slice(0, 64),
+      mime_type: input.display_mime_type,
+      thumb_blob_id: thumbBlobId,
+      thumb_sha256: thumbBlobId.padEnd(64, "0").slice(0, 64),
+      thumb_mime_type: input.thumb_mime_type,
+      title,
+      doc_type: null,
+      origin: input.origin,
+      credit_note: input.credit_note?.trim() || null,
+      language: null,
+      version_note: null,
+      original_filename: input.original_filename.trim() || "foto.webp",
+      width: 800,
+      height: 600,
+      byte_size: input.display_bytes.byteLength,
+      is_primary: isPrimary,
+      sort_order: maxSort + 1,
+      created_at: ts,
+      updated_at: ts,
+    };
+
+    this.mediaItems.push(item);
+    return item;
+  }
+
+  async attachModelDocument(
+    input: AttachModelDocumentInput,
+  ): Promise<EquipmentModelMediaView> {
+    this.assertPermission(PERMISSIONS.CATALOG_MANAGE);
+    const tid = this.tenantId();
+    const model = this.models.find(
+      (m) => m.tenant_id === tid && m.id === input.model_id && !m.deleted_at,
+    );
+    if (!model) throw new Error("Modelo de equipamento não encontrado.");
+
+    const existingDocs = this.mediaItems.filter(
+      (m) =>
+        m.tenant_id === tid &&
+        m.model_id === input.model_id &&
+        m.kind === "document",
+    );
+    if (existingDocs.length >= 20) {
+      throw new Error(
+        "Limite máximo de 20 documentos por modelo de equipamento atingido.",
+      );
+    }
+
+    const title = input.title.trim();
+    if (!title || title.length > 150) {
+      throw new Error("O título da mídia deve ter entre 1 e 150 caracteres.");
+    }
+
+    const blobId = makeId("blob");
+    this.blobStore.set(blobId, new Uint8Array(input.bytes));
+    const maxSort = existingDocs.reduce(
+      (max, d) => Math.max(max, d.sort_order),
+      -1,
+    );
+    const ts = nowIso();
+
+    const item: EquipmentModelMediaView = {
+      id: makeId("emm"),
+      tenant_id: tid,
+      model_id: input.model_id,
+      asset_id: makeId("asset"),
+      kind: "document",
+      blob_id: blobId,
+      blob_sha256: blobId.padEnd(64, "0").slice(0, 64),
+      mime_type: "application/pdf",
+      thumb_blob_id: null,
+      thumb_sha256: null,
+      thumb_mime_type: null,
+      title,
+      doc_type: input.doc_type,
+      origin: input.origin,
+      credit_note: input.credit_note?.trim() || null,
+      language: input.language?.trim() || null,
+      version_note: input.version_note?.trim() || null,
+      original_filename: input.original_filename.trim() || "documento.pdf",
+      width: null,
+      height: null,
+      byte_size: input.bytes.byteLength,
+      is_primary: false,
+      sort_order: maxSort + 1,
+      created_at: ts,
+      updated_at: ts,
+    };
+
+    this.mediaItems.push(item);
+    return item;
+  }
+
+  async updateModelMediaMetadata(
+    input: UpdateModelMediaInput,
+  ): Promise<EquipmentModelMediaView> {
+    this.assertPermission(PERMISSIONS.CATALOG_MANAGE);
+    const tid = this.tenantId();
+    const idx = this.mediaItems.findIndex(
+      (m) => m.tenant_id === tid && m.id === input.media_link_id,
+    );
+    if (idx === -1) throw new Error("Mídia do modelo não encontrada.");
+    const existing = this.mediaItems[idx];
+    if (existing.updated_at !== input.expected_updated_at) {
+      throw new Error(
+        "Os metadados desta mídia foram alterados por outra operação. Recarregue antes de salvar.",
+      );
+    }
+    const title = input.title.trim();
+    if (!title || title.length > 150) {
+      throw new Error("O título da mídia deve ter entre 1 e 150 caracteres.");
+    }
+    const updated: EquipmentModelMediaView = {
+      ...existing,
+      title,
+      doc_type: existing.kind === "document" ? input.doc_type : null,
+      origin: input.origin,
+      credit_note: input.credit_note?.trim() || null,
+      language:
+        existing.kind === "document" ? input.language?.trim() || null : null,
+      version_note:
+        existing.kind === "document"
+          ? input.version_note?.trim() || null
+          : null,
+      updated_at: nowIso(),
+    };
+    this.mediaItems[idx] = updated;
+    return updated;
+  }
+
+  async reorderModelMedia(
+    input: ReorderModelMediaInput,
+  ): Promise<EquipmentModelMediaView[]> {
+    this.assertPermission(PERMISSIONS.CATALOG_MANAGE);
+    const tid = this.tenantId();
+    const ts = nowIso();
+    input.ordered_link_ids.forEach((linkId, index) => {
+      const idx = this.mediaItems.findIndex(
+        (m) =>
+          m.tenant_id === tid &&
+          m.model_id === input.model_id &&
+          m.kind === input.kind &&
+          m.id === linkId,
+      );
+      if (idx !== -1) {
+        this.mediaItems[idx] = {
+          ...this.mediaItems[idx],
+          sort_order: index,
+          updated_at: ts,
+        };
+      }
+    });
+    return this.listModelMedia(input.model_id);
+  }
+
+  async setPrimaryModelPhoto(
+    mediaLinkId: string,
+  ): Promise<EquipmentModelMediaView> {
+    this.assertPermission(PERMISSIONS.CATALOG_MANAGE);
+    const tid = this.tenantId();
+    const target = this.mediaItems.find(
+      (m) => m.tenant_id === tid && m.id === mediaLinkId && m.kind === "image",
+    );
+    if (!target) throw new Error("Foto do modelo não encontrada.");
+    const ts = nowIso();
+    this.mediaItems = this.mediaItems.map((m) => {
+      if (
+        m.tenant_id === tid &&
+        m.model_id === target.model_id &&
+        m.kind === "image"
+      ) {
+        return {
+          ...m,
+          is_primary: m.id === mediaLinkId,
+          updated_at: ts,
+        };
+      }
+      return m;
+    });
+    return this.mediaItems.find((m) => m.id === mediaLinkId)!;
+  }
+
+  async removeModelMedia(mediaLinkId: string): Promise<void> {
+    this.assertPermission(PERMISSIONS.CATALOG_MANAGE);
+    const tid = this.tenantId();
+    const target = this.mediaItems.find(
+      (m) => m.tenant_id === tid && m.id === mediaLinkId,
+    );
+    if (!target) throw new Error("Vínculo de mídia não encontrado.");
+
+    this.mediaItems = this.mediaItems.filter((m) => m.id !== mediaLinkId);
+
+    if (target.kind === "image" && target.is_primary) {
+      const remaining = this.mediaItems
+        .filter(
+          (m) =>
+            m.tenant_id === tid &&
+            m.model_id === target.model_id &&
+            m.kind === "image",
+        )
+        .sort((a, b) => a.sort_order - b.sort_order);
+      if (remaining.length > 0) {
+        const nextId = remaining[0].id;
+        this.mediaItems = this.mediaItems.map((m) =>
+          m.id === nextId ? { ...m, is_primary: true } : m,
+        );
+      }
+    }
+  }
+
+  async collectUnreferencedMedia(): Promise<MediaGarbageCollectionResult> {
+    this.assertPermission(PERMISSIONS.CATALOG_MANAGE);
+    return {
+      deleted_assets: 0,
+      deleted_blobs: 0,
+      deleted_files: 0,
+    };
+  }
+
+  async openModelDocumentExternal(mediaLinkId: string): Promise<string> {
+    this.assertPermission(PERMISSIONS.CATALOG_READ);
+    const tid = this.tenantId();
+    const doc = this.mediaItems.find(
+      (m) =>
+        m.tenant_id === tid && m.id === mediaLinkId && m.kind === "document",
+    );
+    if (!doc) throw new Error("Documento não encontrado.");
+    return `/temp-media/${doc.original_filename}`;
+  }
+
+  async saveModelDocumentAs(mediaLinkId: string): Promise<string | null> {
+    this.assertPermission(PERMISSIONS.CATALOG_READ);
+    const tid = this.tenantId();
+    const doc = this.mediaItems.find(
+      (m) =>
+        m.tenant_id === tid && m.id === mediaLinkId && m.kind === "document",
+    );
+    if (!doc) throw new Error("Documento não encontrado.");
+    return `/downloads/${doc.original_filename}`;
   }
 }
