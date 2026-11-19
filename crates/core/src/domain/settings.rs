@@ -2,18 +2,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
 
-pub const SETTING_DEFAULT_SETUP_MINUTES: &str = "allocation.default_setup_minutes";
-pub const SETTING_DEFAULT_TEARDOWN_MINUTES: &str = "allocation.default_teardown_minutes";
-pub const SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES: &str =
-    "allocation.default_turnover_buffer_minutes";
-pub const SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES: &str =
-    "allocation.default_internal_transfer_minutes";
+pub const SETTING_CHANGEOVER_MINUTES: &str = "allocation.changeover_minutes";
+pub const SETTING_INTERNAL_TRANSFER_MINUTES: &str = "allocation.internal_transfer_minutes";
+pub const SETTING_EXTERNAL_TRANSFER_MINUTES: &str = "allocation.external_transfer_minutes";
 
-pub const DEFAULT_SETUP_MINUTES: i64 = 30;
-pub const DEFAULT_TEARDOWN_MINUTES: i64 = 20;
-pub const DEFAULT_TURNOVER_BUFFER_MINUTES: i64 = 60;
+pub const DEFAULT_CHANGEOVER_MINUTES: i64 = 30;
 pub const DEFAULT_INTERNAL_TRANSFER_MINUTES: i64 = 20;
-pub const MAX_ALLOCATION_MINUTES: i64 = 240;
+pub const DEFAULT_EXTERNAL_TRANSFER_MINUTES: i64 = 60;
+
+pub const MAX_CHANGEOVER_MINUTES: i64 = 240;
+pub const MAX_INTERNAL_TRANSFER_SETTING_MINUTES: i64 = 240;
+pub const MAX_EXTERNAL_TRANSFER_MINUTES: i64 = 720;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TenantSetting {
@@ -27,56 +26,50 @@ pub struct TenantSetting {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AllocationSettings {
-    pub default_setup_minutes: i64,
-    pub default_teardown_minutes: i64,
-    pub default_turnover_buffer_minutes: i64,
-    pub default_internal_transfer_minutes: i64,
+    pub changeover_minutes: i64,
+    pub internal_transfer_minutes: i64,
+    pub external_transfer_minutes: i64,
 }
 
 impl Default for AllocationSettings {
     fn default() -> Self {
         Self {
-            default_setup_minutes: DEFAULT_SETUP_MINUTES,
-            default_teardown_minutes: DEFAULT_TEARDOWN_MINUTES,
-            default_turnover_buffer_minutes: DEFAULT_TURNOVER_BUFFER_MINUTES,
-            default_internal_transfer_minutes: DEFAULT_INTERNAL_TRANSFER_MINUTES,
+            changeover_minutes: DEFAULT_CHANGEOVER_MINUTES,
+            internal_transfer_minutes: DEFAULT_INTERNAL_TRANSFER_MINUTES,
+            external_transfer_minutes: DEFAULT_EXTERNAL_TRANSFER_MINUTES,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateAllocationSettingsInput {
-    pub default_setup_minutes: i64,
-    pub default_teardown_minutes: i64,
-    pub default_turnover_buffer_minutes: i64,
-    #[serde(default = "default_internal_transfer")]
-    pub default_internal_transfer_minutes: i64,
-}
-
-fn default_internal_transfer() -> i64 {
-    DEFAULT_INTERNAL_TRANSFER_MINUTES
+    pub changeover_minutes: i64,
+    pub internal_transfer_minutes: i64,
+    pub external_transfer_minutes: i64,
 }
 
 pub fn validate_allocation_settings(input: &UpdateAllocationSettingsInput) -> Result<()> {
     let fields = [
-        ("Tempo padrão de montagem", input.default_setup_minutes),
         (
-            "Tempo padrão de desmontagem",
-            input.default_teardown_minutes,
+            "Virada no mesmo espaço",
+            input.changeover_minutes,
+            MAX_CHANGEOVER_MINUTES,
         ),
         (
-            "Buffer padrão de giro",
-            input.default_turnover_buffer_minutes,
+            "Deslocamento interno",
+            input.internal_transfer_minutes,
+            MAX_INTERNAL_TRANSFER_SETTING_MINUTES,
         ),
         (
-            "Deslocamento interno padrão",
-            input.default_internal_transfer_minutes,
+            "Deslocamento externo",
+            input.external_transfer_minutes,
+            MAX_EXTERNAL_TRANSFER_MINUTES,
         ),
     ];
-    for (label, value) in fields {
-        if !(0..=MAX_ALLOCATION_MINUTES).contains(&value) {
+    for (label, value, max) in fields {
+        if !(0..=max).contains(&value) {
             return Err(CoreError::Validation(format!(
-                "{label} deve estar entre 0 e {MAX_ALLOCATION_MINUTES} minutos."
+                "{label} deve estar entre 0 e {max} minutos."
             )));
         }
     }

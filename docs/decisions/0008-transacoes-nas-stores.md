@@ -122,3 +122,22 @@ Na Fase 1B.1, o laço de retry de `run_in_tx` foi estendido para proteger també
    - Para o adaptador do PostgreSQL (Fase 2.5), a esteira de `map_sqlx_err` deverá:
      - Classificar como `CoreError::TransientConflict` estritamente erros com garantia de não-comit (`40001`, `40P01`).
      - Tratar falhas de conectividade e I/O de rede durante o `COMMIT` como erros permanentes ou acionar verificação de idempotência (chaves de idempotência na camada de aplicação).
+
+---
+
+### 6. Adendo: Pré-requisitos de Portabilidade e Segurança para PostgreSQL (Fase 2.5)
+
+Para garantir a transição limpa de SQLite embarcado para PostgreSQL multi-usuário na Fase 2.5 (sem reescrever a camada de serviços), todas as stores e serviços devem observar os seguintes pré-requisitos:
+
+1. **Concorrência Otimista Condicional no Banco**:
+   - No adaptador PostgreSQL, atualizações protegidas por `expected_updated_at` devem executar `UPDATE ... WHERE tenant_id = $1 AND id = $2 AND updated_at = $3` verificando `rows_affected() == 0` (ou precedidas por `SELECT ... FOR UPDATE` dentro da mesma transação) para impedir _lost updates_ sob MVCC.
+2. **Placeholders e Tipos Nativos Portáveis**:
+   - SQLite usa `?` (ou `?1`), enquanto PostgreSQL exige placeholders posicionais `$1, $2, ...`.
+   - O esquema PostgreSQL utilizará tipos nativos `BOOLEAN` (em vez de `INTEGER` `0/1`) e `TIMESTAMPTZ` (em vez de `TEXT` ISO-8601), além de valores monetários sempre em inteiros de centavos (`BIGINT` / `INTEGER`).
+3. **Estratégia de Travas para Disponibilidade (Fase 3)**:
+   - Como detalhado na Seção 3, o motor de disponibilidade no PostgreSQL não pode depender apenas de `REPEATABLE READ`; exigirá `SELECT ... FOR UPDATE` nos registros de estoque/alocação, restrições `EXCLUDE USING gist` ou `SERIALIZABLE` com retry para `40001`.
+4. **Proteção contra DoS por Bloqueio de Conta (Account Lockout)**:
+   - O bloqueio progressivo por usuário (`failed_login_attempts` / `locked_until`) protege contra brute-force, mas em ambiente exposto à rede (Fase 2.5) abre vetor de negação de serviço se um atacante travar contas legítimas enviando senhas erradas.
+   - A camada de borda/API na Fase 2.5 deverá combinar **rate limiting por IP e fingerprint de dispositivo** antes de atingir o contador da conta.
+5. **Sessões Estritamente Server-Side**:
+   - Em ambiente web/nuvem (Fase 2.5), sessões serão mantidas exclusivamente no servidor (cookie `HttpOnly; Secure; SameSite=Lax` + registro revogável em banco/store), nunca em tokens JWT stateless sem revogação no cliente.

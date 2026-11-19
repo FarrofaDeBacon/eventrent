@@ -4,13 +4,12 @@ import type {
   UpdateAllocationSettingsInput,
 } from "./types";
 
-const STORAGE_KEY = "eventrent:mock:allocation_settings:v1";
+const STORAGE_KEY = "eventrent:mock:allocation_settings:v2";
 
 const DEFAULT_SETTINGS: AllocationSettings = {
-  default_setup_minutes: 30,
-  default_teardown_minutes: 20,
-  default_turnover_buffer_minutes: 60,
-  default_internal_transfer_minutes: 20,
+  changeover_minutes: 30,
+  internal_transfer_minutes: 20,
+  external_transfer_minutes: 60,
 };
 
 export class MockSettingsRepository implements SettingsRepository {
@@ -25,22 +24,18 @@ export class MockSettingsRepository implements SettingsRepository {
     try {
       const parsed = JSON.parse(raw) as Partial<AllocationSettings>;
       return {
-        default_setup_minutes:
-          typeof parsed.default_setup_minutes === "number"
-            ? parsed.default_setup_minutes
-            : DEFAULT_SETTINGS.default_setup_minutes,
-        default_teardown_minutes:
-          typeof parsed.default_teardown_minutes === "number"
-            ? parsed.default_teardown_minutes
-            : DEFAULT_SETTINGS.default_teardown_minutes,
-        default_turnover_buffer_minutes:
-          typeof parsed.default_turnover_buffer_minutes === "number"
-            ? parsed.default_turnover_buffer_minutes
-            : DEFAULT_SETTINGS.default_turnover_buffer_minutes,
-        default_internal_transfer_minutes:
-          typeof parsed.default_internal_transfer_minutes === "number"
-            ? parsed.default_internal_transfer_minutes
-            : DEFAULT_SETTINGS.default_internal_transfer_minutes,
+        changeover_minutes:
+          typeof parsed.changeover_minutes === "number"
+            ? parsed.changeover_minutes
+            : DEFAULT_SETTINGS.changeover_minutes,
+        internal_transfer_minutes:
+          typeof parsed.internal_transfer_minutes === "number"
+            ? parsed.internal_transfer_minutes
+            : DEFAULT_SETTINGS.internal_transfer_minutes,
+        external_transfer_minutes:
+          typeof parsed.external_transfer_minutes === "number"
+            ? parsed.external_transfer_minutes
+            : DEFAULT_SETTINGS.external_transfer_minutes,
       };
     } catch {
       return { ...DEFAULT_SETTINGS };
@@ -55,31 +50,31 @@ export class MockSettingsRepository implements SettingsRepository {
     input: UpdateAllocationSettingsInput,
   ): Promise<AllocationSettings> {
     const fields = [
-      { label: "Tempo padrão de montagem", value: input.default_setup_minutes },
       {
-        label: "Tempo padrão de desmontagem",
-        value: input.default_teardown_minutes,
+        label: "Virada no mesmo espaço",
+        value: input.changeover_minutes,
+        max: 240,
       },
       {
-        label: "Buffer padrão de giro",
-        value: input.default_turnover_buffer_minutes,
+        label: "Deslocamento interno",
+        value: input.internal_transfer_minutes,
+        max: 240,
       },
       {
-        label: "Deslocamento interno padrão",
-        value: input.default_internal_transfer_minutes,
+        label: "Deslocamento externo",
+        value: input.external_transfer_minutes,
+        max: 720,
       },
     ];
     for (const f of fields) {
-      if (!Number.isInteger(f.value) || f.value < 0 || f.value > 240) {
-        throw new Error(`${f.label} deve estar entre 0 e 240 minutos.`);
+      if (!Number.isInteger(f.value) || f.value < 0 || f.value > f.max) {
+        throw new Error(`${f.label} deve estar entre 0 e ${f.max} minutos.`);
       }
     }
     const next: AllocationSettings = {
-      default_setup_minutes: input.default_setup_minutes,
-      default_teardown_minutes: input.default_teardown_minutes,
-      default_turnover_buffer_minutes: input.default_turnover_buffer_minutes,
-      default_internal_transfer_minutes:
-        input.default_internal_transfer_minutes,
+      changeover_minutes: input.changeover_minutes,
+      internal_transfer_minutes: input.internal_transfer_minutes,
+      external_transfer_minutes: input.external_transfer_minutes,
     };
     if (typeof window !== "undefined") {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));

@@ -1,13 +1,15 @@
+mod catalog;
+
 use async_trait::async_trait;
 use chrono::Utc;
 use eventrent_core::{
-    normalize_for_search, run_in_tx, AuditLogEntry, AuditStore, BrandingStore, CoreError, Customer,
-    CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter, CustomerPage, CustomerStore,
-    CustomerWithDetails, DocumentType, Result, Role, RoleStore, RoleWithPermissions, StoreBundle,
-    Tenant, TenantBranding, TenantSetting, TenantSettingStore, TenantStore, TransactionManager,
-    TransactionPolicy, TxStoreBundle, UpdateBrandingInput, UserRecord, UserStore, UserWithRole,
-    Venue, VenueContact, VenueCursor, VenueFilter, VenueListItem, VenuePage, VenueSpace,
-    VenueStore, VenueWithDetails,
+    normalize_for_search, run_in_tx, AuditLogEntry, AuditStore, BrandingStore, CatalogStore,
+    CoreError, Customer, CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter,
+    CustomerPage, CustomerStore, CustomerWithDetails, DocumentType, Result, Role, RoleStore,
+    RoleWithPermissions, StoreBundle, Tenant, TenantBranding, TenantSetting, TenantSettingStore,
+    TenantStore, TransactionManager, TransactionPolicy, TxStoreBundle, UpdateBrandingInput,
+    UserRecord, UserStore, UserWithRole, Venue, VenueContact, VenueCursor, VenueFilter,
+    VenueListItem, VenuePage, VenueSpace, VenueStore, VenueWithDetails,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, Row, Sqlite};
@@ -210,7 +212,8 @@ impl TransactionManager for SqliteTxManager {
             audit: arc.clone(),
             customers: arc.clone(),
             venues: arc.clone(),
-            settings: arc,
+            settings: arc.clone(),
+            catalog: arc,
         }))
     }
 }
@@ -225,6 +228,7 @@ pub struct SqliteTxStoreBundle {
     pub customers: Arc<dyn CustomerStore>,
     pub venues: Arc<dyn VenueStore>,
     pub settings: Arc<dyn TenantSettingStore>,
+    pub catalog: Arc<dyn CatalogStore>,
 }
 
 #[async_trait]
@@ -259,6 +263,10 @@ impl TxStoreBundle for SqliteTxStoreBundle {
 
     fn settings(&self) -> &dyn TenantSettingStore {
         self.settings.as_ref()
+    }
+
+    fn catalog(&self) -> &dyn CatalogStore {
+        self.catalog.as_ref()
     }
 
     async fn commit(self: Box<Self>) -> Result<()> {
@@ -319,7 +327,8 @@ impl SqliteStore {
             audit: arc.clone(),
             customers: arc.clone(),
             venues: arc.clone(),
-            settings: arc,
+            settings: arc.clone(),
+            catalog: arc,
             tx_manager,
         }
     }
@@ -3182,7 +3191,8 @@ mod tests {
                 audit: failing_audit,
                 customers: store.clone(),
                 venues: store.clone(),
-                settings: store,
+                settings: store.clone(),
+                catalog: store,
             }))
         }
     }
@@ -3207,6 +3217,7 @@ mod tests {
             customers: Arc::new(normal_store.clone()),
             venues: Arc::new(normal_store.clone()),
             settings: Arc::new(normal_store.clone()),
+            catalog: Arc::new(normal_store),
             tx_manager: Some(tx_manager),
         };
         let services = CoreServices::new(bundle.clone());
@@ -3747,6 +3758,7 @@ mod tests {
             customers: store.clone(),
             venues: store.clone(),
             settings: store.clone(),
+            catalog: store.clone(),
             tx_manager: None,
         };
 
@@ -5126,6 +5138,29 @@ mod tests {
             .unwrap();
         assert_eq!(t2_list.items.len(), 0);
 
+        // 5b. Limites de busca em list_venues (100 caracteres e 8 termos)
+        let too_long_query = services
+            .list_venues(
+                &owner_session_t1,
+                &VenueFilter {
+                    query: Some("a".repeat(101)),
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert!(matches!(too_long_query, Err(CoreError::Validation(_))));
+
+        let too_many_terms = services
+            .list_venues(
+                &owner_session_t1,
+                &VenueFilter {
+                    query: Some("t1 t2 t3 t4 t5 t6 t7 t8 t9".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert!(matches!(too_many_terms, Err(CoreError::Validation(_))));
+
         // 6. FK composta no banco impede venue_space / venue_contact com tenant divergente
         let fk_space_err = sqlx::query(
             "INSERT INTO venue_space (id, tenant_id, venue_id, name, name_normalized, active, sort_order, created_at, updated_at) VALUES ('sp-cross', 'tenant-v2', ?, 'Invasor', 'invasor', 1, 0, ?, ?)",
@@ -5213,10 +5248,9 @@ mod tests {
             .get_allocation_settings(&readonly_session)
             .await
             .unwrap();
-        assert_eq!(s1.default_setup_minutes, 30);
-        assert_eq!(s1.default_teardown_minutes, 20);
-        assert_eq!(s1.default_turnover_buffer_minutes, 60);
-        assert_eq!(s1.default_internal_transfer_minutes, 20);
+        assert_eq!(s1.changeover_minutes, 30);
+        assert_eq!(s1.internal_transfer_minutes, 20);
+        assert_eq!(s1.external_transfer_minutes, 60);
 
         let count_after_read: i64 =
             sqlx::query("SELECT COUNT(*) as total FROM tenant_setting WHERE tenant_id = ?")
@@ -5230,7 +5264,15 @@ mod tests {
             "get_allocation_settings não pode gravar no banco quando chave está ausente"
         );
 
-        // Leitura interna sem sessão devolve o mesmo padrão
+        // Chave antiga no banco deve ser ignorada silenciosamente
+        sqlx::query(
+            "INSERT INTO tenant_setting (id, tenant_id, setting_key, setting_value, updated_at) VALUES ('old-1', 'tenant-set-1', 'allocation.default_setup_minutes', '99', ?)",
+        )
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
         let internal_s1 = services
             .get_allocation_settings_for_tenant("tenant-set-1")
             .await
@@ -5242,10 +5284,9 @@ mod tests {
             .update_allocation_settings(
                 &readonly_session,
                 &UpdateAllocationSettingsInput {
-                    default_setup_minutes: 45,
-                    default_teardown_minutes: 30,
-                    default_turnover_buffer_minutes: 90,
-                    default_internal_transfer_minutes: 25,
+                    changeover_minutes: 45,
+                    internal_transfer_minutes: 25,
+                    external_transfer_minutes: 120,
                 },
             )
             .await;
@@ -5256,18 +5297,16 @@ mod tests {
             .update_allocation_settings(
                 &owner_session,
                 &UpdateAllocationSettingsInput {
-                    default_setup_minutes: 45,
-                    default_teardown_minutes: 30,
-                    default_turnover_buffer_minutes: 90,
-                    default_internal_transfer_minutes: 25,
+                    changeover_minutes: 45,
+                    internal_transfer_minutes: 25,
+                    external_transfer_minutes: 120,
                 },
             )
             .await
             .unwrap();
-        assert_eq!(updated.default_setup_minutes, 45);
-        assert_eq!(updated.default_teardown_minutes, 30);
-        assert_eq!(updated.default_turnover_buffer_minutes, 90);
-        assert_eq!(updated.default_internal_transfer_minutes, 25);
+        assert_eq!(updated.changeover_minutes, 45);
+        assert_eq!(updated.internal_transfer_minutes, 25);
+        assert_eq!(updated.external_transfer_minutes, 120);
 
         let reloaded = services
             .get_allocation_settings(&readonly_session)
@@ -5285,19 +5324,20 @@ mod tests {
         .unwrap();
         assert_eq!(audit_rows.len(), 1);
         let summary: String = audit_rows[0].get("summary");
-        assert!(summary.contains("montagem=45min"));
-        assert!(summary.contains("deslocamento=25min"));
+        assert!(summary.contains("virada=45min"));
+        assert!(summary.contains("deslocamento_interno=25min"));
+        assert!(summary.contains("deslocamento_externo=120min"));
 
-        // 5. Valor inválido no banco (não numérico ou > 240) cai para o padrão em memória com aviso no log
+        // 5. Valor inválido no banco (não numérico ou acima do limite) cai para o padrão em memória com aviso no log
         sqlx::query(
-            "UPDATE tenant_setting SET setting_value = 'nao-numerico' WHERE tenant_id = ? AND setting_key = 'allocation.default_setup_minutes'",
+            "UPDATE tenant_setting SET setting_value = 'nao-numerico' WHERE tenant_id = ? AND setting_key = 'allocation.changeover_minutes'",
         )
         .bind("tenant-set-1")
         .execute(&pool)
         .await
         .unwrap();
         sqlx::query(
-            "UPDATE tenant_setting SET setting_value = '999' WHERE tenant_id = ? AND setting_key = 'allocation.default_internal_transfer_minutes'",
+            "UPDATE tenant_setting SET setting_value = '999' WHERE tenant_id = ? AND setting_key = 'allocation.external_transfer_minutes'",
         )
         .bind("tenant-set-1")
         .execute(&pool)
@@ -5308,9 +5348,307 @@ mod tests {
             .get_allocation_settings_for_tenant("tenant-set-1")
             .await
             .unwrap();
-        assert_eq!(fallback.default_setup_minutes, 30);
-        assert_eq!(fallback.default_teardown_minutes, 30);
-        assert_eq!(fallback.default_turnover_buffer_minutes, 90);
-        assert_eq!(fallback.default_internal_transfer_minutes, 20);
+        assert_eq!(fallback.changeover_minutes, 30);
+        assert_eq!(fallback.internal_transfer_minutes, 25);
+        assert_eq!(fallback.external_transfer_minutes, 60);
+    }
+
+    #[tokio::test]
+    async fn test_store_catalog_crud_inheritance_rbac_and_isolation() {
+        use eventrent_core::{
+            AttributeValueInput, CatalogListFilter, ControlMode, CreateBrandInput,
+            CreateEquipmentModelInput, SessionInfo, UpdateEquipmentModelInput, VoltageOption,
+        };
+
+        let pool = init_memory_db().await.unwrap();
+        let store = SqliteStore::new(pool.clone());
+        let services = CoreServices::new(store.into_bundle());
+
+        for tid in ["tenant-cat-a", "tenant-cat-b"] {
+            services
+                .stores
+                .tenants
+                .create(&Tenant {
+                    id: tid.to_string(),
+                    tenant_id: tid.to_string(),
+                    name: format!("Empresa {tid}"),
+                    slug: tid.to_string(),
+                    document_number: None,
+                    created_at: Utc::now().to_rfc3339(),
+                    updated_at: Utc::now().to_rfc3339(),
+                    deleted_at: None,
+                    created_by: None,
+                })
+                .await
+                .unwrap();
+        }
+
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO role (id, tenant_id, name, slug, is_system, created_at, updated_at) VALUES ('role-cat-a', 'tenant-cat-a', 'Estoque', 'warehouse', 1, ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO app_user (id, tenant_id, role_id, name, email, password_hash, active, created_at, updated_at) VALUES ('u-wh-a', 'tenant-cat-a', 'role-cat-a', 'Estoque A', 'u-wh-a@test.com', 'hash', 1, ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mk_session = |uid: &str, tid: &str, perms: &[&str]| {
+            let now = Utc::now().to_rfc3339();
+            SessionInfo {
+                user_id: uid.to_string(),
+                tenant_id: tid.to_string(),
+                name: uid.to_string(),
+                email: format!("{uid}@test.com"),
+                role_id: "role-id".to_string(),
+                role_name: "Role".to_string(),
+                role_slug: "custom".to_string(),
+                permissions: perms.iter().map(|s| s.to_string()).collect(),
+                authenticated_at: now.clone(),
+                last_activity_at: now,
+                inactivity_timeout_minutes: 30,
+            }
+        };
+
+        let warehouse_a = mk_session(
+            "u-wh-a",
+            "tenant-cat-a",
+            &["catalog:read", "catalog:manage"],
+        );
+        let tech_a = mk_session("u-tech-a", "tenant-cat-a", &["catalog:read"]);
+        let finance_a = mk_session("u-fin-a", "tenant-cat-a", &["customer:read"]);
+        let warehouse_b = mk_session(
+            "u-wh-b",
+            "tenant-cat-b",
+            &["catalog:read", "catalog:manage"],
+        );
+
+        // 1. RBAC: Financeiro sem catalog:read recebe Forbidden
+        assert!(matches!(
+            services.list_brands(&finance_a, false).await,
+            Err(CoreError::Forbidden(_))
+        ));
+        assert!(matches!(
+            services
+                .list_equipment_models(&finance_a, &CatalogListFilter::default())
+                .await,
+            Err(CoreError::Forbidden(_))
+        ));
+
+        // 2. RBAC: Técnico (somente catalog:read) não pode carregar sugeridas nem criar marca
+        assert!(matches!(
+            services.load_suggested_catalog_categories(&tech_a).await,
+            Err(CoreError::Forbidden(_))
+        ));
+        assert!(matches!(
+            services
+                .create_brand(
+                    &tech_a,
+                    &CreateBrandInput {
+                        name: "Shure".to_string(),
+                        active: true
+                    }
+                )
+                .await,
+            Err(CoreError::Forbidden(_))
+        ));
+
+        // 3. Carga sugerida idempotente pelo Estoque (warehouse_a)
+        let first_load = services
+            .load_suggested_catalog_categories(&warehouse_a)
+            .await
+            .unwrap();
+        assert!(first_load.categories_created >= 10);
+        assert!(first_load.attributes_created >= 10);
+
+        let second_load = services
+            .load_suggested_catalog_categories(&warehouse_a)
+            .await
+            .unwrap();
+        assert_eq!(second_load.categories_created, 0);
+        assert_eq!(second_load.attributes_created, 0);
+
+        // 4. Herança: "Mesas de som" herda "impedancia_ohms" de "Áudio" + próprios "canais" e "protocolo_digital"
+        let tree = services.list_categories_tree(&tech_a, false).await.unwrap();
+        let audio = tree
+            .iter()
+            .find(|i| i.category.name == "Áudio")
+            .expect("Áudio");
+        let mesas = tree
+            .iter()
+            .find(|i| i.category.name == "Mesas de som")
+            .expect("Mesas de som");
+        let effective = services
+            .get_category_effective_attributes(&tech_a, &mesas.category.id)
+            .await
+            .unwrap();
+        let canais_def = effective
+            .iter()
+            .find(|a| a.definition.field_key == "canais")
+            .expect("canais");
+        let impedancia_def = effective
+            .iter()
+            .find(|a| a.definition.field_key == "impedancia_ohms")
+            .expect("impedancia_ohms herdada");
+        assert!(!canais_def.is_inherited);
+        assert!(impedancia_def.is_inherited);
+
+        // 5. Criação de marca + modelo com atributos herdados e próprios + validação EAN/NCM
+        let behringer = services
+            .create_brand(
+                &warehouse_a,
+                &CreateBrandInput {
+                    name: "Behringer".to_string(),
+                    active: true,
+                },
+            )
+            .await
+            .unwrap();
+
+        let created = services
+            .create_equipment_model(
+                &warehouse_a,
+                &CreateEquipmentModelInput {
+                    category_id: mesas.category.id.clone(),
+                    brand_id: Some(behringer.id.clone()),
+                    name: "X32 Compact".to_string(),
+                    model_code: Some("X32C".to_string()),
+                    sku: Some("AUD-X32C".to_string()),
+                    ean: Some("7891000315507".to_string()),
+                    ncm: Some("8543.70.99".to_string()),
+                    description: Some("Console digital 32 canais".to_string()),
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: Some(15.4),
+                    length_cm: Some(62.5),
+                    width_cm: Some(50.6),
+                    height_cm: Some(21.5),
+                    power_watts: Some(120),
+                    voltage: Some(VoltageOption::Bivolt),
+                    amperage: Some(1.5),
+                    requires_case: true,
+                    units_per_case: Some(1),
+                    daily_rate_cents: Some(35_000),
+                    replacement_value_cents: Some(1_800_000),
+                    cost_price_cents: Some(1_200_000),
+                    active: true,
+                    attribute_values: vec![
+                        AttributeValueInput {
+                            definition_id: canais_def.definition.id.clone(),
+                            value_text: None,
+                            value_number: Some(32.0),
+                            value_bool: None,
+                        },
+                        AttributeValueInput {
+                            definition_id: impedancia_def.definition.id.clone(),
+                            value_text: None,
+                            value_number: Some(600.0),
+                            value_bool: None,
+                        },
+                    ],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.attribute_values.len(), 2);
+        assert_eq!(created.model.ncm.as_deref(), Some("85437099"));
+
+        // 6. Filtro por categoria pai ("Áudio") retorna modelo em subcategoria ("Mesas de som")
+        let list_by_audio = services
+            .list_equipment_models(
+                &tech_a,
+                &CatalogListFilter {
+                    category_id: Some(audio.category.id.clone()),
+                    limit: 50,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(list_by_audio.total_count, 1);
+        assert_eq!(list_by_audio.items[0].model.id, created.model.id);
+
+        // 7. Unicidade parcial de SKU e proteção de exclusão de categoria/marca com modelos
+        assert!(matches!(
+            services.delete_brand(&warehouse_a, &behringer.id).await,
+            Err(CoreError::Conflict(_))
+        ));
+        assert!(matches!(
+            services
+                .delete_category(&warehouse_a, &mesas.category.id)
+                .await,
+            Err(CoreError::Conflict(_))
+        ));
+        assert!(matches!(
+            services
+                .delete_category(&warehouse_a, &audio.category.id)
+                .await,
+            Err(CoreError::Conflict(_))
+        ));
+
+        // 8. Concorrência otimista na atualização do modelo
+        let stale_update = services
+            .update_equipment_model(
+                &warehouse_a,
+                &created.model.id,
+                &UpdateEquipmentModelInput {
+                    category_id: mesas.category.id.clone(),
+                    brand_id: Some(behringer.id.clone()),
+                    name: "X32 Compact v2".to_string(),
+                    model_code: Some("X32C".to_string()),
+                    sku: Some("AUD-X32C".to_string()),
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: Some(40_000),
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
+                    active: true,
+                    attribute_values: vec![],
+                    expected_updated_at: "stale-ts".to_string(),
+                },
+            )
+            .await;
+        assert!(matches!(stale_update, Err(CoreError::Conflict(_))));
+
+        // 9. Isolamento multi-tenant + FK composta no banco
+        let list_b = services
+            .list_equipment_models(&warehouse_b, &CatalogListFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(list_b.total_count, 0);
+
+        let cross_fk = sqlx::query(
+            "INSERT INTO equipment_model (
+                id, tenant_id, category_id, brand_id, name, name_sort,
+                control_mode, requires_case, active, search_text, created_at, updated_at
+             ) VALUES (?, ?, ?, NULL, 'Cross', 'cross', 'serialized', 0, 1, 'cross', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind("cross-model-1")
+        .bind("tenant-cat-b")
+        .bind(&mesas.category.id)
+        .execute(&pool)
+        .await;
+        assert!(
+            cross_fk.is_err(),
+            "FK composta deve impedir vínculo cross-tenant"
+        );
     }
 }

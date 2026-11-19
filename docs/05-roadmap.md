@@ -118,3 +118,14 @@ Este roadmap detalha as fases oficiais de evolução do sistema EventRent defini
 ### Fase 9 — Produção Online
 
 - Operação SaaS multi-tenant completa em produção online com observabilidade, escalabilidade e provisionamento automatizado.
+
+---
+
+### Detalhamento Fases 2A a 4.5 (Alinhado a `docs/06-requisitos-de-produto.md`)
+
+- **Fase 2A (Concluída nesta entrega)**: Catálogo de Modelos de Equipamentos, Marcas, Árvore de Categorias (até 4 níveis) com Herança de Campos Técnicos, Carga Sugerida AV idempotente e RBAC (`catalog:read` / `catalog:manage`).
+- **Fase 2B**: Estoque Físico (unidades serializadas com patrimônio/QR e saldos por quantidade), Depósitos/Localizações e Kits expansíveis.
+- **Fase 2.5**: Portabilidade Multi-Usuário e Nuvem (`crates/store-postgres`, sessões server-side, rate limiting anti-DoS de lockout).
+- **Fase 3**: Motor de Disponibilidade e Reservas atômicas com Modelo de Três Tempos (ADR-0012), alocação de espaços e sinalização de sublocação.
+- **Fase 4**: Orçamentos, Pedidos, Romaneio de Separação, Check-out/Check-in por código de barras e Manutenção.
+- **Fase 4.5**: Financeiro (Contas a Receber/Pagar, Sublocação) e Relatórios Gerenciais de Ocupação/ROI.

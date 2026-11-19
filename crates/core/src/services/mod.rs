@@ -1,3 +1,5 @@
+mod catalog;
+
 use crate::domain::{
     build_customer_search_text, build_name_sort, build_venue_name_sort, build_venue_search_text,
     mask_email_for_audit, mask_individual_name_for_audit, normalize_for_search,
@@ -12,12 +14,12 @@ use crate::domain::{
     RoleWithPermissions, SessionInfo, Tenant, TenantBranding, TenantSetting,
     UpdateAllocationSettingsInput, UpdateBrandingInput, UpdateCustomerInput, UpdateUserInput,
     UpdateVenueInput, UserRecord, UserWithRole, Venue, VenueContact, VenueCursor, VenueFilter,
-    VenuePage, VenueSpace, VenueWithDetails, MAX_ALLOCATION_MINUTES, PERM_BRANDING_MANAGE,
-    PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ,
-    PERM_SETTINGS_MANAGE, PERM_SETTINGS_READ, PERM_SUPPLIER_MANAGE, PERM_SUPPLIER_READ,
-    PERM_USER_MANAGE, PERM_USER_READ, PERM_VENUE_MANAGE, PERM_VENUE_READ, ROLE_SLUG_OWNER,
-    SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES, SETTING_DEFAULT_SETUP_MINUTES,
-    SETTING_DEFAULT_TEARDOWN_MINUTES, SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES, SYSTEM_ROLES,
+    VenuePage, VenueSpace, VenueWithDetails, MAX_CHANGEOVER_MINUTES, MAX_EXTERNAL_TRANSFER_MINUTES,
+    MAX_INTERNAL_TRANSFER_SETTING_MINUTES, PERM_BRANDING_MANAGE, PERM_BRANDING_READ,
+    PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_SETTINGS_MANAGE,
+    PERM_SETTINGS_READ, PERM_SUPPLIER_MANAGE, PERM_SUPPLIER_READ, PERM_USER_MANAGE, PERM_USER_READ,
+    PERM_VENUE_MANAGE, PERM_VENUE_READ, ROLE_SLUG_OWNER, SETTING_CHANGEOVER_MINUTES,
+    SETTING_EXTERNAL_TRANSFER_MINUTES, SETTING_INTERNAL_TRANSFER_MINUTES, SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
@@ -301,6 +303,9 @@ impl<'a> TxStoreBundle for PassthroughTxStoreBundle<'a> {
     }
     fn settings(&self) -> &dyn crate::store::TenantSettingStore {
         self.stores.settings.as_ref()
+    }
+    fn catalog(&self) -> &dyn crate::store::CatalogStore {
+        self.stores.catalog.as_ref()
     }
     async fn commit(self: Box<Self>) -> Result<()> {
         Ok(())
@@ -1463,19 +1468,7 @@ impl CoreServices {
             CustomerCursor::decode(cursor)?;
         }
 
-        if let Some(ref q) = filter.query {
-            let trimmed = q.trim();
-            if trimmed.chars().count() > 100 {
-                return Err(CoreError::Validation(
-                    "O termo de busca não pode exceder 100 caracteres.".to_string(),
-                ));
-            }
-            if trimmed.split_whitespace().count() > 8 {
-                return Err(CoreError::Validation(
-                    "O termo de busca não pode conter mais de 8 palavras.".to_string(),
-                ));
-            }
-        }
+        validate_search_query_limits(filter.query.as_deref())?;
 
         let sanitized_filter = CustomerFilter {
             query: filter.query.clone(),
@@ -1720,23 +1713,7 @@ impl CoreServices {
                         .find_by_document(&session.tenant_id, customer.document_type, raw)
                         .await?
                     {
-                        let can_read_cust = session.has_permission(PERM_CUSTOMER_READ)
-                            || session.has_permission(PERM_CUSTOMER_MANAGE);
-                        let can_read_supp = session.has_permission(PERM_SUPPLIER_READ)
-                            || session.has_permission(PERM_SUPPLIER_MANAGE);
-                        let can_read_existing = (existing_doc.is_customer && can_read_cust)
-                            || (existing_doc.is_supplier && can_read_supp);
-
-                        if can_read_existing {
-                            return Err(CoreError::Conflict(format!(
-                                "Já existe um cadastro com este documento (id: {}).",
-                                existing_doc.id
-                            )));
-                        }
-                        return Err(CoreError::Conflict(
-                            "Este documento já está cadastrado. Se precisar usá-lo neste papel, peça a quem gerencia o cadastro existente."
-                                .to_string(),
-                        ));
+                        return Err(duplicate_document_conflict_error(&session, &existing_doc));
                     }
                 }
 
@@ -1863,6 +1840,10 @@ impl CoreServices {
                     .await?
                     .ok_or_else(|| CoreError::NotFound("Cadastro não encontrado.".to_string()))?;
 
+                if !can_read_party(&session, &existing.customer) {
+                    return Err(CoreError::NotFound("Cadastro não encontrado.".to_string()));
+                }
+
                 // Remover um papel exige manage desse papel
                 if existing.customer.is_customer
                     && !input.is_customer
@@ -1902,10 +1883,7 @@ impl CoreServices {
                             .await?
                         {
                             if other.id != id {
-                                return Err(CoreError::Conflict(
-                                    "Já existe um cliente cadastrado com este documento (ativo ou inativo)."
-                                        .to_string(),
-                                ));
+                                return Err(duplicate_document_conflict_error(&session, &other));
                             }
                         }
                     }
@@ -2136,6 +2114,10 @@ impl CoreServices {
                     .await?
                     .ok_or_else(|| CoreError::NotFound("Cadastro não encontrado.".to_string()))?;
 
+                if !can_read_party(&session, &existing.customer) {
+                    return Err(CoreError::NotFound("Cadastro não encontrado.".to_string()));
+                }
+
                 if existing.customer.is_customer && !session.has_permission(PERM_CUSTOMER_MANAGE) {
                     return Err(CoreError::Forbidden(
                         "Acesso negado: permissão 'customer:manage' necessária.".to_string(),
@@ -2229,6 +2211,10 @@ impl CoreServices {
                     .await?
                     .ok_or_else(|| CoreError::NotFound("Cadastro não encontrado.".to_string()))?;
 
+                if !can_read_party(&session, &existing.customer) {
+                    return Err(CoreError::NotFound("Cadastro não encontrado.".to_string()));
+                }
+
                 if existing.customer.is_customer && !session.has_permission(PERM_CUSTOMER_MANAGE) {
                     return Err(CoreError::Forbidden(
                         "Acesso negado: permissão 'customer:manage' necessária.".to_string(),
@@ -2308,6 +2294,10 @@ impl CoreServices {
                     .find_by_id(&session.tenant_id, &id)
                     .await?
                     .ok_or_else(|| CoreError::NotFound("Cadastro não encontrado.".to_string()))?;
+
+                if !can_read_party(&session, &existing.customer) {
+                    return Err(CoreError::NotFound("Cadastro não encontrado.".to_string()));
+                }
 
                 let already_has_role = match role {
                     CustomerRole::Customer => existing.customer.is_customer,
@@ -2789,6 +2779,8 @@ impl CoreServices {
             VenueCursor::decode(cursor_str)?;
         }
 
+        validate_search_query_limits(filter.query.as_deref())?;
+
         let mut normalized_filter = filter.clone();
         if let Some(ref q) = normalized_filter.query {
             let trimmed = q.trim();
@@ -2968,22 +2960,28 @@ impl CoreServices {
             .get_many(
                 tenant_id,
                 &[
-                    SETTING_DEFAULT_SETUP_MINUTES,
-                    SETTING_DEFAULT_TEARDOWN_MINUTES,
-                    SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
-                    SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES,
+                    SETTING_CHANGEOVER_MINUTES,
+                    SETTING_INTERNAL_TRANSFER_MINUTES,
+                    SETTING_EXTERNAL_TRANSFER_MINUTES,
                 ],
             )
             .await?;
 
         let mut result = AllocationSettings::default();
         for row in rows {
+            let max_allowed = match row.setting_key.as_str() {
+                SETTING_CHANGEOVER_MINUTES => MAX_CHANGEOVER_MINUTES,
+                SETTING_INTERNAL_TRANSFER_MINUTES => MAX_INTERNAL_TRANSFER_SETTING_MINUTES,
+                SETTING_EXTERNAL_TRANSFER_MINUTES => MAX_EXTERNAL_TRANSFER_MINUTES,
+                _ => continue,
+            };
+
             let parsed_opt = row
                 .setting_value
                 .trim()
                 .parse::<i64>()
                 .ok()
-                .filter(|v| (0..=MAX_ALLOCATION_MINUTES).contains(v));
+                .filter(|v| (0..=max_allowed).contains(v));
 
             let Some(parsed) = parsed_opt else {
                 tracing::warn!(
@@ -2996,14 +2994,9 @@ impl CoreServices {
             };
 
             match row.setting_key.as_str() {
-                SETTING_DEFAULT_SETUP_MINUTES => result.default_setup_minutes = parsed,
-                SETTING_DEFAULT_TEARDOWN_MINUTES => result.default_teardown_minutes = parsed,
-                SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES => {
-                    result.default_turnover_buffer_minutes = parsed
-                }
-                SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES => {
-                    result.default_internal_transfer_minutes = parsed
-                }
+                SETTING_CHANGEOVER_MINUTES => result.changeover_minutes = parsed,
+                SETTING_INTERNAL_TRANSFER_MINUTES => result.internal_transfer_minutes = parsed,
+                SETTING_EXTERNAL_TRANSFER_MINUTES => result.external_transfer_minutes = parsed,
                 _ => {}
             }
         }
@@ -3029,20 +3022,16 @@ impl CoreServices {
             Box::pin(async move {
                 let pairs = [
                     (
-                        SETTING_DEFAULT_SETUP_MINUTES,
-                        input.default_setup_minutes.to_string(),
+                        SETTING_CHANGEOVER_MINUTES,
+                        input.changeover_minutes.to_string(),
                     ),
                     (
-                        SETTING_DEFAULT_TEARDOWN_MINUTES,
-                        input.default_teardown_minutes.to_string(),
+                        SETTING_INTERNAL_TRANSFER_MINUTES,
+                        input.internal_transfer_minutes.to_string(),
                     ),
                     (
-                        SETTING_DEFAULT_TURNOVER_BUFFER_MINUTES,
-                        input.default_turnover_buffer_minutes.to_string(),
-                    ),
-                    (
-                        SETTING_DEFAULT_INTERNAL_TRANSFER_MINUTES,
-                        input.default_internal_transfer_minutes.to_string(),
+                        SETTING_EXTERNAL_TRANSFER_MINUTES,
+                        input.external_transfer_minutes.to_string(),
                     ),
                 ];
 
@@ -3061,11 +3050,10 @@ impl CoreServices {
                 }
 
                 let detail = format!(
-                    "Configurações de alocação atualizadas: montagem={}min, desmontagem={}min, giro={}min, deslocamento={}min",
-                    input.default_setup_minutes,
-                    input.default_teardown_minutes,
-                    input.default_turnover_buffer_minutes,
-                    input.default_internal_transfer_minutes
+                    "Configurações de alocação atualizadas: virada={}min, deslocamento_interno={}min, deslocamento_externo={}min",
+                    input.changeover_minutes,
+                    input.internal_transfer_minutes,
+                    input.external_transfer_minutes
                 );
                 stores
                     .audit()
@@ -3080,13 +3068,51 @@ impl CoreServices {
                     .await?;
 
                 Ok(AllocationSettings {
-                    default_setup_minutes: input.default_setup_minutes,
-                    default_teardown_minutes: input.default_teardown_minutes,
-                    default_turnover_buffer_minutes: input.default_turnover_buffer_minutes,
-                    default_internal_transfer_minutes: input.default_internal_transfer_minutes,
+                    changeover_minutes: input.changeover_minutes,
+                    internal_transfer_minutes: input.internal_transfer_minutes,
+                    external_transfer_minutes: input.external_transfer_minutes,
                 })
             })
         })
         .await
     }
+}
+
+fn can_read_party(session: &SessionInfo, customer: &Customer) -> bool {
+    let can_read_cust =
+        session.has_permission(PERM_CUSTOMER_READ) || session.has_permission(PERM_CUSTOMER_MANAGE);
+    let can_read_supp =
+        session.has_permission(PERM_SUPPLIER_READ) || session.has_permission(PERM_SUPPLIER_MANAGE);
+    (customer.is_customer && can_read_cust) || (customer.is_supplier && can_read_supp)
+}
+
+fn duplicate_document_conflict_error(session: &SessionInfo, existing: &Customer) -> CoreError {
+    if can_read_party(session, existing) {
+        CoreError::Conflict(format!(
+            "Já existe um cadastro com este documento (id: {}).",
+            existing.id
+        ))
+    } else {
+        CoreError::Conflict(
+            "Este documento já está cadastrado. Se precisar usá-lo neste papel, peça a quem gerencia o cadastro existente."
+                .to_string(),
+        )
+    }
+}
+
+fn validate_search_query_limits(query: Option<&str>) -> Result<()> {
+    if let Some(q) = query {
+        let trimmed = q.trim();
+        if trimmed.chars().count() > 100 {
+            return Err(CoreError::Validation(
+                "O termo de busca não pode exceder 100 caracteres.".to_string(),
+            ));
+        }
+        if trimmed.split_whitespace().count() > 8 {
+            return Err(CoreError::Validation(
+                "O termo de busca não pode conter mais de 8 palavras.".to_string(),
+            ));
+        }
+    }
+    Ok(())
 }

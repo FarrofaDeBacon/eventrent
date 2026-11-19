@@ -1584,7 +1584,7 @@ pub async fn contract_supplier_rbac_and_dual_roles(
                 name: "Tentativa Owner".to_string(),
                 trade_name: None,
                 document_type: DocumentType::Cpf,
-                document_number: Some(shared_cpf),
+                document_number: Some(shared_cpf.clone()),
                 state_registration: None,
                 municipal_registration: None,
                 notes: None,
@@ -1642,18 +1642,134 @@ pub async fn contract_supplier_rbac_and_dual_roles(
             .await,
         Err(CoreError::Forbidden(_))
     ));
-    // - Estoque (só supplier:manage): CONSEGUE adicionar Supplier ao cliente existente
-    let promoted = services
+    // - Estoque (sem leitura de cliente): add_customer_role em cust_only devolve NotFound (anti-vazamento)
+    let warehouse_add_on_unreadable = services
         .add_customer_role(
             &warehouse_session,
             &cust_only.customer.id,
             CustomerRole::Supplier,
         )
-        .await
-        .expect("Estoque adiciona papel Fornecedor em cadastro existente");
-    assert!(promoted.customer.is_customer && promoted.customer.is_supplier);
+        .await;
+    assert!(matches!(
+        warehouse_add_on_unreadable,
+        Err(CoreError::NotFound(_))
+    ));
 
-    // - Comercial (só customer:manage): CONSEGUE adicionar Customer ao fornecedor puro
+    // - Estoque (sem leitura de cliente): update, set_active e delete em cust_only também devolvem NotFound
+    assert!(matches!(
+        services
+            .set_customer_active(&warehouse_session, &cust_only.customer.id, false)
+            .await,
+        Err(CoreError::NotFound(_))
+    ));
+    assert!(matches!(
+        services
+            .delete_customer(&warehouse_session, &cust_only.customer.id)
+            .await,
+        Err(CoreError::NotFound(_))
+    ));
+    assert!(matches!(
+        services
+            .update_customer(
+                &warehouse_session,
+                &cust_only.customer.id,
+                &UpdateCustomerInput {
+                    person_type: PersonType::Legal,
+                    name: "Tentativa".to_string(),
+                    trade_name: None,
+                    document_type: DocumentType::None,
+                    document_number: None,
+                    state_registration: None,
+                    municipal_registration: None,
+                    notes: None,
+                    is_customer: false,
+                    is_supplier: true,
+                    supplier_categories: vec![SupplierCategory::Sublocacao],
+                    contacts: vec![CreateContactInput {
+                        id: None,
+                        name: "Contato".to_string(),
+                        email: Some("tentativa@forn.com".to_string()),
+                        phone: None,
+                        role: None,
+                        is_primary: true,
+                    }],
+                    addresses: vec![],
+                    expected_updated_at: cust_only.customer.updated_at.clone(),
+                },
+            )
+            .await,
+        Err(CoreError::NotFound(_))
+    ));
+
+    // - Estoque: update_customer tentando usar documento de cust_only (que não pode ler) devolve Conflict genérico sem ID
+    let sup_for_dup_update = services
+        .create_customer(
+            &warehouse_session,
+            &CreateCustomerInput {
+                person_type: PersonType::Legal,
+                name: "Fornecedor Atualiza Doc".to_string(),
+                trade_name: None,
+                document_type: DocumentType::None,
+                document_number: None,
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: false,
+                is_supplier: true,
+                supplier_categories: vec![SupplierCategory::Sublocacao],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Contato".to_string(),
+                    email: Some("upd@forn.com".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    let update_dup_err = services
+        .update_customer(
+            &warehouse_session,
+            &sup_for_dup_update.customer.id,
+            &UpdateCustomerInput {
+                person_type: PersonType::Individual,
+                name: "Fornecedor Atualiza Doc".to_string(),
+                trade_name: None,
+                document_type: DocumentType::Cpf,
+                document_number: Some(shared_cpf.clone()),
+                state_registration: None,
+                municipal_registration: None,
+                notes: None,
+                is_customer: false,
+                is_supplier: true,
+                supplier_categories: vec![SupplierCategory::Sublocacao],
+                contacts: vec![CreateContactInput {
+                    id: None,
+                    name: "Contato".to_string(),
+                    email: Some("upd@forn.com".to_string()),
+                    phone: None,
+                    role: None,
+                    is_primary: true,
+                }],
+                addresses: vec![],
+                expected_updated_at: sup_for_dup_update.customer.updated_at.clone(),
+            },
+        )
+        .await;
+    match update_dup_err {
+        Err(CoreError::Conflict(msg)) => {
+            assert!(
+                !msg.contains(&cust_only.customer.id),
+                "Erro de documento duplicado na atualização não pode vazar ID: {msg}"
+            );
+        }
+        other => panic!("Esperava Conflict anti-vazamento na atualização, obteve {other:?}"),
+    }
+
+    // - Comercial (só customer:manage, mas com supplier:read): CONSEGUE adicionar Customer ao fornecedor puro
     let promoted_supplier = services
         .add_customer_role(
             &commercial_session,
@@ -2648,9 +2764,206 @@ mod unit_tests {
                 unreachable!()
             }
         }
+        #[async_trait::async_trait]
+        impl crate::store::CatalogStore for DummyStore {
+            async fn list_brands(
+                &self,
+                _: &str,
+                _: bool,
+            ) -> crate::error::Result<Vec<crate::domain::Brand>> {
+                unreachable!()
+            }
+            async fn find_brand_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::Brand>> {
+                unreachable!()
+            }
+            async fn find_brand_by_name_normalized(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::Brand>> {
+                unreachable!()
+            }
+            async fn create_brand(&self, _: &crate::domain::Brand) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update_brand(&self, _: &crate::domain::Brand) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn soft_delete_brand(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn count_models_by_brand(&self, _: &str, _: &str) -> crate::error::Result<i64> {
+                unreachable!()
+            }
+            async fn list_categories(
+                &self,
+                _: &str,
+                _: bool,
+            ) -> crate::error::Result<Vec<crate::domain::EquipmentCategory>> {
+                unreachable!()
+            }
+            async fn find_category_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::EquipmentCategory>> {
+                unreachable!()
+            }
+            async fn find_category_by_parent_and_name(
+                &self,
+                _: &str,
+                _: Option<&str>,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::EquipmentCategory>> {
+                unreachable!()
+            }
+            async fn create_category(
+                &self,
+                _: &crate::domain::EquipmentCategory,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update_category(
+                &self,
+                _: &crate::domain::EquipmentCategory,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn soft_delete_category(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn count_child_categories(&self, _: &str, _: &str) -> crate::error::Result<i64> {
+                unreachable!()
+            }
+            async fn count_models_by_category(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<i64> {
+                unreachable!()
+            }
+            async fn count_models_per_category(
+                &self,
+                _: &str,
+            ) -> crate::error::Result<Vec<(String, i64)>> {
+                unreachable!()
+            }
+            async fn list_all_attribute_definitions(
+                &self,
+                _: &str,
+            ) -> crate::error::Result<Vec<crate::domain::AttributeDefinition>> {
+                unreachable!()
+            }
+            async fn list_attribute_definitions_by_category(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Vec<crate::domain::AttributeDefinition>> {
+                unreachable!()
+            }
+            async fn find_attribute_definition_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::AttributeDefinition>> {
+                unreachable!()
+            }
+            async fn create_attribute_definition(
+                &self,
+                _: &crate::domain::AttributeDefinition,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update_attribute_definition(
+                &self,
+                _: &crate::domain::AttributeDefinition,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn soft_delete_attribute_definition(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn list_models(
+                &self,
+                _: &str,
+                _: &crate::domain::CatalogListFilter,
+                _: Option<&[String]>,
+            ) -> crate::error::Result<crate::domain::CatalogListResult> {
+                unreachable!()
+            }
+            async fn find_model_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::EquipmentModel>> {
+                unreachable!()
+            }
+            async fn list_model_attribute_values(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Vec<crate::domain::EquipmentModelAttributeValue>>
+            {
+                unreachable!()
+            }
+            async fn create_model(
+                &self,
+                _: &crate::domain::EquipmentModel,
+                _: &[crate::domain::EquipmentModelAttributeValue],
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update_model(
+                &self,
+                _: &crate::domain::EquipmentModel,
+                _: &[crate::domain::EquipmentModelAttributeValue],
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn set_model_active(
+                &self,
+                _: &str,
+                _: &str,
+                _: bool,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn soft_delete_model(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn count_active_models(&self, _: &str) -> crate::error::Result<u64> {
+                unreachable!()
+            }
+        }
 
         let dummy = Arc::new(DummyStore);
         let res = StoreBundle::new(
+            dummy.clone(),
             dummy.clone(),
             dummy.clone(),
             dummy.clone(),
@@ -2736,6 +3049,9 @@ mod unit_tests {
                 unreachable!()
             }
             fn settings(&self) -> &dyn crate::store::TenantSettingStore {
+                unreachable!()
+            }
+            fn catalog(&self) -> &dyn crate::store::CatalogStore {
                 unreachable!()
             }
             async fn commit(self: Box<Self>) -> Result<()> {
@@ -2871,6 +3187,9 @@ mod unit_tests {
                 unreachable!()
             }
             fn settings(&self) -> &dyn crate::store::TenantSettingStore {
+                unreachable!()
+            }
+            fn catalog(&self) -> &dyn crate::store::CatalogStore {
                 unreachable!()
             }
             async fn commit(self: Box<Self>) -> Result<()> {
@@ -3813,27 +4132,46 @@ mod unit_tests {
 
         assert!(
             validate_allocation_settings(&UpdateAllocationSettingsInput {
-                default_setup_minutes: 0,
-                default_teardown_minutes: 240,
-                default_turnover_buffer_minutes: 60,
-                default_internal_transfer_minutes: 20,
+                changeover_minutes: 0,
+                internal_transfer_minutes: 240,
+                external_transfer_minutes: 720,
             })
             .is_ok()
         );
         assert!(matches!(
             validate_allocation_settings(&UpdateAllocationSettingsInput {
-                default_setup_minutes: -1,
-                default_teardown_minutes: 20,
-                default_turnover_buffer_minutes: 60,
-                default_internal_transfer_minutes: 20,
+                changeover_minutes: -1,
+                internal_transfer_minutes: 20,
+                external_transfer_minutes: 60,
             }),
             Err(CoreError::Validation(_))
         ));
+        assert!(matches!(
+            validate_allocation_settings(&UpdateAllocationSettingsInput {
+                changeover_minutes: 241,
+                internal_transfer_minutes: 20,
+                external_transfer_minutes: 60,
+            }),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            validate_allocation_settings(&UpdateAllocationSettingsInput {
+                changeover_minutes: 30,
+                internal_transfer_minutes: 20,
+                external_transfer_minutes: 721,
+            }),
+            Err(CoreError::Validation(_))
+        ));
+        // Todos os campos da entrada são obrigatórios (sem serde default)
+        let missing_field_json = r#"{"changeover_minutes": 30, "external_transfer_minutes": 60}"#;
+        assert!(serde_json::from_str::<UpdateAllocationSettingsInput>(missing_field_json).is_err());
 
         // Local sem internal_transfer_minutes usa padrão (20); local com 0 explícito usa 0
         use crate::domain::{resolve_venue_internal_transfer_minutes, AllocationSettings, Venue};
         let default_settings = AllocationSettings::default();
-        assert_eq!(default_settings.default_internal_transfer_minutes, 20);
+        assert_eq!(default_settings.changeover_minutes, 30);
+        assert_eq!(default_settings.internal_transfer_minutes, 20);
+        assert_eq!(default_settings.external_transfer_minutes, 60);
         let venue_null = Venue {
             id: "v-1".to_string(),
             tenant_id: "t-1".to_string(),
@@ -3871,5 +4209,222 @@ mod unit_tests {
             resolve_venue_internal_transfer_minutes(&venue_zero, &default_settings),
             0
         );
+    }
+
+    #[test]
+    fn test_catalog_domain_validations_and_inheritance() {
+        use crate::domain::catalog::{
+            resolve_inherited_attributes, validate_attribute_definition_fields,
+            validate_category_tree_placement, validate_ean, validate_equipment_model_fields,
+            validate_model_attribute_values, validate_ncm, AttributeDataType, AttributeDefinition,
+            AttributeValueInput, EquipmentCategory,
+        };
+        use crate::CoreError;
+
+        // 1. EAN-8 / EAN-13 com dígito verificador GS1
+        assert_eq!(
+            validate_ean(Some("7891000315507")).unwrap(),
+            Some("7891000315507".to_string())
+        );
+        assert_eq!(
+            validate_ean(Some("9638-5074")).unwrap(),
+            Some("96385074".to_string())
+        );
+        assert!(matches!(
+            validate_ean(Some("7891000315508")),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            validate_ean(Some("12345")),
+            Err(CoreError::Validation(_))
+        ));
+
+        // 2. NCM 8 dígitos
+        assert_eq!(
+            validate_ncm(Some("8519.81.90")).unwrap(),
+            Some("85198190".to_string())
+        );
+        assert!(matches!(
+            validate_ncm(Some("8519819")),
+            Err(CoreError::Validation(_))
+        ));
+
+        // 3. Dimensões, peso e dinheiro não negativo
+        assert!(matches!(
+            validate_equipment_model_fields(
+                "Mesa X32",
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(0.0),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            validate_equipment_model_fields(
+                "Mesa X32",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(-100),
+                None,
+                None,
+            ),
+            Err(CoreError::Validation(_))
+        ));
+
+        // 4. Ciclo e profundidade máxima 4 níveis na árvore de categorias
+        let mk_cat = |id: &str, parent_id: Option<&str>, name: &str| EquipmentCategory {
+            id: id.to_string(),
+            tenant_id: "t1".to_string(),
+            parent_id: parent_id.map(|s| s.to_string()),
+            name: name.to_string(),
+            name_normalized: name.to_lowercase(),
+            description: None,
+            sort_order: 0,
+            active: true,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            deleted_at: None,
+            created_by: None,
+        };
+        let cats = vec![
+            mk_cat("c1", None, "Áudio"),
+            mk_cat("c2", Some("c1"), "Microfones"),
+            mk_cat("c3", Some("c2"), "Sem Fio"),
+            mk_cat("c4", Some("c3"), "Bastão"),
+        ];
+        // Nível 5 deve falhar
+        assert!(matches!(
+            validate_category_tree_placement(&cats, None, Some("c4")),
+            Err(CoreError::Validation(_))
+        ));
+        // Auto-referência ou mover pai para dentro de filho deve falhar
+        assert!(matches!(
+            validate_category_tree_placement(&cats, Some("c1"), Some("c1")),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            validate_category_tree_placement(&cats, Some("c1"), Some("c3")),
+            Err(CoreError::Validation(_))
+        ));
+
+        // 5. Definições de atributos + herança + validação de valores
+        assert!(matches!(
+            validate_attribute_definition_fields(
+                "proto",
+                "Protocolo",
+                AttributeDataType::Select,
+                None,
+                &[],
+            ),
+            Err(CoreError::Validation(_))
+        ));
+
+        let defs = vec![
+            AttributeDefinition {
+                id: "d1".to_string(),
+                tenant_id: "t1".to_string(),
+                category_id: "c1".to_string(),
+                field_key: "impedancia".to_string(),
+                label: "Impedância".to_string(),
+                data_type: AttributeDataType::Number,
+                unit: Some("Ω".to_string()),
+                choices: vec![],
+                is_required: true,
+                sort_order: 1,
+                active: true,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                deleted_at: None,
+                created_by: None,
+            },
+            AttributeDefinition {
+                id: "d2".to_string(),
+                tenant_id: "t1".to_string(),
+                category_id: "c3".to_string(),
+                field_key: "banda".to_string(),
+                label: "Banda".to_string(),
+                data_type: AttributeDataType::Select,
+                unit: None,
+                choices: vec!["UHF".to_string(), "2.4GHz".to_string()],
+                is_required: false,
+                sort_order: 1,
+                active: true,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                deleted_at: None,
+                created_by: None,
+            },
+        ];
+
+        let effective = resolve_inherited_attributes(&cats, &defs, "c3").unwrap();
+        assert_eq!(effective.len(), 2);
+        assert!(effective[0].is_inherited);
+        assert!(!effective[1].is_inherited);
+
+        // Falha se obrigatório faltar ou opção select inválida
+        assert!(matches!(
+            validate_model_attribute_values(&effective, &[]),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(matches!(
+            validate_model_attribute_values(
+                &effective,
+                &[
+                    AttributeValueInput {
+                        definition_id: "d1".to_string(),
+                        value_text: None,
+                        value_number: Some(600.0),
+                        value_bool: None,
+                    },
+                    AttributeValueInput {
+                        definition_id: "d2".to_string(),
+                        value_text: Some("VHF".to_string()),
+                        value_number: None,
+                        value_bool: None,
+                    },
+                ],
+            ),
+            Err(CoreError::Validation(_))
+        ));
+        assert!(validate_model_attribute_values(
+            &effective,
+            &[
+                AttributeValueInput {
+                    definition_id: "d1".to_string(),
+                    value_text: None,
+                    value_number: Some(600.0),
+                    value_bool: None,
+                },
+                AttributeValueInput {
+                    definition_id: "d2".to_string(),
+                    value_text: Some("UHF".to_string()),
+                    value_number: None,
+                    value_bool: None,
+                },
+            ],
+        )
+        .is_ok());
     }
 }

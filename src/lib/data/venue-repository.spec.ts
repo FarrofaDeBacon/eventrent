@@ -109,32 +109,38 @@ describe("Venues & Settings RBAC + MockRepositories (Fase 1D)", () => {
     ).rejects.toThrow(/alterado por outra pessoa/i);
   });
 
-  it("MockSettingsRepository retorna defaults (30, 20, 60, 20) e valida faixa 0..240", async () => {
+  it("MockSettingsRepository retorna defaults (30, 20, 60) e valida faixas 0..240 e 0..720", async () => {
     const repo = new MockSettingsRepository();
     const initial = await repo.getAllocationSettings();
     expect(initial).toEqual({
-      default_setup_minutes: 30,
-      default_teardown_minutes: 20,
-      default_turnover_buffer_minutes: 60,
-      default_internal_transfer_minutes: 20,
+      changeover_minutes: 30,
+      internal_transfer_minutes: 20,
+      external_transfer_minutes: 60,
     });
 
     const saved = await repo.updateAllocationSettings({
-      default_setup_minutes: 45,
-      default_teardown_minutes: 30,
-      default_turnover_buffer_minutes: 90,
-      default_internal_transfer_minutes: 25,
+      changeover_minutes: 45,
+      internal_transfer_minutes: 25,
+      external_transfer_minutes: 120,
     });
-    expect(saved.default_setup_minutes).toBe(45);
-    expect(saved.default_internal_transfer_minutes).toBe(25);
+    expect(saved.changeover_minutes).toBe(45);
+    expect(saved.internal_transfer_minutes).toBe(25);
+    expect(saved.external_transfer_minutes).toBe(120);
 
     await expect(
       repo.updateAllocationSettings({
-        default_setup_minutes: 241,
-        default_teardown_minutes: 20,
-        default_turnover_buffer_minutes: 60,
-        default_internal_transfer_minutes: 20,
+        changeover_minutes: 241,
+        internal_transfer_minutes: 20,
+        external_transfer_minutes: 60,
       }),
     ).rejects.toThrow(/0 e 240/);
+
+    await expect(
+      repo.updateAllocationSettings({
+        changeover_minutes: 30,
+        internal_transfer_minutes: 20,
+        external_transfer_minutes: 721,
+      }),
+    ).rejects.toThrow(/0 e 720/);
   });
 });
