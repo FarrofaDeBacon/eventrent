@@ -5755,6 +5755,43 @@ mod tests {
             .await;
         assert!(add_choice_ok.is_ok());
 
+        // 8.2 Item 0.2: Proibir field_key duplicada entre categoria pai e filha e colisão ao mover subárvore
+        let dup_ancestor_key = services
+            .create_attribute_definition(
+                &warehouse_a,
+                &eventrent_core::CreateAttributeDefinitionInput {
+                    category_id: mesas.category.id.clone(),
+                    field_key: "impedancia_ohms".to_string(),
+                    label: "Impedância Duplicada".to_string(),
+                    data_type: eventrent_core::AttributeDataType::Number,
+                    unit: Some("Ω".to_string()),
+                    choices: vec![],
+                    is_required: false,
+                    sort_order: 10,
+                    active: true,
+                },
+            )
+            .await;
+        assert!(matches!(dup_ancestor_key, Err(CoreError::Conflict(_))));
+
+        let dup_descendant_key = services
+            .create_attribute_definition(
+                &warehouse_a,
+                &eventrent_core::CreateAttributeDefinitionInput {
+                    category_id: audio.category.id.clone(),
+                    field_key: "canais".to_string(),
+                    label: "Canais no Pai".to_string(),
+                    data_type: eventrent_core::AttributeDataType::Number,
+                    unit: Some("ch".to_string()),
+                    choices: vec![],
+                    is_required: false,
+                    sort_order: 10,
+                    active: true,
+                },
+            )
+            .await;
+        assert!(matches!(dup_descendant_key, Err(CoreError::Conflict(_))));
+
         // 9. Isolamento multi-tenant + FK composta no banco
         let list_b = services
             .list_equipment_models(&warehouse_b, &CatalogListFilter::default())

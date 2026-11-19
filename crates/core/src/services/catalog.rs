@@ -4,7 +4,8 @@ use uuid::Uuid;
 
 use crate::domain::catalog::{
     build_catalog_search_text, normalize_unique_key, resolve_inherited_attributes,
-    validate_attribute_definition_fields, validate_brand_name, validate_category_fields,
+    validate_attribute_definition_fields, validate_attribute_key_in_hierarchy, validate_brand_name,
+    validate_category_fields, validate_category_move_attribute_keys,
     validate_category_tree_placement, validate_equipment_model_fields,
     validate_model_attribute_values, AttributeDataType, AttributeDefinition, Brand,
     CatalogListFilter, CatalogListResult, CreateAttributeDefinitionInput, CreateBrandInput,
@@ -472,6 +473,19 @@ impl CoreServices {
                         parent_id.as_deref(),
                     )?;
 
+                    if parent_id != existing.parent_id {
+                        let all_defs = stores
+                            .catalog()
+                            .list_all_attribute_definitions(&session.tenant_id)
+                            .await?;
+                        validate_category_move_attribute_keys(
+                            &all_cats,
+                            &all_defs,
+                            &id,
+                            parent_id.as_deref(),
+                        )?;
+                    }
+
                     if let Some(other) = stores
                         .catalog()
                         .find_category_by_parent_and_name(
@@ -626,28 +640,31 @@ impl CoreServices {
             let session = session_clone.clone();
             let def = def_clone.clone();
             Box::pin(async move {
-                stores
+                let all_cats = stores
                     .catalog()
-                    .find_category_by_id(&session.tenant_id, &def.category_id)
-                    .await?
-                    .ok_or_else(|| CoreError::NotFound("Categoria não encontrada.".to_string()))?;
-
-                let existing_defs = stores
-                    .catalog()
-                    .list_attribute_definitions_by_category(&session.tenant_id, &def.category_id)
+                    .list_categories(&session.tenant_id, true)
                     .await?;
-                if existing_defs.len() >= MAX_ATTRIBUTES_PER_CATEGORY {
+                let all_defs = stores
+                    .catalog()
+                    .list_all_attribute_definitions(&session.tenant_id)
+                    .await?;
+                let own_count = all_defs
+                    .iter()
+                    .filter(|d| d.category_id == def.category_id)
+                    .count();
+                if own_count >= MAX_ATTRIBUTES_PER_CATEGORY {
                     return Err(CoreError::Validation(format!(
                         "Limite máximo de {} atributos por categoria atingido.",
                         MAX_ATTRIBUTES_PER_CATEGORY
                     )));
                 }
-                if existing_defs.iter().any(|d| d.field_key == def.field_key) {
-                    return Err(CoreError::Conflict(format!(
-                        "Já existe um atributo com a chave '{}' nesta categoria.",
-                        def.field_key
-                    )));
-                }
+                validate_attribute_key_in_hierarchy(
+                    &all_cats,
+                    &all_defs,
+                    &def.category_id,
+                    &def.field_key,
+                    None,
+                )?;
 
                 stores.catalog().create_attribute_definition(&def).await?;
                 stores
@@ -719,22 +736,21 @@ impl CoreServices {
                         ));
                     }
 
-                    let sibling_defs = stores
+                    let all_cats = stores
                         .catalog()
-                        .list_attribute_definitions_by_category(
-                            &session.tenant_id,
-                            &existing.category_id,
-                        )
+                        .list_categories(&session.tenant_id, true)
                         .await?;
-                    if sibling_defs
-                        .iter()
-                        .any(|d| d.id != existing.id && d.field_key == clean_key)
-                    {
-                        return Err(CoreError::Conflict(format!(
-                            "Já existe outro atributo com a chave '{}' nesta categoria.",
-                            clean_key
-                        )));
-                    }
+                    let all_defs = stores
+                        .catalog()
+                        .list_all_attribute_definitions(&session.tenant_id)
+                        .await?;
+                    validate_attribute_key_in_hierarchy(
+                        &all_cats,
+                        &all_defs,
+                        &existing.category_id,
+                        &clean_key,
+                        Some(&existing.id),
+                    )?;
 
                     if input.data_type != existing.data_type {
                         let used_count = stores

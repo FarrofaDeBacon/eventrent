@@ -4229,6 +4229,7 @@ mod unit_tests {
     fn test_catalog_domain_validations_and_inheritance() {
         use crate::domain::catalog::{
             resolve_inherited_attributes, validate_attribute_definition_fields,
+            validate_attribute_key_in_hierarchy, validate_category_move_attribute_keys,
             validate_category_tree_placement, validate_ean, validate_equipment_model_fields,
             validate_model_attribute_values, validate_ncm, AttributeDataType, AttributeDefinition,
             AttributeValueInput, EquipmentCategory,
@@ -4396,6 +4397,45 @@ mod unit_tests {
         assert_eq!(effective.len(), 2);
         assert!(effective[0].is_inherited);
         assert!(!effective[1].is_inherited);
+
+        // Item 0.2: Proibir field_key repetida em ancestral ou descendente e colisão ao mover categoria
+        assert!(matches!(
+            validate_attribute_key_in_hierarchy(&cats, &defs, "c3", "impedancia", None),
+            Err(CoreError::Conflict(_))
+        ));
+        assert!(matches!(
+            validate_attribute_key_in_hierarchy(&cats, &defs, "c1", "banda", None),
+            Err(CoreError::Conflict(_))
+        ));
+        let mut cats_with_other_root = cats.clone();
+        cats_with_other_root.push(mk_cat("c_other", None, "Outra Raiz"));
+        let mut defs_with_other = defs.clone();
+        defs_with_other.push(AttributeDefinition {
+            id: "d_other".to_string(),
+            tenant_id: "t1".to_string(),
+            category_id: "c_other".to_string(),
+            field_key: "banda".to_string(),
+            label: "Banda Outra".to_string(),
+            data_type: AttributeDataType::Text,
+            unit: None,
+            choices: vec![],
+            is_required: false,
+            sort_order: 1,
+            active: true,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            deleted_at: None,
+            created_by: None,
+        });
+        assert!(matches!(
+            validate_category_move_attribute_keys(
+                &cats_with_other_root,
+                &defs_with_other,
+                "c2",
+                Some("c_other")
+            ),
+            Err(CoreError::Conflict(_))
+        ));
 
         // Falha se obrigatório faltar ou opção select inválida
         assert!(matches!(

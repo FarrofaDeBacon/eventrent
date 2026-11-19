@@ -942,6 +942,130 @@ pub fn resolve_inherited_attributes(
     Ok(result)
 }
 
+/// Valida que `field_key` não colide com nenhum atributo na mesma categoria,
+/// em categorias ancestrais ou em categorias descendentes.
+pub fn validate_attribute_key_in_hierarchy(
+    categories: &[EquipmentCategory],
+    all_definitions: &[AttributeDefinition],
+    category_id: &str,
+    field_key: &str,
+    exclude_definition_id: Option<&str>,
+) -> Result<()> {
+    let by_id: HashMap<&str, &EquipmentCategory> =
+        categories.iter().map(|c| (c.id.as_str(), c)).collect();
+
+    if !by_id.contains_key(category_id) {
+        return Err(CoreError::NotFound("Categoria não encontrada.".to_string()));
+    }
+
+    let mut chain_cat_ids = HashSet::new();
+    // 1. Ancestrais + própria categoria
+    let mut cursor = Some(category_id);
+    while let Some(cid) = cursor {
+        if !chain_cat_ids.insert(cid) {
+            break;
+        }
+        cursor = by_id.get(cid).and_then(|c| c.parent_id.as_deref());
+    }
+
+    // 2. Descendentes
+    let mut stack = vec![category_id];
+    while let Some(curr) = stack.pop() {
+        for cat in categories {
+            if cat.parent_id.as_deref() == Some(curr) && chain_cat_ids.insert(cat.id.as_str()) {
+                stack.push(cat.id.as_str());
+            }
+        }
+    }
+
+    for def in all_definitions {
+        if def.deleted_at.is_some() {
+            continue;
+        }
+        if exclude_definition_id == Some(def.id.as_str()) {
+            continue;
+        }
+        if chain_cat_ids.contains(def.category_id.as_str()) && def.field_key == field_key {
+            let cat_name = by_id
+                .get(def.category_id.as_str())
+                .map(|c| c.name.as_str())
+                .unwrap_or(&def.category_id);
+            return Err(CoreError::Conflict(format!(
+                "Já existe um atributo com a chave '{}' na cadeia hierárquica desta categoria (definido em '{}').",
+                field_key, cat_name
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Ao mover uma categoria para `new_parent_id`, valida que nenhuma chave de atributo da subárvore
+/// movida colide com as chaves dos novos ancestrais.
+pub fn validate_category_move_attribute_keys(
+    categories: &[EquipmentCategory],
+    all_definitions: &[AttributeDefinition],
+    category_id: &str,
+    new_parent_id: Option<&str>,
+) -> Result<()> {
+    let Some(pid) = new_parent_id else {
+        return Ok(());
+    };
+
+    let by_id: HashMap<&str, &EquipmentCategory> =
+        categories.iter().map(|c| (c.id.as_str(), c)).collect();
+
+    let mut ancestor_ids = HashSet::new();
+    let mut cursor = Some(pid);
+    while let Some(cid) = cursor {
+        if !ancestor_ids.insert(cid) {
+            break;
+        }
+        cursor = by_id.get(cid).and_then(|c| c.parent_id.as_deref());
+    }
+
+    let mut subtree_ids = HashSet::new();
+    let mut stack = vec![category_id];
+    while let Some(curr) = stack.pop() {
+        if !subtree_ids.insert(curr) {
+            continue;
+        }
+        for cat in categories {
+            if cat.parent_id.as_deref() == Some(curr) {
+                stack.push(cat.id.as_str());
+            }
+        }
+    }
+
+    let mut ancestor_keys: HashMap<&str, &str> = HashMap::new();
+    for def in all_definitions {
+        if def.deleted_at.is_none() && ancestor_ids.contains(def.category_id.as_str()) {
+            let cat_name = by_id
+                .get(def.category_id.as_str())
+                .map(|c| c.name.as_str())
+                .unwrap_or(&def.category_id);
+            ancestor_keys.insert(def.field_key.as_str(), cat_name);
+        }
+    }
+
+    for def in all_definitions {
+        if def.deleted_at.is_none() && subtree_ids.contains(def.category_id.as_str()) {
+            if let Some(&anc_cat_name) = ancestor_keys.get(def.field_key.as_str()) {
+                let sub_cat_name = by_id
+                    .get(def.category_id.as_str())
+                    .map(|c| c.name.as_str())
+                    .unwrap_or(&def.category_id);
+                return Err(CoreError::Conflict(format!(
+                    "Não é possível mover a categoria: a chave de atributo '{}' (em '{}') colide com a categoria ancestral '{}'.",
+                    def.field_key, sub_cat_name, anc_cat_name
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct ValidatedAttributeValue {
     pub definition_id: String,
