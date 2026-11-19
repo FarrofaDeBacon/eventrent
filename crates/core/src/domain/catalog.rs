@@ -224,6 +224,10 @@ pub struct EquipmentModelListItem {
     pub model: EquipmentModel,
     pub category_name: String,
     pub brand_name: Option<String>,
+    #[serde(default)]
+    pub primary_thumb_blob_id: Option<String>,
+    #[serde(default)]
+    pub primary_thumb_mime_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

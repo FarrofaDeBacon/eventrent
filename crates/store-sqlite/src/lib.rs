@@ -1,4 +1,5 @@
 mod catalog;
+mod media;
 
 use async_trait::async_trait;
 use chrono::Utc;

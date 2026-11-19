@@ -5,10 +5,11 @@ use chrono::{DateTime, Utc};
 use eventrent_core::{
     ensure_default_tenant, ensure_system_roles, AppConfig, CoreServices, SessionInfo,
 };
+use eventrent_media_fs::FsMediaStore;
 use eventrent_store_sqlite::{init_db, SqliteStore};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock, PoisonError};
-use tauri::{AppHandle, Manager};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use tauri::{AppHandle, Manager, RunEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::layer::SubscriberExt;
@@ -20,8 +21,17 @@ pub struct AppState {
     pub services: CoreServices,
     pub default_tenant_id: String,
     pub config_path: PathBuf,
+    pub temp_media_dir: PathBuf,
     config: Mutex<AppConfig>,
     session: Mutex<Option<SessionInfo>>,
+}
+
+/// Remove e recria a pasta de cópias temporárias de documentos (executado ao iniciar e ao encerrar).
+pub fn cleanup_temp_media_dir(temp_dir: &Path) {
+    if temp_dir.exists() {
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+    let _ = std::fs::create_dir_all(temp_dir);
 }
 
 impl AppState {
@@ -304,13 +314,25 @@ async fn initialize_app(app_handle: &AppHandle) -> Result<(AppState, PathBuf), (
         default_tenant_id
     );
 
-    let services = CoreServices::new(store_bundle);
+    let temp_media_dir = app_dir.join("temp-media");
+    cleanup_temp_media_dir(&temp_media_dir);
+
+    let media_store = FsMediaStore::new(&app_dir).map_err(|e| {
+        tracing::error!("Erro crítico ao inicializar pasta de mídia: {}", e);
+        (
+            format!("Falha ao inicializar armazenamento de mídia local: {e}"),
+            log_dir_display.clone(),
+        )
+    })?;
+
+    let services = CoreServices::with_media_store(store_bundle, Arc::new(media_store));
 
     Ok((
         AppState {
             services,
             default_tenant_id,
             config_path,
+            temp_media_dir,
             config: Mutex::new(app_config),
             session: Mutex::new(None),
         },
@@ -415,11 +437,33 @@ pub fn run() {
             commands::catalog::set_equipment_model_active,
             commands::catalog::delete_equipment_model,
             commands::catalog::load_suggested_catalog_categories,
+            commands::media::list_model_media,
+            commands::media::get_media_blob_bytes,
+            commands::media::attach_model_photo,
+            commands::media::attach_model_document,
+            commands::media::update_model_media_metadata,
+            commands::media::reorder_model_media,
+            commands::media::set_primary_model_photo,
+            commands::media::remove_model_media,
+            commands::media::collect_unreferenced_media,
+            commands::media::open_model_document_external,
+            commands::media::save_model_document_as,
         ])
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!());
 
-    if let Err(e) = app_result {
-        tracing::error!("Aplicação Tauri encerrada com erro: {}", e);
+    match app_result {
+        Ok(app) => {
+            app.run(|app_handle, event| {
+                if matches!(event, RunEvent::Exit) {
+                    if let Some(state) = app_handle.try_state::<AppState>() {
+                        cleanup_temp_media_dir(&state.temp_media_dir);
+                    }
+                }
+            });
+        }
+        Err(e) => {
+            tracing::error!("Aplicação Tauri encerrada com erro: {}", e);
+        }
     }
 }
 
@@ -519,6 +563,7 @@ mod tests {
             services,
             default_tenant_id: "test-tenant".to_string(),
             config_path,
+            temp_media_dir: temp_dir.join("temp-media"),
             config: Mutex::new(AppConfig::default()),
             session: Mutex::new(None),
         };
@@ -604,5 +649,86 @@ mod tests {
             s40.is_some(),
             "Sessão deve continuar viva porque comando protegido aos 20 min renovou a atividade"
         );
+    }
+
+    #[test]
+    fn test_media_ipc_frame_decoders_and_temp_cleanup() {
+        use crate::commands::media::{
+            decode_document_ipc_frame, decode_photo_ipc_frame, write_sanitized_temp_document,
+        };
+        use eventrent_core::{MAX_DISPLAY_IMAGE_BYTES, MAX_THUMB_IMAGE_BYTES};
+
+        // 1. Frame binário de foto válido
+        let display_bytes = b"RIFF____WEBPVP8X..........".to_vec();
+        let thumb_bytes = b"RIFF____WEBPVP8X....".to_vec();
+        let header_json = serde_json::json!({
+            "modelId": "m-1",
+            "title": "Painel Frontal",
+            "origin": "manufacturer",
+            "creditNote": "Pioneer DJ",
+            "originalFilename": "cdj-3000.webp",
+            "displayMimeType": "image/webp",
+            "displayByteLen": display_bytes.len(),
+            "thumbMimeType": "image/webp",
+            "thumbByteLen": thumb_bytes.len()
+        })
+        .to_string();
+        let header_bytes = header_json.as_bytes();
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
+        frame.extend_from_slice(header_bytes);
+        frame.extend_from_slice(&display_bytes);
+        frame.extend_from_slice(&thumb_bytes);
+
+        let decoded_photo = decode_photo_ipc_frame(&frame).unwrap();
+        assert_eq!(decoded_photo.model_id, "m-1");
+        assert_eq!(decoded_photo.title, "Painel Frontal");
+        assert_eq!(decoded_photo.display_bytes, display_bytes);
+        assert_eq!(decoded_photo.thumb_bytes, thumb_bytes);
+
+        // 2. Rejeição antes do processamento quando displayByteLen ou frame excede o limite
+        let oversized_frame = vec![0u8; MAX_DISPLAY_IMAGE_BYTES + MAX_THUMB_IMAGE_BYTES + 20_000];
+        assert!(decode_photo_ipc_frame(&oversized_frame).is_err());
+
+        // 3. Frame binário de documento PDF válido
+        let pdf_bytes = b"%PDF-1.7\n%%EOF".to_vec();
+        let doc_header_json = serde_json::json!({
+            "modelId": "m-1",
+            "title": "Manual Técnico",
+            "docType": "manual",
+            "origin": "manufacturer",
+            "creditNote": null,
+            "language": "pt-BR",
+            "versionNote": "v2.0",
+            "originalFilename": "manual.pdf",
+            "mimeType": "application/pdf",
+            "byteLen": pdf_bytes.len()
+        })
+        .to_string();
+        let doc_header_bytes = doc_header_json.as_bytes();
+        let mut doc_frame = Vec::new();
+        doc_frame.extend_from_slice(&(doc_header_bytes.len() as u32).to_le_bytes());
+        doc_frame.extend_from_slice(doc_header_bytes);
+        doc_frame.extend_from_slice(&pdf_bytes);
+
+        let decoded_doc = decode_document_ipc_frame(&doc_frame).unwrap();
+        assert_eq!(decoded_doc.title, "Manual Técnico");
+        assert_eq!(decoded_doc.bytes, pdf_bytes);
+
+        // 4. Gravação temporária com nome saneado e limpeza ao iniciar/encerrar
+        let temp_root = std::env::temp_dir().join(format!(
+            "eventrent_temp_media_test_{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        cleanup_temp_media_dir(&temp_root);
+        let temp_doc =
+            write_sanitized_temp_document(&temp_root, "C:\\temp\\manual:v1?.pdf", &pdf_bytes)
+                .unwrap();
+        assert!(temp_doc.exists());
+        assert_eq!(temp_doc.file_name().unwrap(), "manual_v1_.pdf");
+
+        cleanup_temp_media_dir(&temp_root);
+        assert!(!temp_doc.exists());
+        let _ = std::fs::remove_dir_all(&temp_root);
     }
 }

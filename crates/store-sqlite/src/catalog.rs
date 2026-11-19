@@ -3,6 +3,7 @@ use eventrent_core::{
     normalize_for_search, normalize_unique_key, AttributeDataType, AttributeDefinition, Brand,
     CatalogCursor, CatalogListFilter, CatalogListResult, CatalogStore, ControlMode, CoreError,
     EquipmentCategory, EquipmentModel, EquipmentModelAttributeValue, EquipmentModelListItem,
+    EquipmentModelMedia, EquipmentModelMediaView, MediaAsset, MediaBlob, MediaKind, MediaMimeType,
     Result, VoltageOption,
 };
 use sqlx::{QueryBuilder, Row, Sqlite};
@@ -717,10 +718,21 @@ impl CatalogStore for SqliteStore {
                     m.voltage, m.amperage, m.requires_case, m.units_per_case,
                     m.daily_rate_cents, m.replacement_value_cents, m.cost_price_cents,
                     m.active, m.search_text, m.created_at, m.updated_at, m.deleted_at, m.created_by,
-                    c.name AS category_name, b.name AS brand_name
+                    c.name AS category_name, b.name AS brand_name,
+                    COALESCE(ma.thumb_blob_id, ma.blob_id) AS primary_thumb_blob_id,
+                    tmb.mime_type AS primary_thumb_mime_type
              FROM equipment_model m
              INNER JOIN equipment_category c ON c.tenant_id = m.tenant_id AND c.id = m.category_id
-             LEFT JOIN brand b ON b.tenant_id = m.tenant_id AND b.id = m.brand_id",
+             LEFT JOIN brand b ON b.tenant_id = m.tenant_id AND b.id = m.brand_id
+             LEFT JOIN equipment_model_media emm
+                ON emm.tenant_id = m.tenant_id AND emm.model_id = m.id
+               AND emm.is_primary = 1 AND emm.deleted_at IS NULL
+             LEFT JOIN media_asset ma
+                ON ma.tenant_id = emm.tenant_id AND ma.id = emm.asset_id AND ma.deleted_at IS NULL
+             LEFT JOIN media_blob tmb
+                ON tmb.tenant_id = ma.tenant_id
+               AND tmb.id = COALESCE(ma.thumb_blob_id, ma.blob_id)
+               AND tmb.deleted_at IS NULL",
         );
         apply_filters(&mut list_qb);
 
@@ -763,10 +775,14 @@ impl CatalogStore for SqliteStore {
             let model = parse_model_row(row)?;
             let category_name: String = row.get("category_name");
             let brand_name: Option<String> = row.get("brand_name");
+            let primary_thumb_blob_id: Option<String> = row.get("primary_thumb_blob_id");
+            let primary_thumb_mime_type: Option<String> = row.get("primary_thumb_mime_type");
             items.push(EquipmentModelListItem {
                 model,
                 category_name,
                 brand_name,
+                primary_thumb_blob_id,
+                primary_thumb_mime_type,
             });
         }
 
@@ -1187,5 +1203,127 @@ impl CatalogStore for SqliteStore {
             )
             .await?;
         row.as_ref().map(parse_model_row).transpose()
+    }
+
+    async fn find_media_blob_by_id(
+        &self,
+        tenant_id: &str,
+        blob_id: &str,
+    ) -> Result<Option<MediaBlob>> {
+        self.media_find_blob_by_id(tenant_id, blob_id).await
+    }
+
+    async fn find_media_blob_by_sha256_and_mime(
+        &self,
+        tenant_id: &str,
+        sha256: &str,
+        mime_type: MediaMimeType,
+    ) -> Result<Option<MediaBlob>> {
+        self.media_find_blob_by_sha256_and_mime(tenant_id, sha256, mime_type)
+            .await
+    }
+
+    async fn create_media_blob(&self, blob: &MediaBlob) -> Result<()> {
+        self.media_create_blob(blob).await
+    }
+
+    async fn find_media_asset_by_id(
+        &self,
+        tenant_id: &str,
+        asset_id: &str,
+    ) -> Result<Option<MediaAsset>> {
+        self.media_find_asset_by_id(tenant_id, asset_id).await
+    }
+
+    async fn create_media_asset(&self, asset: &MediaAsset) -> Result<()> {
+        self.media_create_asset(asset).await
+    }
+
+    async fn update_media_asset(&self, asset: &MediaAsset) -> Result<()> {
+        self.media_update_asset(asset).await
+    }
+
+    async fn list_model_media_views(
+        &self,
+        tenant_id: &str,
+        model_id: &str,
+    ) -> Result<Vec<EquipmentModelMediaView>> {
+        self.media_list_model_views(tenant_id, model_id).await
+    }
+
+    async fn find_model_media_link_by_id(
+        &self,
+        tenant_id: &str,
+        link_id: &str,
+    ) -> Result<Option<EquipmentModelMedia>> {
+        self.media_find_link_by_id(tenant_id, link_id).await
+    }
+
+    async fn find_model_media_view_by_link_id(
+        &self,
+        tenant_id: &str,
+        link_id: &str,
+    ) -> Result<Option<EquipmentModelMediaView>> {
+        self.media_find_view_by_link_id(tenant_id, link_id).await
+    }
+
+    async fn count_model_media_by_kind(
+        &self,
+        tenant_id: &str,
+        model_id: &str,
+        kind: MediaKind,
+    ) -> Result<usize> {
+        self.media_count_by_model_and_kind(tenant_id, model_id, kind)
+            .await
+    }
+
+    async fn create_model_media_link(&self, link: &EquipmentModelMedia) -> Result<()> {
+        self.media_create_link(link).await
+    }
+
+    async fn update_model_media_link(&self, link: &EquipmentModelMedia) -> Result<()> {
+        self.media_update_link(link).await
+    }
+
+    async fn clear_primary_model_photo(
+        &self,
+        tenant_id: &str,
+        model_id: &str,
+        updated_at: &str,
+        updated_by: Option<&str>,
+    ) -> Result<()> {
+        self.media_clear_primary_photo(tenant_id, model_id, updated_at, updated_by)
+            .await
+    }
+
+    async fn soft_delete_model_media_link(
+        &self,
+        tenant_id: &str,
+        link_id: &str,
+        deleted_at: &str,
+        updated_by: Option<&str>,
+    ) -> Result<()> {
+        self.media_soft_delete_link(tenant_id, link_id, deleted_at, updated_by)
+            .await
+    }
+
+    async fn purge_soft_deleted_model_media_links(&self, tenant_id: &str) -> Result<usize> {
+        self.media_purge_soft_deleted_links(tenant_id).await
+    }
+
+    async fn list_unreferenced_media_assets(&self, tenant_id: &str) -> Result<Vec<MediaAsset>> {
+        self.media_list_unreferenced_assets(tenant_id).await
+    }
+
+    async fn hard_delete_media_asset(&self, tenant_id: &str, asset_id: &str) -> Result<()> {
+        self.media_hard_delete_asset(tenant_id, asset_id).await
+    }
+
+    async fn list_unreferenced_media_blobs(&self, tenant_id: &str) -> Result<Vec<MediaBlob>> {
+        self.media_list_unreferenced_blobs(tenant_id).await
+    }
+
+    async fn hard_delete_media_blob(&self, tenant_id: &str, blob_id: &str) -> Result<()> {
+        self.media_hard_delete_blob(tenant_id, blob_id).await
     }
 }

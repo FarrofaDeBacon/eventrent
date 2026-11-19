@@ -213,6 +213,50 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
         name: "load_suggested_catalog_categories",
         is_public: false,
     },
+    CommandDefinition {
+        name: "list_model_media",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "get_media_blob_bytes",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "attach_model_photo",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "attach_model_document",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "update_model_media_metadata",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "reorder_model_media",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "set_primary_model_photo",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "remove_model_media",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "collect_unreferenced_media",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "open_model_document_external",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "save_model_document_as",
+        is_public: false,
+    },
 ];
 
 /// Guarda central de autenticação para comandos protegidos do Tauri.

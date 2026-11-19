@@ -1,5 +1,5 @@
 use crate::domain::catalog::*;
-use crate::domain::media::{build_media_storage_key, compute_sha256_hex, validate_sha256_hex};
+use crate::domain::media::*;
 use crate::domain::{
     AuditLogEntry, Customer, CustomerAddress, CustomerContact, CustomerFilter, CustomerPage,
     CustomerWithDetails, DocumentType, Role, RoleWithPermissions, SupplierCategory, Tenant,
@@ -336,6 +336,106 @@ pub trait CatalogStore: Send + Sync {
         brand_id: &str,
         model_code_normalized: &str,
     ) -> Result<Option<EquipmentModel>>;
+
+    async fn find_media_blob_by_id(
+        &self,
+        _tenant_id: &str,
+        _blob_id: &str,
+    ) -> Result<Option<MediaBlob>> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn find_media_blob_by_sha256_and_mime(
+        &self,
+        _tenant_id: &str,
+        _sha256: &str,
+        _mime_type: MediaMimeType,
+    ) -> Result<Option<MediaBlob>> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn create_media_blob(&self, _blob: &MediaBlob) -> Result<()> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn find_media_asset_by_id(
+        &self,
+        _tenant_id: &str,
+        _asset_id: &str,
+    ) -> Result<Option<MediaAsset>> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn create_media_asset(&self, _asset: &MediaAsset) -> Result<()> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn update_media_asset(&self, _asset: &MediaAsset) -> Result<()> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn list_model_media_views(
+        &self,
+        _tenant_id: &str,
+        _model_id: &str,
+    ) -> Result<Vec<EquipmentModelMediaView>> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn find_model_media_link_by_id(
+        &self,
+        _tenant_id: &str,
+        _link_id: &str,
+    ) -> Result<Option<EquipmentModelMedia>> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn find_model_media_view_by_link_id(
+        &self,
+        _tenant_id: &str,
+        _link_id: &str,
+    ) -> Result<Option<EquipmentModelMediaView>> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn count_model_media_by_kind(
+        &self,
+        _tenant_id: &str,
+        _model_id: &str,
+        _kind: MediaKind,
+    ) -> Result<usize> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn create_model_media_link(&self, _link: &EquipmentModelMedia) -> Result<()> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn update_model_media_link(&self, _link: &EquipmentModelMedia) -> Result<()> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn clear_primary_model_photo(
+        &self,
+        _tenant_id: &str,
+        _model_id: &str,
+        _updated_at: &str,
+        _updated_by: Option<&str>,
+    ) -> Result<()> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn soft_delete_model_media_link(
+        &self,
+        _tenant_id: &str,
+        _link_id: &str,
+        _deleted_at: &str,
+        _updated_by: Option<&str>,
+    ) -> Result<()> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn purge_soft_deleted_model_media_links(&self, _tenant_id: &str) -> Result<usize> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn list_unreferenced_media_assets(&self, _tenant_id: &str) -> Result<Vec<MediaAsset>> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn hard_delete_media_asset(&self, _tenant_id: &str, _asset_id: &str) -> Result<()> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn list_unreferenced_media_blobs(&self, _tenant_id: &str) -> Result<Vec<MediaBlob>> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn hard_delete_media_blob(&self, _tenant_id: &str, _blob_id: &str) -> Result<()> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
 }
 
 /// Trait de armazenamento físico de blobs de mídia (CAS por SHA-256 e tenant_id — ADR-0013).
