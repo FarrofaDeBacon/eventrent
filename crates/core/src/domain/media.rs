@@ -333,7 +333,8 @@ pub fn compute_sha256_hex(data: &[u8]) -> String {
     padded.extend_from_slice(&bit_len.to_be_bytes());
 
     let mut w = [0u32; 64];
-    for chunk in padded.chunks_exact(64) {
+    let (chunks, _) = padded.as_chunks::<64>();
+    for chunk in chunks {
         for i in 0..16 {
             let offset = i * 4;
             w[i] = u32::from_be_bytes([
