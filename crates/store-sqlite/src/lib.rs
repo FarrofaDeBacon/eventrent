@@ -5914,6 +5914,92 @@ mod tests {
             "50 edições devem manter exatamente 2 linhas físicas na tabela equipment_model_attribute_value"
         );
 
+        // 8.5 Item 0.5: list_models com limit=0 usa padrão 50 (não 1), máximo 100 e escapa %, _ e \ com ESCAPE
+        let second_model = services
+            .create_equipment_model(
+                &warehouse_a,
+                &CreateEquipmentModelInput {
+                    category_id: mesas.category.id.clone(),
+                    brand_id: Some(behringer.id.clone()),
+                    name: "Wing_Console 100%".to_string(),
+                    model_code: Some("WING".to_string()),
+                    sku: Some("AUD-WING".to_string()),
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: Some(50_000),
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
+                    active: true,
+                    attribute_values: vec![],
+                },
+            )
+            .await
+            .unwrap();
+        let _ = second_model;
+
+        let default_limit_list = services
+            .list_equipment_models(&tech_a, &CatalogListFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            default_limit_list.items.len(),
+            2,
+            "limit=0 deve usar padrão 50 e retornar os 2 modelos na primeira página"
+        );
+        assert!(default_limit_list.next_cursor.is_none());
+
+        // Busca por '%' ou '_' literal só retorna quem realmente contém o caractere literal (e não curinga SQL)
+        let wildcard_pct = services
+            .list_equipment_models(
+                &tech_a,
+                &CatalogListFilter {
+                    query: Some("100%".to_string()),
+                    limit: 50,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(wildcard_pct.total_count, 1);
+        assert_eq!(wildcard_pct.items[0].model.name, "Wing_Console 100%");
+
+        let wildcard_underscore = services
+            .list_equipment_models(
+                &tech_a,
+                &CatalogListFilter {
+                    query: Some("Wing_Console".to_string()),
+                    limit: 50,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(wildcard_underscore.total_count, 1);
+
+        let only_pct = services
+            .list_equipment_models(
+                &tech_a,
+                &CatalogListFilter {
+                    query: Some("%%%".to_string()),
+                    limit: 50,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(only_pct.total_count, 0);
+
         // 9. Isolamento multi-tenant + FK composta no banco
         let list_b = services
             .list_equipment_models(&warehouse_b, &CatalogListFilter::default())

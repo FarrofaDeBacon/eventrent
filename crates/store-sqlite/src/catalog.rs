@@ -621,7 +621,11 @@ impl CatalogStore for SqliteStore {
         filter: &CatalogListFilter,
         descendant_category_ids: Option<&[String]>,
     ) -> Result<CatalogListResult> {
-        let limit = filter.limit.clamp(1, 200);
+        let limit = if filter.limit == 0 {
+            50
+        } else {
+            filter.limit.clamp(1, 100)
+        };
         let cursor = match filter.cursor.as_deref() {
             Some(c) if !c.trim().is_empty() => Some(CatalogCursor::decode(c)?),
             _ => None,
@@ -666,8 +670,16 @@ impl CatalogStore for SqliteStore {
                 }
             }
             for term in &terms {
+                let mut escaped = String::with_capacity(term.len());
+                for ch in term.chars() {
+                    if matches!(ch, '%' | '_' | '\\') {
+                        escaped.push('\\');
+                    }
+                    escaped.push(ch);
+                }
                 qb.push(" AND m.search_text LIKE ");
-                qb.push_bind(format!("%{}%", term));
+                qb.push_bind(format!("%{}%", escaped));
+                qb.push(" ESCAPE '\\'");
             }
         };
 

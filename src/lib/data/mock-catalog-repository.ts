@@ -639,7 +639,7 @@ export class MockCatalogRepository implements CatalogRepository {
       );
 
     const total_count = filtered.length;
-    const limit = Math.max(1, Math.min(200, filter.limit || 50));
+    const limit = Math.max(1, Math.min(100, filter.limit || 50));
     const offset = filter.cursor ? Number(filter.cursor) || 0 : 0;
     const slice = filtered.slice(offset, offset + limit);
     const next_cursor =
