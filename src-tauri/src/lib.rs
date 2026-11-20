@@ -26,12 +26,48 @@ pub struct AppState {
     session: Mutex<Option<SessionInfo>>,
 }
 
-/// Remove e recria a pasta de cópias temporárias de documentos (executado ao iniciar e ao encerrar).
-pub fn cleanup_temp_media_dir(temp_dir: &Path) {
+/// Limpeza de arquivos temporários de mídia ao iniciar a aplicação (R3):
+/// Remove subpastas e arquivos dentro de `temp_media_dir` com tempo de modificação superior a `max_age` (padrão: 1 hora).
+pub fn cleanup_temp_media_dir_on_startup(temp_dir: &Path, max_age: std::time::Duration) {
+    if !temp_dir.exists() {
+        let _ = std::fs::create_dir_all(temp_dir);
+        return;
+    }
+
+    let now = std::time::SystemTime::now();
+    if let Ok(entries) = std::fs::read_dir(temp_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Ok(meta) = entry.metadata() {
+                if let Ok(modified) = meta.modified() {
+                    if let Ok(elapsed) = now.duration_since(modified) {
+                        if elapsed > max_age {
+                            if meta.is_dir() {
+                                let _ = std::fs::remove_dir_all(&path);
+                            } else {
+                                let _ = std::fs::remove_file(&path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let _ = std::fs::create_dir_all(temp_dir);
+}
+
+/// Limpeza de arquivos temporários de mídia ao encerrar a aplicação normalmente (R3):
+/// Remove integralmente todo o conteúdo da pasta temporária.
+pub fn cleanup_temp_media_dir_on_shutdown(temp_dir: &Path) {
     if temp_dir.exists() {
         let _ = std::fs::remove_dir_all(temp_dir);
     }
     let _ = std::fs::create_dir_all(temp_dir);
+}
+
+/// Remove e recria a pasta de cópias temporárias de documentos.
+pub fn cleanup_temp_media_dir(temp_dir: &Path) {
+    cleanup_temp_media_dir_on_shutdown(temp_dir);
 }
 
 impl AppState {
@@ -315,7 +351,7 @@ async fn initialize_app(app_handle: &AppHandle) -> Result<(AppState, PathBuf), (
     );
 
     let temp_media_dir = app_dir.join("temp-media");
-    cleanup_temp_media_dir(&temp_media_dir);
+    cleanup_temp_media_dir_on_startup(&temp_media_dir, std::time::Duration::from_secs(3600));
 
     let media_store = FsMediaStore::new(&app_dir).map_err(|e| {
         tracing::error!("Erro crítico ao inicializar pasta de mídia: {}", e);
@@ -456,7 +492,7 @@ pub fn run() {
             app.run(|app_handle, event| {
                 if matches!(event, RunEvent::Exit) {
                     if let Some(state) = app_handle.try_state::<AppState>() {
-                        cleanup_temp_media_dir(&state.temp_media_dir);
+                        cleanup_temp_media_dir_on_shutdown(&state.temp_media_dir);
                     }
                 }
             });
@@ -715,20 +751,33 @@ mod tests {
         assert_eq!(decoded_doc.title, "Manual Técnico");
         assert_eq!(decoded_doc.bytes, pdf_bytes);
 
-        // 4. Gravação temporária com nome saneado e limpeza ao iniciar/encerrar
+        // 4. Gravação temporária com nome saneado e limpeza ao iniciar (R3) e ao encerrar
         let temp_root = std::env::temp_dir().join(format!(
             "eventrent_temp_media_test_{}",
             Utc::now().timestamp_nanos_opt().unwrap_or(0)
         ));
-        cleanup_temp_media_dir(&temp_root);
+        cleanup_temp_media_dir_on_shutdown(&temp_root);
+
         let temp_doc =
             write_sanitized_temp_document(&temp_root, "C:\\temp\\manual:v1?.pdf", &pdf_bytes)
                 .unwrap();
         assert!(temp_doc.exists());
         assert_eq!(temp_doc.file_name().unwrap(), "manual_v1_.pdf");
 
-        cleanup_temp_media_dir(&temp_root);
+        // Arquivo recente não é apagado quando a idade máxima é 1 hora
+        cleanup_temp_media_dir_on_startup(&temp_root, std::time::Duration::from_secs(3600));
+        assert!(temp_doc.exists());
+
+        // Arquivo é apagado na inicialização se exceder o limite (simulado com idade máxima de 0 segundos)
+        cleanup_temp_media_dir_on_startup(&temp_root, std::time::Duration::from_millis(0));
         assert!(!temp_doc.exists());
+
+        // Nova gravação e limpeza total ao encerrar (shutdown)
+        let temp_doc2 = write_sanitized_temp_document(&temp_root, "Manual 2", &pdf_bytes).unwrap();
+        assert!(temp_doc2.exists());
+        cleanup_temp_media_dir_on_shutdown(&temp_root);
+        assert!(!temp_doc2.exists());
+
         let _ = std::fs::remove_dir_all(&temp_root);
     }
 }
