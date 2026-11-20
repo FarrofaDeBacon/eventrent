@@ -4607,6 +4607,91 @@ mod unit_tests {
         buf
     }
 
+    fn make_test_png_with_chunk(
+        width: u32,
+        height: u32,
+        chunk_type: &[u8; 4],
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        buf.extend_from_slice(&13u32.to_be_bytes());
+        buf.extend_from_slice(b"IHDR");
+        buf.extend_from_slice(&width.to_be_bytes());
+        buf.extend_from_slice(&height.to_be_bytes());
+        buf.extend_from_slice(&[8, 6, 0, 0, 0]);
+        buf.extend_from_slice(&[0, 0, 0, 0]);
+
+        buf.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        buf.extend_from_slice(chunk_type);
+        buf.extend_from_slice(payload);
+        buf.extend_from_slice(&[0, 0, 0, 0]);
+
+        buf.extend_from_slice(&0u32.to_be_bytes());
+        buf.extend_from_slice(b"IEND");
+        buf.extend_from_slice(&[0xAE, 0x42, 0x60, 0x82]);
+        buf
+    }
+
+    fn make_test_jpeg_with_marker(width: u16, height: u16, marker: u8, data: &[u8]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&[0xFF, 0xD8]);
+        let seg_len = (data.len() + 2) as u16;
+        buf.extend_from_slice(&[0xFF, marker]);
+        buf.extend_from_slice(&seg_len.to_be_bytes());
+        buf.extend_from_slice(data);
+        buf.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x0B, 0x08]);
+        buf.extend_from_slice(&height.to_be_bytes());
+        buf.extend_from_slice(&width.to_be_bytes());
+        buf.extend_from_slice(&[0x01, 0x01, 0x11, 0x00]);
+        buf.extend_from_slice(&[
+            0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00, 0x00,
+        ]);
+        buf.extend_from_slice(&[0xFF, 0xD9]);
+        buf
+    }
+
+    fn make_test_webp_with_chunk(
+        width: u32,
+        height: u32,
+        flags: u8,
+        chunk_fourcc: Option<(&[u8; 4], &[u8])>,
+    ) -> Vec<u8> {
+        let mut chunks = Vec::new();
+        chunks.extend_from_slice(b"WEBP");
+        chunks.extend_from_slice(b"VP8X");
+        chunks.extend_from_slice(&10u32.to_le_bytes());
+        let w_minus_1 = width.saturating_sub(1);
+        let h_minus_1 = height.saturating_sub(1);
+        chunks.extend_from_slice(&[
+            flags,
+            0,
+            0,
+            0,
+            (w_minus_1 & 0xFF) as u8,
+            ((w_minus_1 >> 8) & 0xFF) as u8,
+            ((w_minus_1 >> 16) & 0xFF) as u8,
+            (h_minus_1 & 0xFF) as u8,
+            ((h_minus_1 >> 8) & 0xFF) as u8,
+            ((h_minus_1 >> 16) & 0xFF) as u8,
+        ]);
+
+        if let Some((fourcc, payload)) = chunk_fourcc {
+            chunks.extend_from_slice(fourcc);
+            chunks.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            chunks.extend_from_slice(payload);
+            if payload.len() % 2 != 0 {
+                chunks.push(0);
+            }
+        }
+
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"RIFF");
+        buf.extend_from_slice(&(chunks.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&chunks);
+        buf
+    }
+
     #[test]
     fn test_media_core_validators_magic_exif_limits_and_filenames() {
         use crate::domain::{
@@ -4692,6 +4777,49 @@ mod unit_tests {
         assert!(matches!(
             validate_display_image("image/png", &png_exif),
             Err(CoreError::Validation(msg)) if msg.contains("EXIF")
+        ));
+
+        // R6: Rejeição abrangente de metadados adicionais por formato
+        // WebP: chunk "XMP " e flag XMP no VP8X (0x04)
+        let webp_xmp_chunk =
+            make_test_webp_with_chunk(800, 600, 0x00, Some((b"XMP ", b"<x:xmpmeta/>")));
+        assert!(matches!(
+            validate_display_image("image/webp", &webp_xmp_chunk),
+            Err(CoreError::Validation(msg)) if msg.contains("XMP")
+        ));
+        let webp_xmp_flag = make_test_webp_with_chunk(800, 600, 0x04, None);
+        assert!(matches!(
+            validate_display_image("image/webp", &webp_xmp_flag),
+            Err(CoreError::Validation(msg)) if msg.contains("XMP")
+        ));
+
+        // JPEG: APP13 (IPTC/Photoshop) e COM (Comentário)
+        let jpeg_app13 = make_test_jpeg_with_marker(800, 600, 0xED, b"Photoshop 3.0\0");
+        assert!(matches!(
+            validate_display_image("image/jpeg", &jpeg_app13),
+            Err(CoreError::Validation(msg)) if msg.contains("APP13")
+        ));
+        let jpeg_com = make_test_jpeg_with_marker(800, 600, 0xFE, b"Comentario confidencial");
+        assert!(matches!(
+            validate_display_image("image/jpeg", &jpeg_com),
+            Err(CoreError::Validation(msg)) if msg.contains("comentário")
+        ));
+
+        // PNG: tEXt, iTXt e zTXt
+        let png_text = make_test_png_with_chunk(800, 600, b"tEXt", b"Author\0Locadora");
+        assert!(matches!(
+            validate_display_image("image/png", &png_text),
+            Err(CoreError::Validation(msg)) if msg.contains("tEXt")
+        ));
+        let png_itxt = make_test_png_with_chunk(800, 600, b"iTXt", b"Author\0\0\0\0\0Locadora");
+        assert!(matches!(
+            validate_display_image("image/png", &png_itxt),
+            Err(CoreError::Validation(msg)) if msg.contains("iTXt")
+        ));
+        let png_ztxt = make_test_png_with_chunk(800, 600, b"zTXt", b"Author\0\0compressed");
+        assert!(matches!(
+            validate_display_image("image/png", &png_ztxt),
+            Err(CoreError::Validation(msg)) if msg.contains("zTXt")
         ));
 
         // 4. Limites de dimensão (exibição > 2048 px, miniatura > 512 px)

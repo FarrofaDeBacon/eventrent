@@ -383,18 +383,26 @@ pub fn detect_magic_mime(bytes: &[u8]) -> Option<MediaMimeType> {
     None
 }
 
-/// Rejeita imagens que contenham metadados EXIF (WebP chunk EXIF / flag VP8X, JPEG APP1 Exif, PNG eXIf).
+/// Rejeita imagens que contenham metadados EXIF, XMP, IPTC ou comentários (R6):
+/// - WebP: chunk EXIF, chunk "XMP " e flags EXIF (0x08) ou XMP (0x04) do VP8X.
+/// - JPEG: APP1 (qualquer Exif/XMP), APP13 (IPTC/Photoshop) e COM (comentário).
+/// - PNG: chunks eXIf, tEXt, iTXt e zTXt.
+///
 /// Também valida a integridade estrutural básica dos chunks/segmentos contra arquivos truncados.
-pub fn reject_image_exif(mime: MediaMimeType, bytes: &[u8]) -> Result<()> {
+pub fn reject_image_metadata(mime: MediaMimeType, bytes: &[u8]) -> Result<()> {
     match mime {
-        MediaMimeType::ImageWebp => inspect_webp_no_exif(bytes),
-        MediaMimeType::ImageJpeg => inspect_jpeg_no_exif(bytes),
-        MediaMimeType::ImagePng => inspect_png_no_exif(bytes),
+        MediaMimeType::ImageWebp => inspect_webp_no_metadata(bytes),
+        MediaMimeType::ImageJpeg => inspect_jpeg_no_metadata(bytes),
+        MediaMimeType::ImagePng => inspect_png_no_metadata(bytes),
         MediaMimeType::ApplicationPdf => Ok(()),
     }
 }
 
-fn inspect_webp_no_exif(bytes: &[u8]) -> Result<()> {
+pub fn reject_image_exif(mime: MediaMimeType, bytes: &[u8]) -> Result<()> {
+    reject_image_metadata(mime, bytes)
+}
+
+fn inspect_webp_no_metadata(bytes: &[u8]) -> Result<()> {
     if bytes.len() < 20 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
         return Err(CoreError::Validation(
             "Arquivo WebP truncado ou malformado.".to_string(),
@@ -439,16 +447,29 @@ fn inspect_webp_no_exif(bytes: &[u8]) -> Result<()> {
             ));
         }
 
+        if fourcc == b"XMP " {
+            return Err(CoreError::Validation(
+                "Imagem WebP contém metadados XMP (chunk XMP ), que são proibidos. Remova os metadados antes de enviar.".to_string(),
+            ));
+        }
+
         if fourcc == b"VP8X" {
             if chunk_size < 10 {
                 return Err(CoreError::Validation(
                     "Chunk VP8X do WebP truncado.".to_string(),
                 ));
             }
-            // Bit 3 (0x08) do primeiro byte de flags do VP8X indica presença de EXIF
-            if (bytes[data_start] & 0x08) != 0 {
+            let flags = bytes[data_start];
+            // Bit 3 (0x08) = flag EXIF
+            if (flags & 0x08) != 0 {
                 return Err(CoreError::Validation(
                     "Imagem WebP indica presença de metadados EXIF no cabeçalho VP8X.".to_string(),
+                ));
+            }
+            // Bit 2 (0x04) = flag XMP
+            if (flags & 0x04) != 0 {
+                return Err(CoreError::Validation(
+                    "Imagem WebP indica presença de metadados XMP no cabeçalho VP8X.".to_string(),
                 ));
             }
         }
@@ -460,7 +481,7 @@ fn inspect_webp_no_exif(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn inspect_jpeg_no_exif(bytes: &[u8]) -> Result<()> {
+fn inspect_jpeg_no_metadata(bytes: &[u8]) -> Result<()> {
     if bytes.len() < 4 || bytes[0..2] != [0xFF, 0xD8] {
         return Err(CoreError::Validation(
             "Arquivo JPEG truncado ou sem marcador SOI.".to_string(),
@@ -514,11 +535,24 @@ fn inspect_jpeg_no_exif(bytes: &[u8]) -> Result<()> {
             ));
         }
 
-        let seg_data = &bytes[pos + 2..pos + seg_len];
-        if marker == 0xE1 && (seg_data.starts_with(b"Exif\0\0") || seg_data.starts_with(b"Exif\0"))
-        {
+        // Rejeita qualquer segmento APP1 (0xE1: EXIF, XMP, etc.)
+        if marker == 0xE1 {
             return Err(CoreError::Validation(
-                "Imagem JPEG contém metadados EXIF (segmento APP1 Exif), que são proibidos. Remova o EXIF antes de enviar.".to_string(),
+                "Imagem JPEG contém metadados em segmento APP1 (EXIF/XMP), que são proibidos. Remova os metadados antes de enviar.".to_string(),
+            ));
+        }
+
+        // Rejeita segmento APP13 (0xED: Photoshop / IPTC)
+        if marker == 0xED {
+            return Err(CoreError::Validation(
+                "Imagem JPEG contém metadados em segmento APP13 (IPTC/Photoshop), que são proibidos. Remova os metadados antes de enviar.".to_string(),
+            ));
+        }
+
+        // Rejeita segmento COM (0xFE: Comentário)
+        if marker == 0xFE {
+            return Err(CoreError::Validation(
+                "Imagem JPEG contém segmento de comentário (COM), que é proibido. Remova os comentários antes de enviar.".to_string(),
             ));
         }
 
@@ -538,7 +572,7 @@ fn inspect_jpeg_no_exif(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn inspect_png_no_exif(bytes: &[u8]) -> Result<()> {
+fn inspect_png_no_metadata(bytes: &[u8]) -> Result<()> {
     const PNG_SIG: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
     if bytes.len() < 33 || bytes[0..8] != PNG_SIG {
         return Err(CoreError::Validation(
@@ -573,6 +607,24 @@ fn inspect_png_no_exif(bytes: &[u8]) -> Result<()> {
         if chunk_type == b"eXIf" {
             return Err(CoreError::Validation(
                 "Imagem PNG contém metadados EXIF (chunk eXIf), que são proibidos. Remova o EXIF antes de enviar.".to_string(),
+            ));
+        }
+
+        if chunk_type == b"tEXt" {
+            return Err(CoreError::Validation(
+                "Imagem PNG contém metadados textuais (chunk tEXt), que são proibidos. Remova os metadados antes de enviar.".to_string(),
+            ));
+        }
+
+        if chunk_type == b"iTXt" {
+            return Err(CoreError::Validation(
+                "Imagem PNG contém metadados textuais internacionais (chunk iTXt), que são proibidos. Remova os metadados antes de enviar.".to_string(),
+            ));
+        }
+
+        if chunk_type == b"zTXt" {
+            return Err(CoreError::Validation(
+                "Imagem PNG contém metadados textuais comprimidos (chunk zTXt), que são proibidos. Remova os metadados antes de enviar.".to_string(),
             ));
         }
 
