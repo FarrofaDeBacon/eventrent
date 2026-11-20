@@ -4618,11 +4618,24 @@ mod unit_tests {
         };
         use crate::error::CoreError;
 
-        // 1. SHA-256 conhecido (FIPS 180-4 "abc")
+        // 1. SHA-256 conhecido (FIPS 180-4 / Vetores NIST oficiais: "", "abc", "abcd...", 1.000.000 "a")
+        assert_eq!(
+            compute_sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
         let sha_abc = compute_sha256_hex(b"abc");
         assert_eq!(
             sha_abc,
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            compute_sha256_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+        );
+        let one_million_a = vec![b'a'; 1_000_000];
+        assert_eq!(
+            compute_sha256_hex(&one_million_a),
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
         );
         assert!(validate_sha256_hex(&sha_abc).is_ok());
         assert!(validate_sha256_hex("invalido").is_err());
