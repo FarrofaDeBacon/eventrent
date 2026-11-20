@@ -523,4 +523,58 @@ mod tests {
             "PublicBranding não pode expor deleted_at"
         );
     }
+
+    #[test]
+    fn test_tauri_capabilities_enforce_least_privilege() {
+        use std::path::Path;
+
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let cap_dir = manifest_dir.join("capabilities");
+        assert!(
+            cap_dir.exists(),
+            "Diretório de capabilities deve existir em {}",
+            cap_dir.display()
+        );
+
+        let entries = std::fs::read_dir(&cap_dir).expect("Falha ao ler diretório de capabilities");
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map(|e| e == "json").unwrap_or(false) {
+                let content = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|e| panic!("Falha ao ler {}: {e}", path.display()));
+                let val: serde_json::Value = serde_json::from_str(&content)
+                    .unwrap_or_else(|e| panic!("JSON inválido em {}: {e}", path.display()));
+
+                let permissions = val
+                    .get("permissions")
+                    .and_then(|p| p.as_array())
+                    .expect("Campo 'permissions' deve ser um array");
+
+                for perm in permissions {
+                    let perm_str = perm.as_str().unwrap_or("");
+                    assert!(
+                        !perm_str.starts_with("opener:"),
+                        "Violação de menor privilégio em {}: janela principal não pode receber permissão de opener ({perm_str})",
+                        path.display()
+                    );
+                    assert!(
+                        !perm_str.starts_with("fs:"),
+                        "Violação de menor privilégio em {}: janela principal não pode receber permissão de fs ({perm_str})",
+                        path.display()
+                    );
+                    assert!(
+                        !perm_str.starts_with("http:"),
+                        "Violação de menor privilégio em {}: janela principal não pode receber permissão de http ({perm_str})",
+                        path.display()
+                    );
+                    assert!(
+                        !perm_str.starts_with("dialog:"),
+                        "Violação de menor privilégio em {}: janela principal não pode receber permissão direta de dialog ({perm_str})",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
 }
