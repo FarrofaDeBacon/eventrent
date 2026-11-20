@@ -1319,8 +1319,20 @@ impl CatalogStore for SqliteStore {
         self.media_hard_delete_asset(tenant_id, asset_id).await
     }
 
-    async fn list_unreferenced_media_blobs(&self, tenant_id: &str) -> Result<Vec<MediaBlob>> {
-        self.media_list_unreferenced_blobs(tenant_id).await
+    async fn list_unreferenced_media_blobs(
+        &self,
+        tenant_id: &str,
+        created_before: &str,
+    ) -> Result<Vec<MediaBlob>> {
+        self.media_list_unreferenced_blobs(tenant_id, created_before)
+            .await
+    }
+
+    async fn list_active_media_blob_shas(
+        &self,
+        tenant_id: &str,
+    ) -> Result<std::collections::HashSet<String>> {
+        self.media_list_active_blob_shas(tenant_id).await
     }
 
     async fn hard_delete_media_blob(&self, tenant_id: &str, blob_id: &str) -> Result<()> {

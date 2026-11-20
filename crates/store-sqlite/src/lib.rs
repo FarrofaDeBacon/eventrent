@@ -6780,18 +6780,44 @@ mod tests {
             .await
             .unwrap();
 
-        // Executa coleta de lixo manual: photo_2_sha deve ser apagado, mas shared_sha DEVE permanecer!
+        // R7.4 / R7.6: Executa GC imediatamente com blob recente (< 10 min):
+        // Os ativos órfãos são limpos, mas o blob_2 foi criado há menos de 10 min,
+        // então ele é PRESERVADO pelo GC do banco!
+        let gc_recent = services
+            .collect_unreferenced_media(&manager_a)
+            .await
+            .unwrap();
+        assert_eq!(
+            gc_recent.deleted_blobs, 0,
+            "Blob recente (< 10 min) deve ser preservado pelo GC do banco"
+        );
+        assert!(
+            media_store
+                .exists_blob("tenant-med-a", &photo_2_sha)
+                .await
+                .unwrap(),
+            "Blob recente deve ser preservado em disco"
+        );
+
+        // Agora envelhecemos artificialmente o blob photo_2 no banco para mais de 10 minutos (ex.: 20 min atrás)
+        sqlx::query("UPDATE media_blob SET created_at = datetime('now', '-20 minutes') WHERE tenant_id = 'tenant-med-a' AND sha256 = ?")
+            .bind(&photo_2_sha)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Executa coleta de lixo manual: photo_2_sha agora DEVE ser apagado, mas shared_sha DEVE permanecer!
         let gc_1 = services
             .collect_unreferenced_media(&manager_a)
             .await
             .unwrap();
-        assert!(gc_1.deleted_assets >= 2);
+        assert!(gc_1.deleted_blobs >= 1);
         assert!(
             !media_store
                 .exists_blob("tenant-med-a", &photo_2_sha)
                 .await
                 .unwrap(),
-            "Blob sem nenhum vínculo ativo deve ser apagado pela coleta de lixo"
+            "Blob sem nenhum vínculo ativo e > 10 min deve ser apagado pela coleta de lixo"
         );
         assert!(
             media_store
@@ -6801,11 +6827,17 @@ mod tests {
             "Blob compartilhado ainda referenciado por outro modelo NÃO pode ser apagado pela coleta de lixo"
         );
 
-        // Agora removemos o vínculo restante em model_2 e rodamos o GC novamente: shared_sha é apagado!
+        // Agora removemos o vínculo restante em model_2, envelhecemos shared_sha no banco e rodamos o GC novamente:
         services
             .remove_model_media(&manager_a, &photo_m2.id)
             .await
             .unwrap();
+        sqlx::query("UPDATE media_blob SET created_at = datetime('now', '-20 minutes') WHERE tenant_id = 'tenant-med-a' AND sha256 = ?")
+            .bind(&shared_sha)
+            .execute(&pool)
+            .await
+            .unwrap();
+
         let gc_2 = services
             .collect_unreferenced_media(&manager_a)
             .await
@@ -6816,7 +6848,7 @@ mod tests {
                 .exists_blob("tenant-med-a", &shared_sha)
                 .await
                 .unwrap(),
-            "Após remover o último vínculo, a coleta de lixo deve apagar o arquivo físico"
+            "Após remover o último vínculo e passar 10 min, a coleta de lixo deve apagar o arquivo físico"
         );
 
         // 9. Auditoria transacional sem conteúdo binário dos arquivos
@@ -6841,5 +6873,179 @@ mod tests {
                 "Trilha de auditoria nunca deve armazenar o conteúdo binário do arquivo"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_media_attach_rewrites_blob_if_missing_after_transaction() {
+        use eventrent_core::{
+            AttachModelPhotoInput, ControlMode, CoreServices, CreateCategoryInput,
+            CreateEquipmentModelInput, InMemoryMediaStore, MediaOrigin, MediaStore, Result,
+            SessionInfo, PERM_CATALOG_MANAGE,
+        };
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        struct RaceMediaStore {
+            inner: InMemoryMediaStore,
+            first_check_simulated: AtomicBool,
+            put_call_count: AtomicUsize,
+        }
+
+        #[async_trait::async_trait]
+        impl MediaStore for RaceMediaStore {
+            async fn put_blob(
+                &self,
+                tenant_id: &str,
+                sha256: &str,
+                bytes: &[u8],
+            ) -> Result<String> {
+                self.put_call_count.fetch_add(1, Ordering::SeqCst);
+                self.inner.put_blob(tenant_id, sha256, bytes).await
+            }
+            async fn get_blob(&self, tenant_id: &str, sha256: &str) -> Result<Vec<u8>> {
+                self.inner.get_blob(tenant_id, sha256).await
+            }
+            async fn delete_blob(&self, tenant_id: &str, sha256: &str) -> Result<()> {
+                self.inner.delete_blob(tenant_id, sha256).await
+            }
+            async fn exists_blob(&self, tenant_id: &str, sha256: &str) -> Result<bool> {
+                // R7.5: Na primeira checagem de existência pós-transação, simula que o arquivo sumiu (corrida com GC antigo)
+                if !self.first_check_simulated.swap(true, Ordering::SeqCst) {
+                    let _ = self.inner.delete_blob(tenant_id, sha256).await;
+                    Ok(false)
+                } else {
+                    self.inner.exists_blob(tenant_id, sha256).await
+                }
+            }
+        }
+
+        let pool = init_memory_db().await.unwrap();
+        let store = SqliteStore::new(pool.clone());
+        let race_store = Arc::new(RaceMediaStore {
+            inner: InMemoryMediaStore::new(),
+            first_check_simulated: AtomicBool::new(false),
+            put_call_count: AtomicUsize::new(0),
+        });
+        let services = CoreServices::with_media_store(store.into_bundle(), race_store.clone());
+
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO tenant (id, tenant_id, name, slug, created_at, updated_at) VALUES ('t-race', 't-race', 'Race', 'race', ?, ?)"
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO role (id, tenant_id, name, slug, is_system, created_at, updated_at)
+             VALUES ('r-race', 't-race', 'Gerência', 'manager', 1, ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO app_user (id, tenant_id, role_id, name, email, password_hash, active, created_at, updated_at)
+             VALUES ('u-race', 't-race', 'r-race', 'Operador Race', 'race@eventrent.local', 'hash', 1, ?, ?)"
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let session = SessionInfo {
+            user_id: "u-race".to_string(),
+            tenant_id: "t-race".to_string(),
+            name: "Operador Race".to_string(),
+            email: "race@eventrent.local".to_string(),
+            role_id: "r-race".to_string(),
+            role_name: "Manager".to_string(),
+            role_slug: "manager".to_string(),
+            permissions: vec![PERM_CATALOG_MANAGE.to_string()],
+            authenticated_at: now.clone(),
+            last_activity_at: now.clone(),
+            inactivity_timeout_minutes: 30,
+        };
+
+        let cat = services
+            .create_category(
+                &session,
+                &CreateCategoryInput {
+                    parent_id: None,
+                    name: "Luzes".to_string(),
+                    description: None,
+                    sort_order: 1,
+                    active: true,
+                },
+            )
+            .await
+            .unwrap();
+
+        let model = services
+            .create_equipment_model(
+                &session,
+                &CreateEquipmentModelInput {
+                    category_id: cat.id,
+                    brand_id: None,
+                    name: "Spot LED".to_string(),
+                    model_code: None,
+                    sku: None,
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: None,
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
+                    active: true,
+                    attribute_values: vec![],
+                },
+            )
+            .await
+            .unwrap();
+
+        let webp_display = build_valid_test_webp(800, 600, 42);
+        let webp_thumb = build_valid_test_webp(200, 150, 42);
+
+        // Ao anexar, o race_store simula que o arquivo sumiu na checagem pós-transação.
+        // O serviço R7.5 detecta exists_blob == false e regrava a partir do buffer mantido em memória!
+        let attached = services
+            .attach_model_photo(
+                &session,
+                &AttachModelPhotoInput {
+                    model_id: model.model.id,
+                    title: "Spot Foto".to_string(),
+                    origin: MediaOrigin::Manufacturer,
+                    credit_note: None,
+                    original_filename: "spot.webp".to_string(),
+                    display_bytes: webp_display.clone(),
+                    display_mime_type: "image/webp".to_string(),
+                    thumb_bytes: webp_thumb.clone(),
+                    thumb_mime_type: "image/webp".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(attached.title, "Spot Foto");
+        // Inicial: 2 puts (display + thumb). Pós-transação: display missing detectado -> 1 put extra para regravação = 3 puts no total!
+        assert_eq!(race_store.put_call_count.load(Ordering::SeqCst), 3);
+        assert!(race_store
+            .exists_blob("t-race", &attached.blob_sha256)
+            .await
+            .unwrap());
     }
 }

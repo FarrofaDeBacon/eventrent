@@ -133,7 +133,7 @@ impl CoreServices {
         let model_id = input.model_id.clone();
         let origin = input.origin;
 
-        self.run_transaction(|stores| {
+        let created_view = self.run_transaction(|stores| {
             let session = session_clone.clone();
             let model_id = model_id.clone();
             let title = title.clone();
@@ -309,7 +309,33 @@ impl CoreServices {
                     })
             })
         })
-        .await
+        .await?;
+
+        // R7.5: Se o arquivo no disco não existir após a transação (corrida com GC antigo), regravar a partir do buffer em memória
+        if !self
+            .media_store
+            .exists_blob(&session.tenant_id, &display.sha256)
+            .await?
+        {
+            tracing::warn!(
+                "Display blob ausente após transação de foto; regravando no MediaStore."
+            );
+            self.media_store
+                .put_blob(&session.tenant_id, &display.sha256, &input.display_bytes)
+                .await?;
+        }
+        if !self
+            .media_store
+            .exists_blob(&session.tenant_id, &thumb.sha256)
+            .await?
+        {
+            tracing::warn!("Thumb blob ausente após transação de foto; regravando no MediaStore.");
+            self.media_store
+                .put_blob(&session.tenant_id, &thumb.sha256, &input.thumb_bytes)
+                .await?;
+        }
+
+        Ok(created_view)
     }
 
     pub async fn attach_model_document(
@@ -356,7 +382,7 @@ impl CoreServices {
         let doc_type = input.doc_type;
         let origin = input.origin;
 
-        self.run_transaction(|stores| {
+        let created_view = self.run_transaction(|stores| {
             let session = session_clone.clone();
             let model_id = model_id.clone();
             let title = title.clone();
@@ -495,7 +521,23 @@ impl CoreServices {
                     })
             })
         })
-        .await
+        .await?;
+
+        // R7.5: Se o arquivo no disco não existir após a transação (corrida com GC antigo), regravar a partir do buffer em memória
+        if !self
+            .media_store
+            .exists_blob(&session.tenant_id, &pdf.sha256)
+            .await?
+        {
+            tracing::warn!(
+                "Document blob ausente após transação de documento; regravando no MediaStore."
+            );
+            self.media_store
+                .put_blob(&session.tenant_id, &pdf.sha256, &input.bytes)
+                .await?;
+        }
+
+        Ok(created_view)
     }
 
     pub async fn update_model_media_metadata(
@@ -864,9 +906,14 @@ impl CoreServices {
         self.check_session_and_permission(session, PERM_CATALOG_MANAGE)?;
         let session_clone = session.clone();
 
+        // R7.4: Filtro created_at < now() - 10 minutos (blobs recém-criados nunca são coletados do banco)
+        let cutoff = (Utc::now() - chrono::Duration::minutes(10)).to_rfc3339();
+        let cutoff_clone = cutoff.clone();
+
         let (deleted_assets, unreferenced_blobs) = self
             .run_transaction(|stores| {
                 let session = session_clone.clone();
+                let cutoff = cutoff_clone.clone();
                 Box::pin(async move {
                     // 1. Limpa vínculos apagados logicamente para liberar FKs ON DELETE RESTRICT
                     stores
@@ -887,9 +934,10 @@ impl CoreServices {
                     }
 
                     // 3. Remove media_blob sem nenhum media_asset ativo referenciando blob_id ou thumb_blob_id
+                    // E criado há mais de 10 minutos (R7.4)
                     let orphan_blobs = stores
                         .catalog()
-                        .list_unreferenced_media_blobs(&session.tenant_id)
+                        .list_unreferenced_media_blobs(&session.tenant_id, &cutoff)
                         .await?;
                     for blob in &orphan_blobs {
                         stores
@@ -941,6 +989,23 @@ impl CoreServices {
                 }
             }
         }
+
+        // 5. R7.3 Conciliação na coleta de lixo: varre os arquivos em disco e remove
+        // aqueles sem linha correspondente na tabela media_blob HÁ MAIS DE 1 HORA.
+        let valid_shas = self
+            .stores
+            .catalog
+            .list_active_media_blob_shas(&session.tenant_id)
+            .await?;
+        let reconciled_files = self
+            .media_store
+            .reconcile_unreferenced_blobs(
+                &session.tenant_id,
+                &valid_shas,
+                std::time::Duration::from_secs(3600),
+            )
+            .await?;
+        deleted_files += reconciled_files;
 
         Ok(MediaGarbageCollectionResult {
             deleted_assets,

@@ -534,6 +534,7 @@ impl SqliteStore {
     pub(crate) async fn media_list_unreferenced_blobs(
         &self,
         tenant_id: &str,
+        created_before: &str,
     ) -> Result<Vec<MediaBlob>> {
         let rows = self
             .fetch_all(
@@ -543,6 +544,7 @@ impl SqliteStore {
                             mb.created_at, mb.updated_at, mb.deleted_at, mb.created_by
                      FROM media_blob mb
                      WHERE mb.tenant_id = ?
+                       AND mb.created_at <= ?
                        AND NOT EXISTS (
                            SELECT 1 FROM media_asset ma
                            WHERE ma.tenant_id = mb.tenant_id
@@ -550,10 +552,33 @@ impl SqliteStore {
                              AND ma.deleted_at IS NULL
                        )",
                 )
-                .bind(tenant_id),
+                .bind(tenant_id)
+                .bind(created_before),
             )
             .await?;
         rows.iter().map(parse_media_blob_row).collect()
+    }
+
+    pub(crate) async fn media_list_active_blob_shas(
+        &self,
+        tenant_id: &str,
+    ) -> Result<std::collections::HashSet<String>> {
+        let rows = self
+            .fetch_all(
+                sqlx::query(
+                    "SELECT DISTINCT sha256
+                     FROM media_blob
+                     WHERE tenant_id = ? AND deleted_at IS NULL",
+                )
+                .bind(tenant_id),
+            )
+            .await?;
+        let mut set = std::collections::HashSet::new();
+        for row in rows {
+            let sha: String = row.get("sha256");
+            set.insert(sha);
+        }
+        Ok(set)
     }
 
     pub(crate) async fn media_hard_delete_blob(

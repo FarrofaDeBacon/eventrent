@@ -9,6 +9,7 @@ description = "Content-addressed filesystem MediaStore implementation for EventR
 eventrent-core = { path = "../core" }
 async-trait = "0.1"
 uuid = { version = "1.10", features = ["v7"] }
+tokio = { version = "1", features = ["rt"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

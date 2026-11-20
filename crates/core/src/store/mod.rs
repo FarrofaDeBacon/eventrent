@@ -430,7 +430,17 @@ pub trait CatalogStore: Send + Sync {
     async fn hard_delete_media_asset(&self, _tenant_id: &str, _asset_id: &str) -> Result<()> {
         Err(CoreError::Internal("Não implementado".to_string()))
     }
-    async fn list_unreferenced_media_blobs(&self, _tenant_id: &str) -> Result<Vec<MediaBlob>> {
+    async fn list_unreferenced_media_blobs(
+        &self,
+        _tenant_id: &str,
+        _created_before: &str,
+    ) -> Result<Vec<MediaBlob>> {
+        Err(CoreError::Internal("Não implementado".to_string()))
+    }
+    async fn list_active_media_blob_shas(
+        &self,
+        _tenant_id: &str,
+    ) -> Result<std::collections::HashSet<String>> {
         Err(CoreError::Internal("Não implementado".to_string()))
     }
     async fn hard_delete_media_blob(&self, _tenant_id: &str, _blob_id: &str) -> Result<()> {
@@ -445,6 +455,15 @@ pub trait MediaStore: Send + Sync {
     async fn get_blob(&self, tenant_id: &str, sha256: &str) -> Result<Vec<u8>>;
     async fn delete_blob(&self, tenant_id: &str, sha256: &str) -> Result<()>;
     async fn exists_blob(&self, tenant_id: &str, sha256: &str) -> Result<bool>;
+    /// Reconcilia arquivos físicos com o banco: remove arquivos órfãos sem linha correspondente há mais de min_age (R7.3).
+    async fn reconcile_unreferenced_blobs(
+        &self,
+        _tenant_id: &str,
+        _valid_shas: &std::collections::HashSet<String>,
+        _min_age: std::time::Duration,
+    ) -> Result<usize> {
+        Ok(0)
+    }
 }
 
 #[derive(Default)]
@@ -509,6 +528,34 @@ impl MediaStore for InMemoryMediaStore {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(guard.contains_key(&key))
+    }
+
+    async fn reconcile_unreferenced_blobs(
+        &self,
+        tenant_id: &str,
+        valid_shas: &std::collections::HashSet<String>,
+        _min_age: std::time::Duration,
+    ) -> Result<usize> {
+        let prefix = format!("{}/", tenant_id);
+        let mut guard = self
+            .blobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut to_remove = Vec::new();
+        for key in guard.keys() {
+            if key.starts_with(&prefix) {
+                if let Some(sha) = key.rsplit('/').next() {
+                    if !valid_shas.contains(sha) {
+                        to_remove.push(key.clone());
+                    }
+                }
+            }
+        }
+        let count = to_remove.len();
+        for key in &to_remove {
+            guard.remove(key);
+        }
+        Ok(count)
     }
 }
 

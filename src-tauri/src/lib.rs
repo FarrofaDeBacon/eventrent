@@ -361,6 +361,14 @@ async fn initialize_app(app_handle: &AppHandle) -> Result<(AppState, PathBuf), (
         )
     })?;
 
+    // R7.2: Varredura ao iniciar removendo arquivos .tmp.* com mais de 24 horas
+    if let Err(e) = media_store
+        .cleanup_stale_temp_writes(std::time::Duration::from_secs(24 * 3600))
+        .await
+    {
+        tracing::warn!("Aviso: falha na limpeza de temporários de mídia ao iniciar: {e}");
+    }
+
     let services = CoreServices::with_media_store(store_bundle, Arc::new(media_store));
 
     Ok((
