@@ -872,4 +872,310 @@ pub fn write_sanitized_temp_document(
 - Vitest: `src/lib/utils/media-and-matcher.spec.ts` (10 testes).
 - Playwright: `e2e/catalog-media.spec.ts`.
 
+---
+
+## 5. Fase 2M-rev — Fortalecimento de Segurança, Concorrência e Menor Privilégio
+
+Esta seção consolida as implementações da revisão **Fase 2M-rev** na branch `fase-2m-midia` (PR #11).
+
+### 5.1 Registro de Commits da Revisão
+
+| Item        | Commit    | Descrição                                                                                                                                                                                                                      |
+| ----------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **R1 & R2** | `d304da1` | Extensão fixa `.pdf` ao abrir/salvar, sanitização de stem com fallback seguro, normalização de `original_filename` ao anexar e rejeição de caracteres invisíveis/direção bidi.                                                 |
+| **R3**      | `93a2e93` | Limpeza de `temp_media_dir` ao iniciar (subpastas > 1h) e ao encerrar normalmente.                                                                                                                                             |
+| **R4**      | `808b459` | Menor privilégio no Tauri (`capabilities/default.json` contendo apenas `["core:default"]`), teste automatizado e ADR-0014.                                                                                                     |
+| **R5**      | `040b81c` | Substituição do SHA-256 artesanal pela crate consolidada `sha2` com `spawn_blocking`, vetores NIST canônicos e ADR-0015.                                                                                                       |
+| **R6**      | `981d71c` | Rejeição abrangente de metadados: JPEG APP1 (qualquer), APP13 (Photoshop/IPTC) e COM; WebP chunk "XMP " e flag VP8X (0x04); PNG tEXt, iTXt e zTXt.                                                                             |
+| **R7**      | `e2496a9` | `media-fs` assíncrono em `spawn_blocking`, varredura de `*.tmp.*` > 24h ao iniciar, conciliação de arquivos órfãos em disco (> 1h), proteção de blobs recentes no GC (< 10 min) e regravação pós-transação em caso de corrida. |
+| **R8**      | _este_    | Atualização deste relatório com evidências exatas de código, ADR-0013 final e resultados de testes.                                                                                                                            |
+
+### 5.2 Decisões de Arquitetura (ADRs)
+
+- [ADR-0013: Arquitetura de Mídia e Anexos](../decisions/0013-midia-e-anexos.md) (Finalizado com proteções R1–R7)
+- [ADR-0014: Menor Privilégio nas Capabilities do Tauri Desktop](../decisions/0014-menor-privilegio-capabilities-tauri.md)
+- [ADR-0015: Adoção da Crate sha2 e Validação com Vetores Oficiais do NIST](../decisions/0015-adotacao-crate-sha2-e-vetores-nist.md)
+
+---
+
+## 6. Evidências Exatas de Código da Revisão
+
+### 6.1 Coleta de Lixo: Verificação de `blob_id` e `thumb_blob_id` no Store SQLite
+
+Cópia exata de `crates/store-sqlite/src/media.rs` (linhas 494–560):
+
+```rust
+    pub(crate) async fn media_list_unreferenced_assets(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Vec<MediaAsset>> {
+        let rows = self
+            .fetch_all(
+                sqlx::query(
+                    "SELECT ma.id, ma.tenant_id, ma.kind, ma.blob_id, ma.thumb_blob_id, ma.title,
+                            ma.doc_type, ma.origin, ma.credit_note, ma.language, ma.version_note,
+                            ma.original_filename, ma.width, ma.height, ma.byte_size,
+                            ma.created_at, ma.updated_at, ma.deleted_at, ma.created_by
+                     FROM media_asset ma
+                     WHERE ma.tenant_id = ?
+                       AND NOT EXISTS (
+                           SELECT 1 FROM equipment_model_media emm
+                           WHERE emm.tenant_id = ma.tenant_id
+                             AND emm.asset_id = ma.id
+                             AND emm.deleted_at IS NULL
+                       )",
+                )
+                .bind(tenant_id),
+            )
+            .await?;
+        rows.iter().map(parse_media_asset_row).collect()
+    }
+
+    pub(crate) async fn media_hard_delete_asset(
+        &self,
+        tenant_id: &str,
+        asset_id: &str,
+    ) -> Result<()> {
+        self.execute(
+            sqlx::query("DELETE FROM media_asset WHERE tenant_id = ? AND id = ?")
+                .bind(tenant_id)
+                .bind(asset_id),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn media_list_unreferenced_blobs(
+        &self,
+        tenant_id: &str,
+        created_before: &str,
+    ) -> Result<Vec<MediaBlob>> {
+        let rows = self
+            .fetch_all(
+                sqlx::query(
+                    "SELECT mb.id, mb.tenant_id, mb.sha256, mb.mime_type, mb.byte_size,
+                            mb.width, mb.height, mb.storage_key,
+                            mb.created_at, mb.updated_at, mb.deleted_at, mb.created_by
+                     FROM media_blob mb
+                     WHERE mb.tenant_id = ?
+                       AND mb.created_at <= ?
+                       AND NOT EXISTS (
+                           SELECT 1 FROM media_asset ma
+                           WHERE ma.tenant_id = mb.tenant_id
+                             AND (ma.blob_id = mb.id OR ma.thumb_blob_id = mb.id)
+                             AND ma.deleted_at IS NULL
+                       )",
+                )
+                .bind(tenant_id)
+                .bind(created_before),
+            )
+            .await?;
+        rows.iter().map(parse_media_blob_row).collect()
+    }
+```
+
+### 6.2 Frontend: Redimensionamento em `<canvas>` e Cache LRU
+
+#### Redimensionamento em `<canvas>`
+
+Cópia exata de `src/lib/utils/image-resize.ts` (linhas 207–244):
+
+```typescript
+  async encodeVariant(
+    file: Blob,
+    targetWidth: number,
+    targetHeight: number,
+    _preferredMime: "image/webp" | "image/jpeg",
+    quality: number,
+  ): Promise<EncodedImageVariant> {
+    const decoded = await decodeBrowserImage(file);
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        const clean = buildCleanWebpHeaderBytes(targetWidth, targetHeight);
+        return {
+          bytes: clean,
+          mimeType: "image/webp",
+          width: targetWidth,
+          height: targetHeight,
+        };
+      }
+      decoded.draw(ctx, targetWidth, targetHeight);
+      const { blob, mimeType } = await canvasToBlobWithFallback(
+        canvas,
+        quality,
+      );
+      const buf = await blob.arrayBuffer();
+      return {
+        bytes: new Uint8Array(buf),
+        mimeType,
+        width: targetWidth,
+        height: targetHeight,
+      };
+    } finally {
+      decoded.close();
+    }
+  },
+```
+
+#### Cache LRU de Blob URLs
+
+Cópia exata de `src/lib/utils/media-lru-cache.ts` (linhas 22–75):
+
+```typescript
+export class MediaBlobUrlLruCache {
+  private readonly maxItems: number;
+  private readonly maxBytes: number;
+  private readonly createUrl: (blob: Blob) => string;
+  private readonly revokeUrl: (url: string) => void;
+  private readonly entries = new Map<string, CacheEntry>();
+  private readonly inFlight = new Map<string, Promise<string>>();
+  private totalBytes = 0;
+
+  constructor(options: MediaLruCacheOptions = {}) {
+    this.maxItems = Math.max(1, options.maxItems ?? DEFAULT_MAX_ITEMS);
+    this.maxBytes = Math.max(1, options.maxBytes ?? DEFAULT_MAX_BYTES);
+    this.createUrl =
+      options.createObjectUrl ?? ((blob: Blob) => URL.createObjectURL(blob));
+    this.revokeUrl =
+      options.revokeObjectUrl ?? ((url: string) => URL.revokeObjectURL(url));
+  }
+
+  get size(): number {
+    return this.entries.size;
+  }
+
+  get currentBytes(): number {
+    return this.totalBytes;
+  }
+
+  get(key: string): string | undefined {
+    const existing = this.entries.get(key);
+    if (!existing) {
+      return undefined;
+    }
+    // Move para o final do Map (mais recentemente usado)
+    this.entries.delete(key);
+    this.entries.set(key, existing);
+    return existing.url;
+  }
+
+  put(
+    key: string,
+    bytes: Uint8Array | ArrayBuffer,
+    mimeType = "image/webp",
+  ): string {
+    const prev = this.entries.get(key);
+    if (prev) {
+      this.entries.delete(key);
+      this.totalBytes = Math.max(0, this.totalBytes - prev.byteSize);
+      this.revokeUrl(prev.url);
+    }
+
+    const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const byteSize = view.byteLength;
+
+    while (
+      this.entries.size > 0 &&
+      (this.entries.size >= this.maxItems ||
+        this.totalBytes + byteSize > this.maxBytes)
+    ) {
+      const oldestKey = this.entries.keys().next().value;
+      if (!oldestKey) break;
+      const entry = this.entries.get(oldestKey);
+      if (entry) {
+        this.totalBytes = Math.max(0, this.totalBytes - entry.byteSize);
+        this.revokeUrl(entry.url);
+      }
+      this.entries.delete(oldestKey);
+    }
+
+    const blob = new Blob([view], { type: mimeType });
+    const url = this.createUrl(blob);
+    this.entries.set(key, { url, byteSize, key });
+    this.totalBytes += byteSize;
+    return url;
+  }
+```
+
+### 6.3 Frontend: Tratamento Claro de Arquivo Ausente no Disco
+
+Cópia exata de `src/lib/components/catalog-model-media.svelte` (linhas 114–130 e 557–578), provando que não há tela branca nem spinner infinito quando o arquivo não existe:
+
+```typescript
+try {
+  const url = await mediaBlobUrlCache.getOrLoad(blobId, mimeType, () =>
+    repo.getMediaBlobBytes(blobId),
+  );
+  blobUrls = { ...blobUrls, [blobId]: url };
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  failedBlobIds = {
+    ...failedBlobIds,
+    [blobId]: msg.includes("não encontrado")
+      ? "Arquivo não encontrado no disco"
+      : "Falha ao carregar imagem",
+  };
+}
+```
+
+E no template:
+
+```svelte
+{#if imgUrl}
+  <img
+    src={imgUrl}
+    alt={modelName}
+    class="max-h-full max-w-full object-contain"
+  />
+{:else if failedBlobIds[photo.blob_id] || (photo.thumb_blob_id && failedBlobIds[photo.thumb_blob_id])}
+  <div
+    class="flex flex-col items-center justify-center p-3 text-center text-xs text-destructive"
+    data-testid="media-file-missing"
+  >
+    <AlertCircle class="mb-1 h-5 w-5" />
+    <span class="font-medium">
+      {failedBlobIds[photo.blob_id] ??
+        (photo.thumb_blob_id
+          ? failedBlobIds[photo.thumb_blob_id]
+          : "Arquivo não encontrado no disco")}
+    </span>
+  </div>
+{:else}
+  <span class="text-xs text-muted-foreground">Carregando...</span>
+{/if}
+```
+
+### 6.4 Evidência dos Testes Automatizados R1–R7
+
+```text
+running 20 tests (crates/core)
+test testing::unit_tests::test_media_core_validators_magic_exif_limits_and_filenames ... ok
+(Cobre: 17 casos perigosos R1 (.bat, .cmd, .ps1, .js, .vbs, .hta, .url, .lnk, .scr, .exe,
+ a.pdf.bat, 'manual.pdf ', '.pdf', CON, con.pdf, nul.pdf, nome vazio, 300 chars);
+ Caracteres bidi e invisíveis R2; Vetores canônicos NIST R5; Rejeição de metadados R6
+ [JPEG APP1/APP13/COM, WebP XMP/VP8X, PNG tEXt/iTXt/zTXt]).
+
+running 2 tests (crates/media-fs)
+test tests::test_fs_media_store_atomic_write_dedup_and_missing_file ... ok
+test tests::test_fs_media_store_gc_reconciliation_and_temp_cleanup ... ok
+(Cobre: I/O assíncrono em spawn_blocking R7.1; Limpeza de temporários *.tmp.* > 24h R7.2;
+ Reconciliação em disco excluindo órfãos > 1h e preservando arquivos < 1h R7.3 & R7.6).
+
+running 31 tests (crates/store-sqlite)
+test tests::test_store_media_fks_dedup_primary_rbac_quotas_audit_and_gc ... ok
+test tests::test_media_attach_rewrites_blob_if_missing_after_transaction ... ok
+(Cobre: Proteção de blob recente < 10 min no GC do banco R7.4 & R7.6;
+ Regravação automática a partir de buffer em memória em caso de corrida R7.5).
+
+running 2 tests (src-tauri)
+test guards::test_tauri_capabilities_enforce_least_privilege ... ok
+test commands::media::test_media_ipc_frame_decoders_and_temp_cleanup ... ok
+(Cobre: Menor privilégio estrito no Tauri R4; Limpeza de temp-media ao iniciar e desligar R3;
+ Prova de que os 17 nomes maliciosos resultam em arquivo seguro dentro de temp_media_root terminando em .pdf R1).
+```
+
 As URLs raw fixadas no hash do último commit estão na resposta final do agente.

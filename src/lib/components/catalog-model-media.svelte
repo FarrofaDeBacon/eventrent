@@ -1,5 +1,6 @@
 <script lang="ts">
   import {
+    AlertCircle,
     ArrowDown,
     ArrowUp,
     ClipboardPaste,
@@ -59,6 +60,8 @@
 
   // Cache local de Blob URLs por blob_id para renderização reativa
   let blobUrls = $state<Record<string, string>>({});
+  // Rastreia falhas ou arquivos ausentes no disco para exibir mensagem clara
+  let failedBlobIds = $state<Record<string, string>>({});
 
   // Resumo do último redimensionamento de foto
   let lastResizeSummary = $state<string | null>(null);
@@ -116,8 +119,14 @@
         repo.getMediaBlobBytes(blobId),
       );
       blobUrls = { ...blobUrls, [blobId]: url };
-    } catch {
-      // Ignora erro individual de carregamento de miniatura
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      failedBlobIds = {
+        ...failedBlobIds,
+        [blobId]: msg.includes("não encontrado")
+          ? "Arquivo não encontrado no disco"
+          : "Falha ao carregar imagem",
+      };
     }
   }
 
@@ -551,6 +560,19 @@
                   alt={modelName}
                   class="max-h-full max-w-full object-contain"
                 />
+              {:else if failedBlobIds[photo.blob_id] || (photo.thumb_blob_id && failedBlobIds[photo.thumb_blob_id])}
+                <div
+                  class="flex flex-col items-center justify-center p-3 text-center text-xs text-destructive"
+                  data-testid="media-file-missing"
+                >
+                  <AlertCircle class="mb-1 h-5 w-5" />
+                  <span class="font-medium">
+                    {failedBlobIds[photo.blob_id] ??
+                      (photo.thumb_blob_id
+                        ? failedBlobIds[photo.thumb_blob_id]
+                        : "Arquivo não encontrado no disco")}
+                  </span>
+                </div>
               {:else}
                 <span class="text-xs text-muted-foreground">Carregando...</span>
               {/if}
