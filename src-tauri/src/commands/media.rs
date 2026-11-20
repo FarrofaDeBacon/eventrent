@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use eventrent_core::{
-    sanitize_media_filename, AttachModelDocumentInput, AttachModelPhotoInput,
+    safe_document_filename, AttachModelDocumentInput, AttachModelPhotoInput,
     EquipmentModelMediaView, MediaDocType, MediaGarbageCollectionResult, MediaOrigin,
     ReorderModelMediaInput, UpdateModelMediaInput, MAX_DISPLAY_IMAGE_BYTES, MAX_PDF_DOCUMENT_BYTES,
     MAX_THUMB_IMAGE_BYTES,
@@ -308,14 +308,15 @@ pub async fn collect_unreferenced_media(
         .map_err(crate::map_core_err)
 }
 
-/// Grava uma cópia temporária com o nome saneado na pasta temporária do app
-/// e retorna o caminho completo do arquivo temporário gerado.
+/// Grava uma cópia temporária com o nome saneado e seguro (<stem seguro>.pdf)
+/// na pasta temporária do app e retorna o caminho completo do arquivo temporário gerado.
+/// A extensão do arquivo é SEMPRE ".pdf", nunca vindo do usuário (R1.1).
 pub fn write_sanitized_temp_document(
     temp_media_root: &Path,
-    original_filename: &str,
+    title_or_name: &str,
     bytes: &[u8],
 ) -> Result<std::path::PathBuf, String> {
-    let sanitized = sanitize_media_filename(original_filename).map_err(crate::map_core_err)?;
+    let filename = safe_document_filename(title_or_name).map_err(crate::map_core_err)?;
     let slot_dir = temp_media_root.join(Uuid::now_v7().to_string());
     std::fs::create_dir_all(&slot_dir).map_err(|e| {
         format!(
@@ -324,13 +325,38 @@ pub fn write_sanitized_temp_document(
         )
     })?;
 
-    let target_path = slot_dir.join(&sanitized);
+    let target_path = slot_dir.join(&filename);
     std::fs::write(&target_path, bytes).map_err(|e| {
         format!(
             "Falha ao gravar cópia temporária do documento ({}): {e}",
             target_path.display()
         )
     })?;
+
+    // Garante que o caminho temporário gerado termina estritamente em .pdf e está dentro da pasta temporária do app
+    if !target_path
+        .extension()
+        .map(|ext| ext.eq_ignore_ascii_case("pdf"))
+        .unwrap_or(false)
+    {
+        return Err(
+            "Violação de segurança: arquivo temporário não possui extensão .pdf.".to_string(),
+        );
+    }
+
+    let canonical_root = temp_media_root
+        .canonicalize()
+        .map_err(|e| format!("Falha ao resolver caminho canônico raiz: {e}"))?;
+    let canonical_target = target_path
+        .canonicalize()
+        .map_err(|e| format!("Falha ao resolver caminho canônico do arquivo temporário: {e}"))?;
+
+    if !canonical_target.starts_with(&canonical_root) {
+        return Err(
+            "Violação de segurança: caminho temporário fora da pasta de mídia temporária do app."
+                .to_string(),
+        );
+    }
 
     Ok(target_path)
 }
@@ -348,8 +374,8 @@ pub async fn open_model_document_external(
         .await
         .map_err(crate::map_core_err)?;
 
-    let temp_path =
-        write_sanitized_temp_document(&state.temp_media_dir, &view.original_filename, &bytes)?;
+    // Usa o título saneado como stem seguro com extensão estritamente .pdf
+    let temp_path = write_sanitized_temp_document(&state.temp_media_dir, &view.title, &bytes)?;
     let path_str = temp_path.to_string_lossy().to_string();
 
     app.opener()
@@ -372,15 +398,15 @@ pub async fn save_model_document_as(
         .await
         .map_err(crate::map_core_err)?;
 
-    let sanitized_name =
-        sanitize_media_filename(&view.original_filename).map_err(crate::map_core_err)?;
+    // Nome sugerido sempre no padrão <stem seguro>.pdf mantendo filtro PDF (R1.2)
+    let suggested_name = safe_document_filename(&view.title).map_err(crate::map_core_err)?;
     let app_clone = app.clone();
 
     let picked = tokio::task::spawn_blocking(move || {
         app_clone
             .dialog()
             .file()
-            .set_file_name(&sanitized_name)
+            .set_file_name(&suggested_name)
             .add_filter("Documento PDF", &["pdf"])
             .blocking_save_file()
     })
@@ -391,9 +417,18 @@ pub async fn save_model_document_as(
         return Ok(None);
     };
 
-    let dest_path = file_path
+    let mut dest_path = file_path
         .into_path()
         .map_err(|e| format!("Caminho de destino inválido: {e}"))?;
+
+    // Garante que o arquivo salvo tenha extensão estritamente .pdf, nunca vindo do usuário
+    if !dest_path
+        .extension()
+        .map(|ext| ext.eq_ignore_ascii_case("pdf"))
+        .unwrap_or(false)
+    {
+        dest_path.set_extension("pdf");
+    }
 
     std::fs::write(&dest_path, &bytes).map_err(|e| {
         format!(
@@ -403,4 +438,72 @@ pub async fn save_model_document_as(
     })?;
 
     Ok(Some(dest_path.to_string_lossy().to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_write_sanitized_temp_document_r1_security_cases() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("eventrent_test_media_{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let dummy_pdf = b"%PDF-1.7\ntest\n%%EOF";
+        let cases = [
+            "evil.bat",
+            "x.cmd",
+            "x.ps1",
+            "x.js",
+            "x.vbs",
+            "x.hta",
+            "x.url",
+            "x.lnk",
+            "x.scr",
+            "x.exe",
+            "a.pdf.bat",
+            "manual.pdf ",
+            ".pdf",
+            "CON",
+            "con.pdf",
+            "nul.pdf",
+            "",
+        ];
+
+        let canonical_root = temp_dir.canonicalize().unwrap();
+
+        for case in cases {
+            let path = write_sanitized_temp_document(&temp_dir, case, dummy_pdf).unwrap();
+            let path_str = path.to_string_lossy();
+            assert!(
+                path_str.ends_with(".pdf"),
+                "Caminho temporário para {case:?} deve terminar com .pdf: {path_str}"
+            );
+            assert!(
+                !path_str.ends_with(".bat")
+                    && !path_str.ends_with(".cmd")
+                    && !path_str.ends_with(".ps1")
+                    && !path_str.ends_with(".exe")
+                    && !path_str.ends_with(".url")
+                    && !path_str.ends_with(".lnk"),
+                "Extensão perigosa mantida para {case:?}: {path_str}"
+            );
+            let canonical_target = path.canonicalize().unwrap();
+            assert!(
+                canonical_target.starts_with(&canonical_root),
+                "Caminho {canonical_target:?} deve estar dentro da pasta raiz {canonical_root:?}"
+            );
+        }
+
+        // Teste de 300 caracteres
+        let long_300 = "a".repeat(300);
+        let path = write_sanitized_temp_document(&temp_dir, &long_300, dummy_pdf).unwrap();
+        assert!(path.to_string_lossy().ends_with(".pdf"));
+        let canonical_target = path.canonicalize().unwrap();
+        assert!(canonical_target.starts_with(&canonical_root));
+
+        // Limpeza do diretório de teste
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }

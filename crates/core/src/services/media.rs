@@ -3,12 +3,13 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 use crate::domain::{
-    build_media_storage_key, sanitize_media_filename, validate_display_image, validate_media_title,
-    validate_model_media_quota, validate_optional_media_language, validate_optional_media_note,
-    validate_pdf_document, validate_thumbnail_image, AttachModelDocumentInput,
-    AttachModelPhotoInput, EquipmentModelMedia, EquipmentModelMediaView, MediaAsset, MediaBlob,
-    MediaGarbageCollectionResult, MediaKind, ReorderModelMediaInput, SessionInfo,
-    UpdateModelMediaInput, PERM_CATALOG_MANAGE, PERM_CATALOG_READ,
+    build_media_storage_key, normalize_media_filename, validate_display_image,
+    validate_media_title, validate_model_media_quota, validate_optional_media_language,
+    validate_optional_media_note, validate_pdf_document, validate_thumbnail_image,
+    AttachModelDocumentInput, AttachModelPhotoInput, EquipmentModelMedia, EquipmentModelMediaView,
+    MediaAsset, MediaBlob, MediaGarbageCollectionResult, MediaKind, MediaMimeType,
+    ReorderModelMediaInput, SessionInfo, UpdateModelMediaInput, PERM_CATALOG_MANAGE,
+    PERM_CATALOG_READ,
 };
 use crate::error::{CoreError, Result};
 use crate::services::{build_audit_entry, CoreServices};
@@ -95,9 +96,10 @@ impl CoreServices {
         let title = validate_media_title(&input.title)?;
         let credit_note =
             validate_optional_media_note("credit_note", input.credit_note.as_deref())?;
-        let original_filename = sanitize_media_filename(&input.original_filename)?;
         let display = validate_display_image(&input.display_mime_type, &input.display_bytes)?;
         let thumb = validate_thumbnail_image(&input.thumb_mime_type, &input.thumb_bytes)?;
+        let original_filename =
+            normalize_media_filename(&input.original_filename, display.mime_type)?;
 
         // Verifica existência do modelo e quota antes de gravar no MediaStore
         let _model = self
@@ -323,7 +325,8 @@ impl CoreServices {
         let version_note =
             validate_optional_media_note("version_note", input.version_note.as_deref())?;
         let language = validate_optional_media_language(input.language.as_deref())?;
-        let original_filename = sanitize_media_filename(&input.original_filename)?;
+        let original_filename =
+            normalize_media_filename(&input.original_filename, MediaMimeType::ApplicationPdf)?;
         let pdf = validate_pdf_document(&input.mime_type, &input.bytes)?;
 
         let _model = self

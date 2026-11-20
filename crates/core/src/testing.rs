@@ -4772,5 +4772,78 @@ mod unit_tests {
         assert!(sanitize_media_filename("foto\n.webp").is_err());
         assert!(sanitize_media_filename("   ").is_err());
         assert!(sanitize_media_filename(&format!("{}.pdf", "a".repeat(147))).is_err());
+
+        // R1: Normalização de original_filename e geração de stem/nome de documento seguro
+        use crate::domain::{
+            normalize_media_filename, safe_document_filename, sanitize_safe_document_stem,
+        };
+
+        let cases = [
+            "evil.bat",
+            "x.cmd",
+            "x.ps1",
+            "x.js",
+            "x.vbs",
+            "x.hta",
+            "x.url",
+            "x.lnk",
+            "x.scr",
+            "x.exe",
+            "a.pdf.bat",
+            "manual.pdf ",
+            ".pdf",
+            "CON",
+            "con.pdf",
+            "nul.pdf",
+            "",
+        ];
+
+        for case in cases {
+            let res = safe_document_filename(case).unwrap();
+            assert!(
+                res.ends_with(".pdf"),
+                "safe_document_filename({case:?}) deve terminar com .pdf, mas retornou: {res}"
+            );
+            assert!(
+                !res.ends_with(".bat")
+                    && !res.ends_with(".cmd")
+                    && !res.ends_with(".ps1")
+                    && !res.ends_with(".exe")
+                    && !res.ends_with(".url")
+                    && !res.ends_with(".lnk")
+            );
+        }
+
+        let long_300 = "a".repeat(300);
+        let res_long = safe_document_filename(&long_300).unwrap();
+        assert!(res_long.ends_with(".pdf"));
+        assert!(res_long.len() <= 65); // 60 chars stem + .pdf (4 chars)
+
+        // R1.3: Normalização de original_filename gravado
+        assert_eq!(
+            normalize_media_filename("manual.bat", MediaMimeType::ApplicationPdf).unwrap(),
+            "manual.pdf"
+        );
+        assert_eq!(
+            normalize_media_filename("foto.exe", MediaMimeType::ImageJpeg).unwrap(),
+            "foto.jpg"
+        );
+        assert_eq!(
+            normalize_media_filename("CON", MediaMimeType::ApplicationPdf).unwrap(),
+            "documento.pdf"
+        );
+        assert_eq!(
+            normalize_media_filename(".pdf", MediaMimeType::ApplicationPdf).unwrap(),
+            "documento.pdf"
+        );
+
+        // R2: Rejeição estrita de caracteres invisíveis e de direção bidi
+        assert!(sanitize_media_filename("manual\u{202E}fdp.bat").is_err());
+        assert!(sanitize_safe_document_stem("manual\u{202E}fdp.bat").is_err());
+        assert!(validate_media_title("Manual\u{200B}Invisivel").is_err());
+        assert!(validate_media_title("Manual\u{202A}Bidi").is_err());
+        assert!(validate_media_title("Manual\u{FEFF}BOM").is_err());
+        assert!(validate_optional_media_note("credit_note", Some("Autor\u{202C}")).is_err());
+        assert!(validate_optional_media_language(Some("pt\u{200E}-BR")).is_err());
     }
 }

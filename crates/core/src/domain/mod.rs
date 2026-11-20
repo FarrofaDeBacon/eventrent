@@ -45,6 +45,7 @@ pub use user::{
     ResetPasswordInput, SessionInfo, UpdateUserInput, UserRecord, UserWithRole,
 };
 pub use validation::{
+    ensure_no_control_or_invisible_chars, is_dangerous_or_invisible_control_char,
     normalize_and_validate_phone, normalize_and_validate_postal_code, validate_brazilian_state,
     validate_country_code, validate_email, validate_user_name, BRAZILIAN_STATES,
 };

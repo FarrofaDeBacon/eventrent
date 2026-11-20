@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::domain::validation::is_dangerous_or_invisible_control_char;
 use crate::error::{CoreError, Result};
 
 pub const MAX_DISPLAY_IMAGE_DIMENSION: u32 = 2048;
@@ -832,7 +833,13 @@ pub fn validate_model_media_quota(kind: MediaKind, current_count: usize) -> Resu
     Ok(())
 }
 
-/// Valida o título da mídia (1 a 150 caracteres, sem caracteres de controle).
+/// Nomes reservados de dispositivos no Windows que nunca podem ser usados como nomes de arquivos ou stems.
+pub const WINDOWS_RESERVED_NAMES: [&str; 22] = [
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+/// Valida o título da mídia (1 a 150 caracteres, sem caracteres de controle, invisíveis ou bidi).
 pub fn validate_media_title(title: &str) -> Result<String> {
     let trimmed = title.trim();
     let count = trimmed.chars().count();
@@ -841,15 +848,15 @@ pub fn validate_media_title(title: &str) -> Result<String> {
             "O título da mídia deve ter entre 1 e {MAX_MEDIA_TITLE_CHARS} caracteres."
         )));
     }
-    if trimmed.chars().any(|c| c.is_control()) {
+    if trimmed.chars().any(is_dangerous_or_invisible_control_char) {
         return Err(CoreError::Validation(
-            "O título da mídia não pode conter caracteres de controle.".to_string(),
+            "O título da mídia não pode conter caracteres de controle, invisíveis ou de direção de texto.".to_string(),
         ));
     }
     Ok(trimmed.to_string())
 }
 
-/// Valida `credit_note` ou `version_note` (opcional, até 300 caracteres, sem caracteres de controle).
+/// Valida `credit_note` ou `version_note` (opcional, até 300 caracteres, sem caracteres de controle, invisíveis ou bidi).
 pub fn validate_optional_media_note(
     field_label: &str,
     note: Option<&str>,
@@ -866,15 +873,15 @@ pub fn validate_optional_media_note(
             "O campo '{field_label}' deve ter no máximo {MAX_MEDIA_NOTE_CHARS} caracteres."
         )));
     }
-    if trimmed.chars().any(|c| c.is_control()) {
+    if trimmed.chars().any(is_dangerous_or_invisible_control_char) {
         return Err(CoreError::Validation(format!(
-            "O campo '{field_label}' não pode conter caracteres de controle."
+            "O campo '{field_label}' não pode conter caracteres de controle, invisíveis ou de direção de texto."
         )));
     }
     Ok(Some(trimmed.to_string()))
 }
 
-/// Valida idioma opcional do documento (ex.: pt-BR, en, es; até 20 caracteres).
+/// Valida idioma opcional do documento (ex.: pt-BR, en, es; até 20 caracteres, sem controle, invisíveis ou bidi).
 pub fn validate_optional_media_language(language: Option<&str>) -> Result<Option<String>> {
     let Some(raw) = language else {
         return Ok(None);
@@ -883,20 +890,21 @@ pub fn validate_optional_media_language(language: Option<&str>) -> Result<Option
     if trimmed.is_empty() {
         return Ok(None);
     }
-    if trimmed.chars().count() > MAX_MEDIA_LANGUAGE_CHARS || trimmed.chars().any(|c| c.is_control())
+    if trimmed.chars().count() > MAX_MEDIA_LANGUAGE_CHARS
+        || trimmed.chars().any(is_dangerous_or_invisible_control_char)
     {
         return Err(CoreError::Validation(format!(
-            "O idioma do documento deve ter no máximo {MAX_MEDIA_LANGUAGE_CHARS} caracteres e nenhum caractere de controle."
+            "O idioma do documento deve ter no máximo {MAX_MEDIA_LANGUAGE_CHARS} caracteres e nenhum caractere de controle, invisível ou bidi."
         )));
     }
     Ok(Some(trimmed.to_string()))
 }
 
-/// Saneia e valida o nome original do arquivo (sem caminho, sem caracteres de controle, até 150 caracteres).
+/// Saneia e valida o nome original do arquivo (sem caminho, sem caracteres de controle/invisíveis/bidi, até 150 caracteres).
 pub fn sanitize_media_filename(raw: &str) -> Result<String> {
-    if raw.chars().any(|c| c.is_control()) {
+    if raw.chars().any(is_dangerous_or_invisible_control_char) {
         return Err(CoreError::Validation(
-            "O nome do arquivo não pode conter caracteres de controle.".to_string(),
+            "O nome do arquivo não pode conter caracteres de controle, invisíveis ou de direção de texto.".to_string(),
         ));
     }
 
@@ -943,4 +951,132 @@ pub fn sanitize_media_filename(raw: &str) -> Result<String> {
     }
 
     Ok(sanitized)
+}
+
+/// Gera um stem de arquivo seguro a partir do título do documento (R1.1).
+///
+/// Regras aplicadas:
+/// 1. Rejeita imediatamente caracteres de controle, invisíveis ou de direção bidi (R2).
+/// 2. Filtra aceitando apenas letras, números, espaço, hífen '-', sublinhado '_' e ponto '.'.
+/// 3. Trunca em no máximo 60 caracteres.
+/// 4. Remove pontos e espaços finais (evita restrições e bugs do sistema de arquivos do Windows).
+/// 5. Se o resultado for vazio ou coincidir com nomes reservados do Windows (CON, PRN, AUX, NUL, COM1..9, LPT1..9),
+///    retorna o padrão "documento".
+pub fn sanitize_safe_document_stem(raw_title: &str) -> Result<String> {
+    if raw_title
+        .chars()
+        .any(is_dangerous_or_invisible_control_char)
+    {
+        return Err(CoreError::Validation(
+            "O título do documento contém caracteres de controle, invisíveis ou de direção de texto inválidos.".to_string(),
+        ));
+    }
+
+    let trimmed = raw_title.trim();
+    // Extrai o nome base se houver prefixo de caminho (Windows ou POSIX)
+    let base = trimmed.rsplit(['/', '\\']).next().unwrap_or(trimmed).trim();
+
+    // Se o título fornecido já contiver extensão .pdf (case insensitive), remove para evitar duplicação
+    let without_pdf = if base.to_ascii_lowercase().ends_with(".pdf") {
+        &base[..base.len() - 4]
+    } else {
+        base
+    };
+
+    // Substitui caracteres especiais de arquivo por '_' antes de filtrar
+    let pre_sanitized: String = without_pdf
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '|' | '?' | '*' => '_',
+            other => other,
+        })
+        .collect();
+
+    let filtered: String = pre_sanitized
+        .chars()
+        .filter(|&c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.'))
+        .take(60)
+        .collect();
+
+    let stem = filtered.trim_end_matches(['.', ' ']).trim();
+
+    if stem.is_empty() {
+        return Ok("documento".to_string());
+    }
+
+    let upper = stem.to_ascii_uppercase();
+    let base_name = upper.split('.').next().unwrap_or(&upper);
+    if WINDOWS_RESERVED_NAMES.contains(&upper.as_str())
+        || WINDOWS_RESERVED_NAMES.contains(&base_name)
+    {
+        return Ok("documento".to_string());
+    }
+
+    Ok(stem.to_string())
+}
+
+/// Gera um nome de arquivo de documento estritamente seguro com extensão fixa ".pdf" (R1.1 e R1.2).
+pub fn safe_document_filename(raw_title: &str) -> Result<String> {
+    let stem = sanitize_safe_document_stem(raw_title)?;
+    Ok(format!("{stem}.pdf"))
+}
+
+/// Normaliza o `original_filename` persistido no banco ao anexar mídia (R1.3).
+///
+/// Garante que:
+/// - O nome de arquivo é saneado e livre de caracteres de controle/invisíveis/bidi.
+/// - Documentos terminam estritamente em `.pdf`.
+/// - Imagens terminam na extensão canônica exata de seu MIME (`.webp`, `.jpg` ou `.png`).
+/// - Extensões perigosas enviadas pelo usuário (ex: `.bat`, `.cmd`, `.exe`) são completamente descartadas.
+/// - Nomes reservados do Windows (ex: `CON`, `NUL`) são substituídos por "documento" ou "imagem".
+pub fn normalize_media_filename(raw_filename: &str, mime: MediaMimeType) -> Result<String> {
+    let sanitized = sanitize_media_filename(raw_filename)?;
+
+    let ext = match mime {
+        MediaMimeType::ImageWebp => "webp",
+        MediaMimeType::ImageJpeg => "jpg",
+        MediaMimeType::ImagePng => "png",
+        MediaMimeType::ApplicationPdf => "pdf",
+    };
+
+    // Extrai o stem removendo a última extensão, se houver
+    let stem = match sanitized.rfind('.') {
+        Some(idx) if idx > 0 => &sanitized[..idx],
+        Some(0) => "", // Caso inicie com ponto, ex.: ".pdf"
+        _ => {
+            // Se não contém ponto, mas coincide com extensão comum isolada (ex: arquivo enviado como "pdf" ou ".pdf" que teve o ponto removido no sanitize)
+            if sanitized.eq_ignore_ascii_case("pdf")
+                || sanitized.eq_ignore_ascii_case("webp")
+                || sanitized.eq_ignore_ascii_case("jpg")
+                || sanitized.eq_ignore_ascii_case("jpeg")
+                || sanitized.eq_ignore_ascii_case("png")
+            {
+                ""
+            } else {
+                &sanitized
+            }
+        }
+    };
+
+    let trimmed_stem = stem.trim_end_matches(['.', ' ']).trim();
+    let fallback = match mime {
+        MediaMimeType::ApplicationPdf => "documento",
+        _ => "imagem",
+    };
+
+    let base_stem = if trimmed_stem.is_empty() {
+        fallback
+    } else {
+        let upper = trimmed_stem.to_ascii_uppercase();
+        let base_name = upper.split('.').next().unwrap_or(&upper);
+        if WINDOWS_RESERVED_NAMES.contains(&upper.as_str())
+            || WINDOWS_RESERVED_NAMES.contains(&base_name)
+        {
+            fallback
+        } else {
+            trimmed_stem
+        }
+    };
+
+    Ok(format!("{base_stem}.{ext}"))
 }

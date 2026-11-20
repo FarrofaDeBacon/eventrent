@@ -259,3 +259,34 @@ pub fn validate_user_name(name: &str) -> CoreResult<String> {
     }
     Ok(trimmed.to_string())
 }
+
+/// Verifica se um caractere é de controle ou caractere invisível/formato/direção perigoso.
+/// Bloqueia:
+/// - Caracteres de controle (`c.is_control()`)
+/// - Espaços invisíveis e de formatação: U+200B a U+200F (zero-width space/non-joiner/joiner/LRM/RLM)
+/// - Controles de direção de texto bidi: U+202A a U+202E (LRE, RLE, PDF, LRO, RLO)
+/// - Controles de isolamento bidi: U+2066 a U+2069 (LRI, RLI, FSI, PDI)
+/// - Separadores de linha/parágrafo Unicode: U+2028 (LINE SEPARATOR), U+2029 (PARAGRAPH SEPARATOR)
+/// - Byte Order Mark / zero-width no-break space: U+FEFF
+pub fn is_dangerous_or_invisible_control_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{200B}'..='\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{FEFF}'
+        )
+}
+
+/// Valida se um texto não contém caracteres de controle nem caracteres invisíveis ou de direção bidi.
+pub fn ensure_no_control_or_invisible_chars(field_name: &str, text: &str) -> CoreResult<()> {
+    if text.chars().any(is_dangerous_or_invisible_control_char) {
+        return Err(CoreError::Validation(format!(
+            "O campo '{field_name}' contém caracteres de controle, invisíveis ou de direção de texto inválidos."
+        )));
+    }
+    Ok(())
+}
