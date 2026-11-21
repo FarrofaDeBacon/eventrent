@@ -311,30 +311,18 @@ pub async fn collect_unreferenced_media(
 /// Grava uma cópia temporária com o nome saneado e seguro (<stem seguro>.pdf)
 /// na pasta temporária do app e retorna o caminho completo do arquivo temporário gerado.
 /// A extensão do arquivo é SEMPRE ".pdf", nunca vindo do usuário (R1.1).
+///
+/// B1: Valida extensão .pdf e contenção de caminho ANTES de criar diretórios ou gravar arquivos em disco.
 pub fn write_sanitized_temp_document(
     temp_media_root: &Path,
     title_or_name: &str,
     bytes: &[u8],
 ) -> Result<std::path::PathBuf, String> {
     let filename = safe_document_filename(title_or_name).map_err(crate::map_core_err)?;
-    let slot_dir = temp_media_root.join(Uuid::now_v7().to_string());
-    std::fs::create_dir_all(&slot_dir).map_err(|e| {
-        format!(
-            "Falha ao criar pasta temporária de visualização ({}): {e}",
-            slot_dir.display()
-        )
-    })?;
+    let candidate_path = Path::new(&filename);
 
-    let target_path = slot_dir.join(&filename);
-    std::fs::write(&target_path, bytes).map_err(|e| {
-        format!(
-            "Falha ao gravar cópia temporária do documento ({}): {e}",
-            target_path.display()
-        )
-    })?;
-
-    // Garante que o caminho temporário gerado termina estritamente em .pdf e está dentro da pasta temporária do app
-    if !target_path
+    // 1. Valida extensão .pdf ANTES de tocar o disco
+    if !candidate_path
         .extension()
         .map(|ext| ext.eq_ignore_ascii_case("pdf"))
         .unwrap_or(false)
@@ -344,14 +332,74 @@ pub fn write_sanitized_temp_document(
         );
     }
 
-    let canonical_root = temp_media_root
-        .canonicalize()
-        .map_err(|e| format!("Falha ao resolver caminho canônico raiz: {e}"))?;
-    let canonical_target = target_path
-        .canonicalize()
-        .map_err(|e| format!("Falha ao resolver caminho canônico do arquivo temporário: {e}"))?;
+    // 2. Garante que filename é apenas um único componente simples (sem separadores de caminho)
+    if candidate_path.components().count() != 1 {
+        return Err(
+            "Violação de segurança: nome de arquivo temporário contém separadores de caminho."
+                .to_string(),
+        );
+    }
+
+    // 3. Monta o caminho pretendido e confere contenção lógica antes da escrita
+    let slot_id = Uuid::now_v7().to_string();
+    let slot_dir = temp_media_root.join(slot_id);
+    let target_path = slot_dir.join(&filename);
+
+    if !slot_dir.starts_with(temp_media_root) || !target_path.starts_with(temp_media_root) {
+        return Err(
+            "Violação de segurança: caminho temporário fora da pasta de mídia temporária do app."
+                .to_string(),
+        );
+    }
+
+    // Garante resolução canônica da raiz temporária antes da criação
+    let canonical_root = if temp_media_root.exists() {
+        temp_media_root
+            .canonicalize()
+            .map_err(|e| format!("Falha ao resolver caminho canônico raiz: {e}"))?
+    } else {
+        std::fs::create_dir_all(temp_media_root).map_err(|e| {
+            format!(
+                "Falha ao inicializar pasta raiz de mídia temporária ({}): {e}",
+                temp_media_root.display()
+            )
+        })?;
+        temp_media_root
+            .canonicalize()
+            .map_err(|e| format!("Falha ao resolver caminho canônico raiz criado: {e}"))?
+    };
+
+    // 4. Somente após TODAS as validações prévias passarem, cria a pasta de slot e grava o arquivo
+    std::fs::create_dir_all(&slot_dir).map_err(|e| {
+        format!(
+            "Falha ao criar pasta temporária de visualização ({}): {e}",
+            slot_dir.display()
+        )
+    })?;
+
+    if let Err(e) = std::fs::write(&target_path, bytes) {
+        let _ = std::fs::remove_dir_all(&slot_dir);
+        return Err(format!(
+            "Falha ao gravar cópia temporária do documento ({}): {e}",
+            target_path.display()
+        ));
+    }
+
+    // 5. Verificação canônica pós-gravação como defesa em profundidade
+    let canonical_target = match target_path.canonicalize() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = std::fs::remove_file(&target_path);
+            let _ = std::fs::remove_dir_all(&slot_dir);
+            return Err(format!(
+                "Falha ao resolver caminho canônico do arquivo temporário: {e}"
+            ));
+        }
+    };
 
     if !canonical_target.starts_with(&canonical_root) {
+        let _ = std::fs::remove_file(&target_path);
+        let _ = std::fs::remove_dir_all(&slot_dir);
         return Err(
             "Violação de segurança: caminho temporário fora da pasta de mídia temporária do app."
                 .to_string(),
@@ -504,6 +552,29 @@ mod tests {
         assert!(canonical_target.starts_with(&canonical_root));
 
         // Limpeza do diretório de teste
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_write_sanitized_temp_document_fails_early_and_writes_nothing_to_disk() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("eventrent_test_media_b1_{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let dummy_pdf = b"%PDF-1.7\ntest\n%%EOF";
+
+        // Título contendo caracteres proibidos (bidi / controle) faz a validação falhar antes do disco
+        let invalid_title = "manual\u{202E}fdp.bat";
+        let res = write_sanitized_temp_document(&temp_dir, invalid_title, dummy_pdf);
+        assert!(res.is_err(), "Deve falhar para caracteres bidi/invisíveis");
+
+        // B1: Prova cabal de que NENHUM arquivo ou diretório foi gravado no disco
+        let entries: Vec<_> = std::fs::read_dir(&temp_dir).unwrap().collect();
+        assert!(
+            entries.is_empty(),
+            "Nenhum arquivo ou subpasta pode ser gravado quando a validação falha: {entries:?}"
+        );
+
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
