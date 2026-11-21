@@ -5027,5 +5027,97 @@ mod unit_tests {
             safe_document_filename("Guia de Operação 2026").unwrap(),
             "Guia de Operação 2026.pdf"
         );
+
+        // B6: Rejeição estendida de caracteres invisíveis, formatação, direção e tags Unicode
+        use crate::domain::{
+            ensure_no_control_or_invisible_chars, is_dangerous_or_invisible_control_char,
+        };
+
+        let rejected_chars = [
+            '\u{00AD}',  // Soft hyphen
+            '\u{034F}',  // Combining grapheme joiner
+            '\u{0600}',  // Arabic number mark
+            '\u{0603}',  // Arabic sign safha
+            '\u{0605}',  // Arabic number mark above
+            '\u{061C}',  // Arabic letter mark (ALM)
+            '\u{06DD}',  // Arabic end of ayah
+            '\u{070F}',  // Syriac abbreviation mark
+            '\u{115F}',  // Hangul choseong filler
+            '\u{1160}',  // Hangul jungseong filler
+            '\u{17B4}',  // Khmer vowel inherent aq
+            '\u{17B5}',  // Khmer vowel inherent aa
+            '\u{180E}',  // Mongolian vowel separator
+            '\u{200B}',  // Zero width space
+            '\u{200C}',  // Zero width non-joiner
+            '\u{200D}',  // Zero width joiner (ZWJ) - permanece expressamente rejeitado
+            '\u{200E}',  // Left-to-right mark (LRM)
+            '\u{200F}',  // Right-to-left mark (RLM)
+            '\u{2028}',  // Line separator
+            '\u{2029}',  // Paragraph separator
+            '\u{202A}',  // Left-to-right embedding (LRE)
+            '\u{202B}',  // Right-to-left embedding (RLE)
+            '\u{202C}',  // Pop directional formatting (PDF)
+            '\u{202D}',  // Left-to-right override (LRO)
+            '\u{202E}',  // Right-to-left override (RLO)
+            '\u{2060}',  // Word joiner (WJ)
+            '\u{2061}',  // Function application
+            '\u{2062}',  // Invisible times
+            '\u{2063}',  // Invisible separator
+            '\u{2064}',  // Invisible plus
+            '\u{2066}',  // Left-to-right isolate (LRI)
+            '\u{2067}',  // Right-to-left isolate (RLI)
+            '\u{2068}',  // First strong isolate (FSI)
+            '\u{2069}',  // Pop directional isolate (PDI)
+            '\u{206A}',  // Inhibit symmetric swapping
+            '\u{206F}',  // Nominal digit shapes
+            '\u{2800}',  // Braille pattern blank
+            '\u{3164}',  // Hangul filler
+            '\u{FEFF}',  // Byte order mark / zero-width no-break space
+            '\u{FFA0}',  // Halfwidth hangul filler
+            '\u{FFF9}',  // Interlinear annotation anchor
+            '\u{FFFA}',  // Interlinear annotation separator
+            '\u{FFFB}',  // Interlinear annotation terminator
+            '\u{E0000}', // Language tag block start
+            '\u{E0020}', // Tag space
+            '\u{E007F}', // Cancel tag
+            '\u{E0100}', // Variation selector-17
+            '\u{E01EF}', // Variation selector-256
+            '\0',        // Caractere de controle nulo
+            '\n',        // Controle de quebra de linha
+            '\r',        // Carriage return
+            '\t',        // Tab
+            '\x1B',      // Escape
+        ];
+
+        for &c in &rejected_chars {
+            assert!(
+                is_dangerous_or_invisible_control_char(c),
+                "Caractere perigoso/invisível {c:?} (U+{:04X}) deve ser rejeitado por is_dangerous_or_invisible_control_char",
+                c as u32
+            );
+            assert!(
+                ensure_no_control_or_invisible_chars("titulo", &format!("Prefixo{c}Sufixo")).is_err(),
+                "ensure_no_control_or_invisible_chars deve falhar para texto contendo {c:?} (U+{:04X})",
+                c as u32
+            );
+            assert!(
+                sanitize_safe_document_stem(&format!("Documento{c}Seguro")).is_err(),
+                "sanitize_safe_document_stem deve falhar para caractere perigoso {c:?} (U+{:04X})",
+                c as u32
+            );
+        }
+
+        // B6: Emoji variation selectors (U+FE00 a U+FE0F) NÃO devem ser rejeitados
+        for code in 0xFE00..=0xFE0F {
+            let vs = char::from_u32(code).unwrap();
+            assert!(
+                !is_dangerous_or_invisible_control_char(vs),
+                "Variation selector padrão {vs:?} (U+{code:04X}) deve ser aceito",
+            );
+        }
+        assert!(
+            ensure_no_control_or_invisible_chars("titulo", "Microfone 🎤\u{FE0F} Sem Fio").is_ok(),
+            "Texto com emoji e variation selector U+FE0F deve ser aceito"
+        );
     }
 }
