@@ -1,0 +1,28 @@
+{
+  "command": "list_venues",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": {
+    "items": [
+      {
+        "active": true,
+        "city": "São Paulo",
+        "created_at": "2026-11-21T10:00:00Z",
+        "id": "018f0000-0000-7000-8000-000000000050",
+        "name": "Espaço das Américas",
+        "primary_contact_name": "João Gerente",
+        "primary_contact_phone": "+5511987654321",
+        "spaces_count": 1,
+        "state": "SP",
+        "tenant_id": "018f0000-0000-7000-8000-000000000001",
+        "updated_at": "2026-11-21T10:00:00Z"
+      }
+    ],
+    "next_cursor": null,
+    "total": 1
+  },
+  "sample_errors": {
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada."
+  }
+}

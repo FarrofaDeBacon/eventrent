@@ -1,0 +1,26 @@
+{
+  "command": "get_app_status",
+  "is_public": true,
+  "has_return_value": true,
+  "sample_output": {
+    "branding": {
+      "accent_color": "#F59E0B",
+      "company_name": "EventRent Audiovisual",
+      "icon_url": null,
+      "logo_dark_url": null,
+      "logo_url": null,
+      "primary_color": "#E11D48",
+      "secondary_color": "#1E293B",
+      "trading_name": "EventRent"
+    },
+    "config": {
+      "inactivity_timeout_minutes": 30,
+      "mode": "local",
+      "setup_completed": true
+    },
+    "default_tenant_id": "018f0000-0000-7000-8000-000000000001",
+    "has_owner": true,
+    "session": null
+  },
+  "sample_errors": {}
+}

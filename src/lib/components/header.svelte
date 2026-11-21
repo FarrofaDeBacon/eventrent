@@ -68,8 +68,10 @@
         class="flex items-center gap-2.5 border-l border-border pl-3"
         data-testid="header-user-info"
       >
-        <div
-          class="hidden sm:flex items-center gap-2 rounded-[var(--radius)] bg-muted/60 px-2.5 py-1 text-xs"
+        <a
+          href="/settings/account"
+          class="hidden sm:flex items-center gap-2 rounded-[var(--radius)] bg-muted/60 hover:bg-muted px-2.5 py-1 text-xs transition-colors"
+          title={$_("account.viewProfileTooltip")}
         >
           <User class="h-3.5 w-3.5 text-primary shrink-0" />
           <span class="font-medium text-foreground truncate max-w-36">
@@ -78,7 +80,7 @@
           <Badge variant="secondary">
             {appSession.session.role_name}
           </Badge>
-        </div>
+        </a>
 
         <Button
           variant="outline"

@@ -1,0 +1,15 @@
+{
+  "command": "load_suggested_catalog_categories",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": {
+    "attributes_created": 21,
+    "categories_created": 7
+  },
+  "sample_errors": {
+    "Conflict": "Conflito de registro: Já existe um registro com os dados informados.",
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada.",
+    "Validation": "Erro de validação: Dados de entrada inválidos para a operação."
+  }
+}

@@ -271,6 +271,7 @@ pub async fn contract_user_creation_and_rbac(
         authenticated_at: chrono::Utc::now().to_rfc3339(),
         last_activity_at: chrono::Utc::now().to_rfc3339(),
         inactivity_timeout_minutes: 30,
+        auth_epoch: 0,
     };
     let owner_role = services
         .stores
@@ -508,6 +509,28 @@ pub async fn contract_recovery_key_rotation_and_lockout(
     assert!(matches!(old_key_reuse, Err(CoreError::InvalidCredentials)));
 }
 
+/// 8e. Contrato: Regeneração autenticada de chave de recuperação (S1.3)
+pub async fn contract_authenticated_recovery_key_regeneration(
+    services: &CoreServices,
+    session: &SessionInfo,
+    current_password: &str,
+) -> String {
+    // Falha com senha errada incrementa falhas e retorna credenciais inválidas
+    let fail = services
+        .regenerate_recovery_key(session, "SenhaIncorreta#9999", &LoginPolicy::default())
+        .await;
+    assert!(matches!(fail, Err(CoreError::InvalidCredentials)));
+
+    // Sucesso com senha correta devolve nova chave
+    let regen_res = services
+        .regenerate_recovery_key(session, current_password, &LoginPolicy::default())
+        .await
+        .expect("Regeneração autenticada de chave deve ter sucesso");
+
+    assert!(regen_res.new_recovery_key.starts_with("ER-"));
+    regen_res.new_recovery_key
+}
+
 /// 9. Contrato: Log de Auditoria append-only.
 pub async fn contract_audit_log(stores: &StoreBundle, tenant_id: &str) {
     let audits = stores
@@ -563,6 +586,7 @@ pub async fn contract_unique_partial_indexes(stores: &StoreBundle, tenant_id: &s
         updated_at: now.clone(),
         deleted_at: None,
         created_by: None,
+        auth_epoch: 0,
     };
     stores
         .users
@@ -589,6 +613,7 @@ pub async fn contract_unique_partial_indexes(stores: &StoreBundle, tenant_id: &s
         updated_at: now,
         deleted_at: None,
         created_by: None,
+        auth_epoch: 0,
     };
     let duplicate_result = stores.users.create(&user2).await;
     assert!(
@@ -1926,6 +1951,7 @@ mod unit_tests {
                 authenticated_at: "2026-01-01T00:00:00Z".to_string(),
                 last_activity_at: "2026-01-01T00:00:00Z".to_string(),
                 inactivity_timeout_minutes: 30,
+                auth_epoch: 0,
             },
             branding: TenantBranding {
                 id: "b1".to_string(),
@@ -1966,6 +1992,7 @@ mod unit_tests {
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             deleted_at: None,
             created_by: None,
+            auth_epoch: 0,
         };
         let user_rec_debug = format!("{user_rec:?}");
         assert!(!user_rec_debug.contains("secret_hash_value"));
@@ -2615,6 +2642,15 @@ mod unit_tests {
             async fn update_password_and_recovery_key(
                 &self,
                 _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update_recovery_key(
+                &self,
                 _: &str,
                 _: &str,
                 _: &str,
@@ -4692,14 +4728,15 @@ mod unit_tests {
         buf
     }
 
-    #[test]
-    fn test_media_core_validators_magic_exif_limits_and_filenames() {
+    #[tokio::test]
+    async fn test_media_core_validators_magic_exif_limits_and_filenames() {
         use crate::domain::{
-            build_media_storage_key, compute_sha256_hex, sanitize_media_filename,
-            validate_display_image, validate_media_title, validate_model_media_quota,
-            validate_optional_media_language, validate_optional_media_note, validate_pdf_document,
-            validate_sha256_hex, validate_thumbnail_image, MediaKind, MediaMimeType,
-            MAX_DISPLAY_IMAGE_BYTES, MAX_PDF_DOCUMENT_BYTES, MAX_THUMB_IMAGE_BYTES,
+            build_media_storage_key, compute_sha256_hex, compute_sha256_hex_async,
+            sanitize_media_filename, validate_display_image, validate_media_title,
+            validate_model_media_quota, validate_optional_media_language,
+            validate_optional_media_note, validate_pdf_document, validate_sha256_hex,
+            validate_thumbnail_image, MediaKind, MediaMimeType, MAX_DISPLAY_IMAGE_BYTES,
+            MAX_PDF_DOCUMENT_BYTES, MAX_THUMB_IMAGE_BYTES,
         };
         use crate::error::CoreError;
 
@@ -4712,6 +4749,18 @@ mod unit_tests {
         assert_eq!(
             sha_abc,
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+
+        // B2: Validação de compute_sha256_hex_async (propaga Result<String, CoreError>, pequeno e grande)
+        assert_eq!(
+            compute_sha256_hex_async(b"abc".to_vec()).await.unwrap(),
+            sha_abc
+        );
+        let big_buffer = vec![b'x'; 64 * 1024]; // 64 KB (> 32 KB, offload para spawn_blocking)
+        let expected_big_sha = compute_sha256_hex(&big_buffer);
+        assert_eq!(
+            compute_sha256_hex_async(big_buffer).await.unwrap(),
+            expected_big_sha
         );
         assert_eq!(
             compute_sha256_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
@@ -4868,15 +4917,23 @@ mod unit_tests {
 
         // 8. PDF válido, MIME falso, truncado e acima de 25 MB
         let valid_pdf = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF";
-        let res_pdf = validate_pdf_document("application/pdf", valid_pdf).unwrap();
+        let res_pdf = validate_pdf_document("application/pdf", valid_pdf)
+            .await
+            .unwrap();
         assert_eq!(res_pdf.mime_type, MediaMimeType::ApplicationPdf);
         assert_eq!(res_pdf.byte_size, valid_pdf.len() as i64);
 
-        assert!(validate_pdf_document("image/png", valid_pdf).is_err());
-        assert!(validate_pdf_document("application/pdf", &valid_png).is_err());
-        assert!(validate_pdf_document("application/pdf", b"%PDF-").is_err());
+        assert!(validate_pdf_document("image/png", valid_pdf).await.is_err());
+        assert!(validate_pdf_document("application/pdf", &valid_png)
+            .await
+            .is_err());
+        assert!(validate_pdf_document("application/pdf", b"%PDF-")
+            .await
+            .is_err());
         let big_pdf = vec![b'A'; MAX_PDF_DOCUMENT_BYTES + 1];
-        assert!(validate_pdf_document("application/pdf", &big_pdf).is_err());
+        assert!(validate_pdf_document("application/pdf", &big_pdf)
+            .await
+            .is_err());
 
         // 9. Quotas por modelo (12 fotos, 20 documentos)
         assert!(validate_model_media_quota(MediaKind::Image, 11).is_ok());
@@ -4986,5 +5043,138 @@ mod unit_tests {
         assert!(validate_media_title("Manual\u{FEFF}BOM").is_err());
         assert!(validate_optional_media_note("credit_note", Some("Autor\u{202C}")).is_err());
         assert!(validate_optional_media_language(Some("pt\u{200E}-BR")).is_err());
+
+        // B4: Nomes reservados com dígitos sobrescritos (COM¹..³, LPT¹..³) e exclusão de dígitos não ASCII
+        let reserved_superscripts = [
+            "COM¹",
+            "com¹",
+            "COM²",
+            "com²",
+            "COM³",
+            "com³",
+            "LPT¹",
+            "lpt¹",
+            "LPT²",
+            "lpt²",
+            "LPT³",
+            "lpt³",
+            "COM¹.pdf",
+            "LPT¹.pdf",
+        ];
+        for name in reserved_superscripts {
+            assert_eq!(
+                safe_document_filename(name).unwrap(),
+                "documento.pdf",
+                "Nome reservado com sobrescrito {name} deve virar documento.pdf"
+            );
+            assert_eq!(
+                normalize_media_filename(name, MediaMimeType::ApplicationPdf).unwrap(),
+                "documento.pdf",
+                "Nome reservado com sobrescrito {name} em original_filename deve virar documento.pdf"
+            );
+        }
+
+        // B4: Dígitos não ASCII (como sobrescritos ¹, ² ou numerais Devanagari) são excluídos do stem seguro,
+        // enquanto letras Unicode e dígitos ASCII permanecem.
+        assert_eq!(
+            safe_document_filename("Manual-Versão¹²-3").unwrap(),
+            "Manual-Versão-3.pdf"
+        );
+        assert_eq!(
+            safe_document_filename("Guia de Operação 2026").unwrap(),
+            "Guia de Operação 2026.pdf"
+        );
+
+        // B6: Rejeição estendida de caracteres invisíveis, formatação, direção e tags Unicode
+        use crate::domain::{
+            ensure_no_control_or_invisible_chars, is_dangerous_or_invisible_control_char,
+        };
+
+        let rejected_chars = [
+            '\u{00AD}',  // Soft hyphen
+            '\u{034F}',  // Combining grapheme joiner
+            '\u{0600}',  // Arabic number mark
+            '\u{0603}',  // Arabic sign safha
+            '\u{0605}',  // Arabic number mark above
+            '\u{061C}',  // Arabic letter mark (ALM)
+            '\u{06DD}',  // Arabic end of ayah
+            '\u{070F}',  // Syriac abbreviation mark
+            '\u{115F}',  // Hangul choseong filler
+            '\u{1160}',  // Hangul jungseong filler
+            '\u{17B4}',  // Khmer vowel inherent aq
+            '\u{17B5}',  // Khmer vowel inherent aa
+            '\u{180E}',  // Mongolian vowel separator
+            '\u{200B}',  // Zero width space
+            '\u{200C}',  // Zero width non-joiner
+            '\u{200D}',  // Zero width joiner (ZWJ) - permanece expressamente rejeitado
+            '\u{200E}',  // Left-to-right mark (LRM)
+            '\u{200F}',  // Right-to-left mark (RLM)
+            '\u{2028}',  // Line separator
+            '\u{2029}',  // Paragraph separator
+            '\u{202A}',  // Left-to-right embedding (LRE)
+            '\u{202B}',  // Right-to-left embedding (RLE)
+            '\u{202C}',  // Pop directional formatting (PDF)
+            '\u{202D}',  // Left-to-right override (LRO)
+            '\u{202E}',  // Right-to-left override (RLO)
+            '\u{2060}',  // Word joiner (WJ)
+            '\u{2061}',  // Function application
+            '\u{2062}',  // Invisible times
+            '\u{2063}',  // Invisible separator
+            '\u{2064}',  // Invisible plus
+            '\u{2066}',  // Left-to-right isolate (LRI)
+            '\u{2067}',  // Right-to-left isolate (RLI)
+            '\u{2068}',  // First strong isolate (FSI)
+            '\u{2069}',  // Pop directional isolate (PDI)
+            '\u{206A}',  // Inhibit symmetric swapping
+            '\u{206F}',  // Nominal digit shapes
+            '\u{2800}',  // Braille pattern blank
+            '\u{3164}',  // Hangul filler
+            '\u{FEFF}',  // Byte order mark / zero-width no-break space
+            '\u{FFA0}',  // Halfwidth hangul filler
+            '\u{FFF9}',  // Interlinear annotation anchor
+            '\u{FFFA}',  // Interlinear annotation separator
+            '\u{FFFB}',  // Interlinear annotation terminator
+            '\u{E0000}', // Language tag block start
+            '\u{E0020}', // Tag space
+            '\u{E007F}', // Cancel tag
+            '\u{E0100}', // Variation selector-17
+            '\u{E01EF}', // Variation selector-256
+            '\0',        // Caractere de controle nulo
+            '\n',        // Controle de quebra de linha
+            '\r',        // Carriage return
+            '\t',        // Tab
+            '\x1B',      // Escape
+        ];
+
+        for &c in &rejected_chars {
+            assert!(
+                is_dangerous_or_invisible_control_char(c),
+                "Caractere perigoso/invisível {c:?} (U+{:04X}) deve ser rejeitado por is_dangerous_or_invisible_control_char",
+                c as u32
+            );
+            assert!(
+                ensure_no_control_or_invisible_chars("titulo", &format!("Prefixo{c}Sufixo")).is_err(),
+                "ensure_no_control_or_invisible_chars deve falhar para texto contendo {c:?} (U+{:04X})",
+                c as u32
+            );
+            assert!(
+                sanitize_safe_document_stem(&format!("Documento{c}Seguro")).is_err(),
+                "sanitize_safe_document_stem deve falhar para caractere perigoso {c:?} (U+{:04X})",
+                c as u32
+            );
+        }
+
+        // B6: Emoji variation selectors (U+FE00 a U+FE0F) NÃO devem ser rejeitados
+        for code in 0xFE00..=0xFE0F {
+            let vs = char::from_u32(code).unwrap();
+            assert!(
+                !is_dangerous_or_invisible_control_char(vs),
+                "Variation selector padrão {vs:?} (U+{code:04X}) deve ser aceito",
+            );
+        }
+        assert!(
+            ensure_no_control_or_invisible_chars("titulo", "Microfone 🎤\u{FE0F} Sem Fio").is_ok(),
+            "Texto com emoji e variation selector U+FE0F deve ser aceito"
+        );
     }
 }

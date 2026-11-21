@@ -1,0 +1,38 @@
+{
+  "command": "complete_initial_setup",
+  "is_public": true,
+  "has_return_value": true,
+  "sample_output": {
+    "branding": {
+      "accent_color": "#F59E0B",
+      "company_name": "EventRent Audiovisual",
+      "icon_url": null,
+      "logo_dark_url": null,
+      "logo_url": null,
+      "primary_color": "#E11D48",
+      "secondary_color": "#1E293B",
+      "trading_name": "EventRent",
+      "updated_at": "2026-11-21T10:00:00Z"
+    },
+    "recovery_key": "ER-ABCD-EFGH-1234-5678",
+    "session": {
+      "auth_epoch": 0,
+      "authenticated_at": "2026-11-21T10:00:00Z",
+      "email": "operador@eventrent.com.br",
+      "inactivity_timeout_minutes": 30,
+      "last_activity_at": "2026-11-21T10:00:00Z",
+      "name": "Operador Audiovisual",
+      "permissions": ["all"],
+      "role_id": "018f0000-0000-7000-8000-000000000031",
+      "role_name": "Proprietário",
+      "role_slug": "proprietario",
+      "tenant_id": "018f0000-0000-7000-8000-000000000001",
+      "user_id": "018f0000-0000-7000-8000-000000000002"
+    },
+    "tenant_id": "018f0000-0000-7000-8000-000000000001"
+  },
+  "sample_errors": {
+    "Conflict": "Conflito de registro: Sistema já configurado.",
+    "Validation": "Erro de validação: Senha deve ter pelo menos 8 caracteres."
+  }
+}

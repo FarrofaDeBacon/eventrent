@@ -124,6 +124,14 @@ pub trait UserStore: Send + Sync {
         recovery_key_hash: &str,
         updated_at: &str,
     ) -> Result<()>;
+    /// Atualiza exclusivamente a chave de recuperação, zerando falhas e bloqueios de recuperação.
+    async fn update_recovery_key(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+        recovery_key_hash: &str,
+        updated_at: &str,
+    ) -> Result<()>;
 }
 
 #[async_trait]

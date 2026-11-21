@@ -10,7 +10,7 @@ As regras de negócio do EventRent operam de maneira determinística, implementa
 
 - O modo de operação é armazenado em `<app_data_dir>/config.json` **fora do banco de dados**, pois deve ser lido antes mesmo de saber se o aplicativo abrirá o SQLite local ou conectará a uma API em nuvem:
   - **Modo Local (`local`)**: Um computador, banco SQLite local em `<app_data_dir>/eventrent.db`, operação 100% offline. Ativo desde a Fase 1A.
-  - **Modo Nuvem (`cloud`)**: Múltiplos computadores compartilhando a mesma empresa via servidor central (Fastify + PostgreSQL). Visível no assistente de instalação com indicação _"Em breve"_, habilitado na Fase 2.5.
+  - **Modo Nuvem (`cloud`)**: Múltiplos computadores compartilhando a mesma empresa via servidor central (Axum + PostgreSQL). Visível no assistente de instalação com indicação _"Em breve"_, habilitado na Fase 2.5.
 
 ### 2.2. Primeira Execução e Chave de Recuperação
 
@@ -47,47 +47,51 @@ As regras de negócio do EventRent operam de maneira determinística, implementa
 
 ## 4. Controle de Acesso Baseado em Perfis e Permissões (RBAC)
 
-### 4.1. Catálogo de Permissões (`resource:action`)
+### 4.1. Catálogo de Permissões
 
-As permissões são definidas como constantes imutáveis em `crates/core/src/domain/permission.rs`:
+As permissões são definidas como constantes imutáveis em `crates/core/src/domain/permission.rs` (`ALL_PERMISSIONS`):
 
-| Constante              | Chave (`resource:action`) | Descrição                                                   |
-| ---------------------- | ------------------------- | ----------------------------------------------------------- |
-| `DASHBOARD_VIEW`       | `dashboard:view`          | Visualizar painel operacional e indicadores gerais          |
-| `USERS_VIEW`           | `users:view`              | Listar e consultar usuários do tenant                       |
-| `USERS_CREATE`         | `users:create`            | Cadastrar novos usuários                                    |
-| `USERS_EDIT`           | `users:edit`              | Editar nome, e-mail e perfil de usuários                    |
-| `USERS_DEACTIVATE`     | `users:deactivate`        | Ativar ou desativar contas de usuários                      |
-| `USERS_RESET_PASSWORD` | `users:reset_password`    | Redefinir senha de outros usuários                          |
-| `ROLES_VIEW`           | `roles:view`              | Consultar perfis de acesso e matriz de permissões           |
-| `ROLES_MANAGE`         | `roles:manage`            | Gerenciar perfis personalizados (fases futuras)             |
-| `BRANDING_VIEW`        | `branding:view`           | Consultar configurações de aparência e marca                |
-| `BRANDING_EDIT`        | `branding:edit`           | Alterar nome da empresa, cores e logotipo                   |
-| `SETTINGS_VIEW`        | `settings:view`           | Acessar área de configurações do sistema                    |
-| `SETTINGS_EDIT`        | `settings:edit`           | Alterar parâmetros globais do sistema                       |
-| `AUDIT_VIEW`           | `audit:view`              | Consultar trilha de auditoria (`audit_log`)                 |
-| `INVENTORY_VIEW`       | `inventory:view`          | Consultar catálogo de equipamentos, números de série e kits |
-| `INVENTORY_EDIT`       | `inventory:edit`          | Cadastrar e editar equipamentos, categorias e estoque       |
-| `QUOTES_VIEW`          | `quotes:view`             | Consultar clientes, orçamentos e contratos                  |
-| `QUOTES_EDIT`          | `quotes:edit`             | Criar, editar e aprovar orçamentos e reservas               |
-| `OPERATIONS_VIEW`      | `operations:view`         | Consultar ordens de separação, saída, retorno e manutenção  |
-| `OPERATIONS_EXECUTE`   | `operations:execute`      | Executar conferência de saída/retorno e abrir manutenção    |
-| `FINANCE_VIEW`         | `finance:view`            | Consultar contas a receber, faturamento e fluxo de caixa    |
-| `FINANCE_EDIT`         | `finance:edit`            | Registrar baixas, cobranças e ajustes financeiros           |
+| Constante                 | Chave                | Descrição                                                   |
+| ------------------------- | -------------------- | ----------------------------------------------------------- |
+| `PERM_USER_READ`          | `user:read`          | Listar e consultar usuários do tenant                       |
+| `PERM_USER_MANAGE`        | `user:manage`        | Criar, editar, ativar, desativar e redefinir senha          |
+| `PERM_ROLE_READ`          | `role:read`          | Consultar perfis de acesso e matriz de permissões           |
+| `PERM_ROLE_MANAGE`        | `role:manage`        | Criar e gerenciar perfis personalizados                     |
+| `PERM_BRANDING_READ`      | `branding:read`      | Consultar configurações de aparência e marca                |
+| `PERM_BRANDING_MANAGE`    | `branding:manage`    | Alterar nome da empresa, cores, logotipo e ícone            |
+| `PERM_CUSTOMER_READ`      | `customer:read`      | Consultar clientes e contatos                               |
+| `PERM_CUSTOMER_MANAGE`    | `customer:manage`    | Criar e editar clientes e contatos                          |
+| `PERM_SUPPLIER_READ`      | `supplier:read`      | Consultar fornecedores                                      |
+| `PERM_SUPPLIER_MANAGE`    | `supplier:manage`    | Criar e editar fornecedores                                 |
+| `PERM_VENUE_READ`         | `venue:read`         | Consultar locais e espaços de eventos                       |
+| `PERM_VENUE_MANAGE`       | `venue:manage`       | Criar e editar locais e espaços de eventos                  |
+| `PERM_CATALOG_READ`       | `catalog:read`       | Consultar catálogo de modelos, marcas e categorias          |
+| `PERM_CATALOG_MANAGE`     | `catalog:manage`     | Criar e editar modelos, fotos, manuais, marcas e categorias |
+| `PERM_RESERVATION_READ`   | `reservation:read`   | Consultar reservas de equipamentos                          |
+| `PERM_RESERVATION_MANAGE` | `reservation:manage` | Criar, alterar e cancelar reservas de equipamentos          |
+| `PERM_QUOTE_READ`         | `quote:read`         | Consultar orçamentos e propostas comerciais                 |
+| `PERM_QUOTE_MANAGE`       | `quote:manage`       | Criar, editar e aprovar orçamentos e propostas comerciais   |
+| `PERM_WAREHOUSE_READ`     | `warehouse:read`     | Consultar ordens de separação, saída, retorno e estoque     |
+| `PERM_WAREHOUSE_OPERATE`  | `warehouse:operate`  | Executar conferência de saída/retorno e manutenção          |
+| `PERM_FINANCE_READ`       | `finance:read`       | Consultar contas a receber, faturamento e fluxo de caixa    |
+| `PERM_FINANCE_MANAGE`     | `finance:manage`     | Registrar baixas, cobranças e ajustes financeiros           |
+| `PERM_AUDIT_READ`         | `audit:read`         | Consultar trilha de auditoria (`audit_log`)                 |
+| `PERM_SETTINGS_READ`      | `settings:read`      | Consultar parâmetros globais do sistema                     |
+| `PERM_SETTINGS_MANAGE`    | `settings:manage`    | Alterar parâmetros globais do sistema                       |
 
 ### 4.2. Perfis de Sistema Padrão
 
 Criados de forma idempotente por `ensure_system_roles` para cada tenant:
 
-1. **Proprietário (`proprietario`)**: Possui **todas as 21 permissões** do sistema.
-2. **Comercial (`comercial`)**: `dashboard:view`, `branding:view`, `inventory:view`, `quotes:view`, `quotes:edit`, `finance:view`.
-3. **Estoque (`estoque`)**: `dashboard:view`, `branding:view`, `inventory:view`, `inventory:edit`, `operations:view`, `operations:execute`.
-4. **Técnico (`tecnico`)**: `dashboard:view`, `branding:view`, `inventory:view`, `operations:view`, `operations:execute`.
-5. **Financeiro (`financeiro`)**: `dashboard:view`, `branding:view`, `quotes:view`, `finance:view`, `finance:edit`.
+1. **Proprietário (`owner`)**: Possui **todas as 25 permissões** do catálogo canônico (`ALL_PERMISSIONS`).
+2. **Comercial (`commercial`)**: `customer:read`, `customer:manage`, `supplier:read`, `venue:read`, `venue:manage`, `catalog:read`, `reservation:read`, `reservation:manage`, `quote:read`, `quote:manage`, `branding:read`.
+3. **Estoque (`warehouse`)**: `supplier:read`, `supplier:manage`, `venue:read`, `venue:manage`, `catalog:read`, `catalog:manage`, `reservation:read`, `warehouse:read`, `warehouse:operate`, `branding:read`.
+4. **Técnico (`technician`)**: `venue:read`, `catalog:read`, `reservation:read`, `warehouse:read`, `warehouse:operate`, `branding:read`.
+5. **Financeiro (`finance`)**: `customer:read`, `supplier:read`, `supplier:manage`, `venue:read`, `quote:read`, `reservation:read`, `finance:read`, `finance:manage`, `audit:read`, `branding:read`.
 
 ### 4.3. Regras de Proteção de Contas e Auditoria
 
-1. **Verificação no Core**: Toda operação em `CoreServices` exige `SessionInfo` válida e valida explicitamente a permissão `resource:action` antes de executar qualquer leitura ou escrita sensível.
+1. **Verificação no Core**: Toda operação em `CoreServices` exige `SessionInfo` válida e valida explicitamente as permissões canônicas antes de executar qualquer leitura ou escrita sensível.
 2. **Proteção do Último Proprietário**: É proibido desativar (`set_user_active(..., false)`) ou alterar o perfil (`update_user`) de um usuário `Proprietário` caso ele seja o último `Proprietário` ativo do tenant (`count_active_owners <= 1`).
 3. **Proibição de Autodesativação**: Um usuário nunca pode desativar a própria conta (`actor.user_id == target_user_id`).
 4. **Auditoria Obrigatória (`audit_log`)**: Toda criação/edição/ativação/desativação de usuário, redefinição de senha, recuperação por chave, bloqueio de conta e alteração de marca grava um registro em `audit_log` com `actor_id`, `action`, `before_json` e `after_json`.

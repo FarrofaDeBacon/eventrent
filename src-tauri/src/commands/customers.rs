@@ -11,7 +11,7 @@ pub async fn list_customers(
     state: State<'_, AppState>,
     filter: CustomerFilter,
 ) -> Result<CustomerPage, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .list_customers(&session, &filter)
@@ -24,7 +24,7 @@ pub async fn get_customer(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<CustomerWithDetails, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .get_customer(&session, &id)
@@ -37,7 +37,7 @@ pub async fn create_customer(
     state: State<'_, AppState>,
     input: CreateCustomerInput,
 ) -> Result<CustomerWithDetails, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .create_customer(&session, &input)
@@ -51,7 +51,7 @@ pub async fn update_customer(
     id: String,
     input: UpdateCustomerInput,
 ) -> Result<CustomerWithDetails, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .update_customer(&session, &id, &input)
@@ -65,7 +65,7 @@ pub async fn set_customer_active(
     id: String,
     active: bool,
 ) -> Result<CustomerWithDetails, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .set_customer_active(&session, &id, active)
@@ -75,7 +75,7 @@ pub async fn set_customer_active(
 
 #[tauri::command]
 pub async fn delete_customer(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .delete_customer(&session, &id)
@@ -89,7 +89,7 @@ pub async fn add_customer_role(
     id: String,
     role: CustomerRole,
 ) -> Result<CustomerWithDetails, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .add_customer_role(&session, &id, role)

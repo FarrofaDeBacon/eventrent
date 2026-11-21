@@ -1,0 +1,10 @@
+{
+  "command": "check_venue_duplicate_name_city",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": false,
+  "sample_errors": {
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada."
+  }
+}

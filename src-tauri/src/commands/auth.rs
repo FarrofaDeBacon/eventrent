@@ -1,5 +1,9 @@
+use crate::guards::require_session;
 use crate::AppState;
-use eventrent_core::{LoginInput, RecoverPasswordInput, RecoverPasswordResult, SessionInfo};
+use eventrent_core::{
+    LoginInput, RecoverPasswordInput, RecoverPasswordResult, RegenerateRecoveryKeyInput,
+    RegenerateRecoveryKeyResult, SessionInfo,
+};
 use tauri::State;
 
 #[tauri::command]
@@ -48,6 +52,22 @@ pub async fn recover_password(
     state
         .services
         .recover_password(&state.default_tenant_id, &input, &policy)
+        .await
+        .map_err(crate::map_core_err)
+}
+
+#[tauri::command]
+pub async fn regenerate_recovery_key(
+    state: State<'_, AppState>,
+    input: RegenerateRecoveryKeyInput,
+) -> Result<RegenerateRecoveryKeyResult, String> {
+    let session = require_session(&state).await?;
+    let policy = eventrent_core::LoginPolicy {
+        reveal_account_locked: true,
+    };
+    state
+        .services
+        .regenerate_recovery_key(&session, &input.current_password, &policy)
         .await
         .map_err(crate::map_core_err)
 }

@@ -10,7 +10,7 @@ pub async fn list_venues(
     state: State<'_, AppState>,
     filter: VenueFilter,
 ) -> Result<VenuePage, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .list_venues(&session, &filter)
@@ -20,7 +20,7 @@ pub async fn list_venues(
 
 #[tauri::command]
 pub async fn get_venue(state: State<'_, AppState>, id: String) -> Result<VenueWithDetails, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .get_venue(&session, &id)
@@ -33,7 +33,7 @@ pub async fn create_venue(
     state: State<'_, AppState>,
     input: CreateVenueInput,
 ) -> Result<VenueWithDetails, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .create_venue(&session, &input)
@@ -46,7 +46,7 @@ pub async fn update_venue(
     state: State<'_, AppState>,
     input: UpdateVenueInput,
 ) -> Result<VenueWithDetails, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .update_venue(&session, &input)
@@ -60,7 +60,7 @@ pub async fn set_venue_active(
     id: String,
     active: bool,
 ) -> Result<VenueWithDetails, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .set_venue_active(&session, &id, active)
@@ -70,7 +70,7 @@ pub async fn set_venue_active(
 
 #[tauri::command]
 pub async fn delete_venue(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .delete_venue(&session, &id)
@@ -85,7 +85,7 @@ pub async fn check_venue_duplicate_name_city(
     city: Option<String>,
     exclude_id: Option<String>,
 ) -> Result<bool, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .check_venue_duplicate_name_city(&session, &name, city.as_deref(), exclude_id.as_deref())

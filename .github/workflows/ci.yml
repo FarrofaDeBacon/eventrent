@@ -84,10 +84,11 @@ jobs:
         run: pnpm test:run
 
       - name: Cache dos Navegadores Playwright
-        if: runner.os == 'Linux'
         uses: actions/cache@v4
         with:
-          path: ~/.cache/ms-playwright
+          path: |
+            ~/.cache/ms-playwright
+            ~/AppData/Local/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-playwright-
@@ -96,8 +97,11 @@ jobs:
         if: runner.os == 'Linux'
         run: pnpm exec playwright install --with-deps chromium
 
+      - name: Instalar navegador Playwright (Windows)
+        if: runner.os == 'Windows'
+        run: pnpm exec playwright install chromium
+
       - name: Testes E2E (Playwright)
-        if: runner.os == 'Linux'
         run: pnpm test:e2e
 
       - name: Rustfmt Check

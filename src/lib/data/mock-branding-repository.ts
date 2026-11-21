@@ -10,6 +10,12 @@ import {
   type UpdateBrandingInput,
 } from "./types";
 
+if (!import.meta.env.DEV && import.meta.env.VITE_E2E !== "1") {
+  throw new Error(
+    "Mocks não podem ser carregados no ambiente de produção. Execute o aplicativo desktop EventRent.",
+  );
+}
+
 export class MockBrandingRepository implements BrandingRepository {
   private isolatedBranding: TenantBranding | null = null;
 

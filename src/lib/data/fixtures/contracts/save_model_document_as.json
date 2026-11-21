@@ -1,0 +1,11 @@
+{
+  "command": "save_model_document_as",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": "C:\\Users\\User\\Documents\\manual.pdf",
+  "sample_errors": {
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "NotFound": "Registro não encontrado: O identificador solicitado não existe.",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada."
+  }
+}

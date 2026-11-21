@@ -6,6 +6,9 @@ import type {
   InitialSetupResult,
   LoginInput,
   RecoverPasswordInput,
+  RecoverPasswordResult,
+  RegenerateRecoveryKeyInput,
+  RegenerateRecoveryKeyResult,
   SessionInfo,
 } from "./types";
 
@@ -34,7 +37,20 @@ export class TauriAuthRepository implements AuthRepository {
     return await invoke<SessionInfo | null>("get_current_session");
   }
 
-  async recoverPasswordWithKey(input: RecoverPasswordInput): Promise<void> {
-    await invoke<void>("recover_password", { input });
+  async recoverPasswordWithKey(
+    input: RecoverPasswordInput,
+  ): Promise<RecoverPasswordResult> {
+    return await invoke<RecoverPasswordResult>("recover_password", { input });
+  }
+
+  async regenerateRecoveryKey(
+    input: RegenerateRecoveryKeyInput,
+  ): Promise<RegenerateRecoveryKeyResult> {
+    return await invoke<RegenerateRecoveryKeyResult>(
+      "regenerate_recovery_key",
+      {
+        input,
+      },
+    );
   }
 }

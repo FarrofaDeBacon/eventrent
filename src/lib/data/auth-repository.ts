@@ -4,6 +4,9 @@ import type {
   InitialSetupResult,
   LoginInput,
   RecoverPasswordInput,
+  RecoverPasswordResult,
+  RegenerateRecoveryKeyInput,
+  RegenerateRecoveryKeyResult,
   SessionInfo,
 } from "./types";
 
@@ -17,5 +20,10 @@ export interface AuthRepository {
   login(input: LoginInput): Promise<SessionInfo>;
   logout(): Promise<void>;
   getSession(): Promise<SessionInfo | null>;
-  recoverPasswordWithKey(input: RecoverPasswordInput): Promise<void>;
+  recoverPasswordWithKey(
+    input: RecoverPasswordInput,
+  ): Promise<RecoverPasswordResult>;
+  regenerateRecoveryKey(
+    input: RegenerateRecoveryKeyInput,
+  ): Promise<RegenerateRecoveryKeyResult>;
 }
