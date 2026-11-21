@@ -1,0 +1,32 @@
+{
+  "command": "list_customers",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": {
+    "items": [
+      {
+        "active": true,
+        "created_at": "2026-11-21T10:00:00Z",
+        "document_number": "12345678000195",
+        "document_type": "cnpj",
+        "id": "018f0000-0000-7000-8000-000000000040",
+        "name": "Showtime Produções LTDA",
+        "person_type": "legal",
+        "primary_city": "São Paulo",
+        "primary_email": "contato@showtime.com.br",
+        "primary_phone": "+5511987654321",
+        "primary_state": "SP",
+        "roles": ["customer"],
+        "tenant_id": "018f0000-0000-7000-8000-000000000001",
+        "trade_name": "Showtime",
+        "updated_at": "2026-11-21T10:00:00Z"
+      }
+    ],
+    "next_cursor": null,
+    "total": 1
+  },
+  "sample_errors": {
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada."
+  }
+}

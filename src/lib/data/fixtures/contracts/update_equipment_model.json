@@ -1,0 +1,38 @@
+{
+  "command": "update_equipment_model",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": {
+    "attribute_values": [],
+    "brand_name": "Pioneer DJ",
+    "category_name": "Áudio",
+    "effective_attributes": [],
+    "model": {
+      "active": true,
+      "barcode_ean_gtin": null,
+      "brand_id": "018f0000-0000-7000-8000-000000000060",
+      "category_id": "018f0000-0000-7000-8000-000000000070",
+      "control_mode": "serialized",
+      "created_at": "2026-11-21T10:00:00Z",
+      "default_daily_price_cents": 25000,
+      "default_notes": null,
+      "id": "018f0000-0000-7000-8000-000000000090",
+      "model_code": "CDJ3000",
+      "name": "CDJ-3000",
+      "power_consumption_w": 40,
+      "search_text": "pioneer dj cdj-3000 cdj3000",
+      "setup_minutes": 10,
+      "strike_minutes": 10,
+      "tenant_id": "018f0000-0000-7000-8000-000000000001",
+      "updated_at": "2026-11-21T10:00:00Z",
+      "weight_kg": 5.5
+    }
+  },
+  "sample_errors": {
+    "Conflict": "Conflito de registro: Já existe um registro com os dados informados.",
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "NotFound": "Registro não encontrado: O identificador solicitado não existe.",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada.",
+    "Validation": "Erro de validação: Dados de entrada inválidos para a operação."
+  }
+}

@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod contracts;
 pub mod guards;
 
 use chrono::{DateTime, Utc};

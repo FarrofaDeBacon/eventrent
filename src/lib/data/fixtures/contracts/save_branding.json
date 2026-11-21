@@ -1,0 +1,22 @@
+{
+  "command": "save_branding",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": {
+    "accent_color": "#F59E0B",
+    "company_name": "EventRent Audiovisual",
+    "icon_url": null,
+    "logo_dark_url": null,
+    "logo_url": null,
+    "primary_color": "#E11D48",
+    "secondary_color": "#1E293B",
+    "trading_name": "EventRent",
+    "updated_at": "2026-11-21T10:00:00Z"
+  },
+  "sample_errors": {
+    "Conflict": "Conflito de registro: Já existe um registro com os dados informados.",
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada.",
+    "Validation": "Erro de validação: Dados de entrada inválidos para a operação."
+  }
+}

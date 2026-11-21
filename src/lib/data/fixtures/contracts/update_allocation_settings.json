@@ -1,0 +1,20 @@
+{
+  "command": "update_allocation_settings",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": {
+    "changeover_minutes": 15,
+    "external_transfer_minutes": 60,
+    "id": "018f0000-0000-7000-8000-000000000020",
+    "internal_transfer_minutes": 30,
+    "tenant_id": "018f0000-0000-7000-8000-000000000001",
+    "updated_at": "2026-11-21T10:00:00Z",
+    "updated_by": null
+  },
+  "sample_errors": {
+    "Conflict": "Conflito de registro: Já existe um registro com os dados informados.",
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada.",
+    "Validation": "Erro de validação: Dados de entrada inválidos para a operação."
+  }
+}

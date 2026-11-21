@@ -1,0 +1,16 @@
+{
+  "command": "collect_unreferenced_media",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": {
+    "deleted_assets": 0,
+    "deleted_blobs": 0,
+    "deleted_files": 0
+  },
+  "sample_errors": {
+    "Conflict": "Conflito de registro: Já existe um registro com os dados informados.",
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada.",
+    "Validation": "Erro de validação: Dados de entrada inválidos para a operação."
+  }
+}

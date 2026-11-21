@@ -1,0 +1,7 @@
+{
+  "command": "logout",
+  "is_public": true,
+  "has_return_value": false,
+  "sample_output": null,
+  "sample_errors": {}
+}

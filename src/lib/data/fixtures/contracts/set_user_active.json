@@ -1,0 +1,30 @@
+{
+  "command": "set_user_active",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": {
+    "active": true,
+    "created_at": "2026-11-21T10:00:00Z",
+    "created_by": null,
+    "deleted_at": null,
+    "email": "carlos@eventrent.com.br",
+    "failed_attempts": 0,
+    "id": "018f0000-0000-7000-8000-000000000030",
+    "last_login_at": "2026-11-21T10:00:00Z",
+    "locked_until": null,
+    "name": "Carlos Técnico",
+    "permissions": ["catalog:read"],
+    "role_id": "018f0000-0000-7000-8000-000000000031",
+    "role_name": "Técnico",
+    "role_slug": "tecnico",
+    "tenant_id": "018f0000-0000-7000-8000-000000000001",
+    "updated_at": "2026-11-21T10:00:00Z"
+  },
+  "sample_errors": {
+    "Conflict": "Conflito de registro: Já existe um registro com os dados informados.",
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "NotFound": "Registro não encontrado: O identificador solicitado não existe.",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada.",
+    "Validation": "Erro de validação: Dados de entrada inválidos para a operação."
+  }
+}

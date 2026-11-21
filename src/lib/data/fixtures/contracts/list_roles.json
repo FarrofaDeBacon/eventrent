@@ -1,0 +1,19 @@
+{
+  "command": "list_roles",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": [
+    {
+      "description": "Acesso total",
+      "id": "018f0000-0000-7000-8000-000000000031",
+      "is_system": true,
+      "name": "Proprietário",
+      "permissions": ["all"],
+      "slug": "proprietario"
+    }
+  ],
+  "sample_errors": {
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada."
+  }
+}
