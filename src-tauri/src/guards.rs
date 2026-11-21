@@ -42,6 +42,10 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
     },
     // Comandos protegidos por autenticação (o core é a autoridade única de permissões)
     CommandDefinition {
+        name: "regenerate_recovery_key",
+        is_public: false,
+    },
+    CommandDefinition {
         name: "get_branding",
         is_public: false,
     },

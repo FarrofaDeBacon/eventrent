@@ -1367,6 +1367,34 @@ impl UserStore for SqliteStore {
 
         Ok(())
     }
+
+    async fn update_recovery_key(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+        recovery_key_hash: &str,
+        updated_at: &str,
+    ) -> Result<()> {
+        self.execute(
+            sqlx::query(
+                r#"
+                UPDATE app_user
+                SET recovery_key_hash = ?,
+                    recovery_failed_attempts = 0,
+                    recovery_locked_until = NULL,
+                    updated_at = ?
+                WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+                "#,
+            )
+            .bind(recovery_key_hash)
+            .bind(updated_at)
+            .bind(tenant_id)
+            .bind(user_id),
+        )
+        .await?;
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -2916,7 +2944,8 @@ mod tests {
     };
     use eventrent_core::services::{ensure_default_tenant, CoreServices};
     use eventrent_core::testing::{
-        contract_audit_log, contract_default_seeds, contract_initial_setup_and_recovery_key,
+        contract_audit_log, contract_authenticated_recovery_key_regeneration,
+        contract_default_seeds, contract_initial_setup_and_recovery_key,
         contract_last_owner_protection, contract_password_reset_clears_lockout,
         contract_recovery_key_rotation_and_lockout, contract_system_roles,
         contract_unique_partial_indexes, contract_user_creation_and_rbac, contract_user_lockout,
@@ -3002,6 +3031,41 @@ mod tests {
         let (setup, services) = contract_initial_setup_and_recovery_key(&store, &tenant_id).await;
         contract_recovery_key_rotation_and_lockout(&services, &tenant_id, &setup.recovery_key)
             .await;
+
+        // S1.3: Testa regeneração autenticada com sessão ativa
+        let session = services
+            .login(
+                &tenant_id,
+                &LoginInput {
+                    email: "ana@luzesom.com.br".to_string(),
+                    password: "AnaRecuperada#2026".to_string(),
+                },
+                &LoginPolicy::default(),
+                30,
+            )
+            .await
+            .expect("Login do proprietário após recuperação deve funcionar");
+
+        let regenerated_key = contract_authenticated_recovery_key_regeneration(
+            &services,
+            &session,
+            "AnaRecuperada#2026",
+        )
+        .await;
+
+        // A nova chave regenerada permite recuperar a senha novamente
+        let second_recovery = services
+            .recover_password(
+                &tenant_id,
+                &RecoverPasswordInput {
+                    email: "ana@luzesom.com.br".to_string(),
+                    recovery_key: regenerated_key,
+                    new_password: "AnaNovaSenha#2026".to_string(),
+                },
+                &LoginPolicy::default(),
+            )
+            .await;
+        assert!(second_recovery.is_ok());
     }
 
     #[tokio::test]

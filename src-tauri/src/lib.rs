@@ -438,6 +438,7 @@ pub fn run() {
             commands::auth::logout,
             commands::auth::get_current_session,
             commands::auth::recover_password,
+            commands::auth::regenerate_recovery_key,
             commands::users::list_users,
             commands::users::create_user,
             commands::users::update_user,

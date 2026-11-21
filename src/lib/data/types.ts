@@ -54,6 +54,18 @@ export interface RecoverPasswordInput {
   new_password: string;
 }
 
+export interface RecoverPasswordResult {
+  new_recovery_key: string;
+}
+
+export interface RegenerateRecoveryKeyInput {
+  current_password: string;
+}
+
+export interface RegenerateRecoveryKeyResult {
+  new_recovery_key: string;
+}
+
 export interface UserWithRole {
   id: string;
   tenant_id: string;

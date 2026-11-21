@@ -151,6 +151,34 @@ impl fmt::Debug for RecoverPasswordResult {
     }
 }
 
+/// Parâmetros para regeneração autenticada de chave de recuperação.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RegenerateRecoveryKeyInput {
+    pub current_password: String,
+}
+
+impl fmt::Debug for RegenerateRecoveryKeyInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RegenerateRecoveryKeyInput")
+            .field("current_password", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// Resultado da regeneração autenticada de chave de recuperação.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RegenerateRecoveryKeyResult {
+    pub new_recovery_key: String,
+}
+
+impl fmt::Debug for RegenerateRecoveryKeyResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RegenerateRecoveryKeyResult")
+            .field("new_recovery_key", &"[REDACTED]")
+            .finish()
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LoginInput {
     pub email: String,

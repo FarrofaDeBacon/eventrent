@@ -155,6 +155,9 @@ export function canAccessRoute(
   if (pathname.startsWith("/customers")) {
     return hasPermission(session, PERMISSIONS.CUSTOMER_READ);
   }
+  if (pathname.startsWith("/settings/account")) {
+    return true;
+  }
   if (pathname.startsWith("/settings/users")) {
     return hasPermission(session, PERMISSIONS.USER_READ);
   }

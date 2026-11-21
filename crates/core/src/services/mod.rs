@@ -11,16 +11,17 @@ use crate::domain::{
     CreateVenueInput, Customer, CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter,
     CustomerPage, CustomerRole, CustomerRoleFilter, CustomerWithDetails, DocumentType,
     InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode, PersonType,
-    PublicBranding, RecoverPasswordInput, RecoverPasswordResult, ResetPasswordInput, Role,
-    RoleWithPermissions, SessionInfo, Tenant, TenantBranding, TenantSetting,
-    UpdateAllocationSettingsInput, UpdateBrandingInput, UpdateCustomerInput, UpdateUserInput,
-    UpdateVenueInput, UserRecord, UserWithRole, Venue, VenueContact, VenueCursor, VenueFilter,
-    VenuePage, VenueSpace, VenueWithDetails, MAX_CHANGEOVER_MINUTES, MAX_EXTERNAL_TRANSFER_MINUTES,
-    MAX_INTERNAL_TRANSFER_SETTING_MINUTES, PERM_BRANDING_MANAGE, PERM_BRANDING_READ,
-    PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ, PERM_SETTINGS_MANAGE,
-    PERM_SETTINGS_READ, PERM_SUPPLIER_MANAGE, PERM_SUPPLIER_READ, PERM_USER_MANAGE, PERM_USER_READ,
-    PERM_VENUE_MANAGE, PERM_VENUE_READ, ROLE_SLUG_OWNER, SETTING_CHANGEOVER_MINUTES,
-    SETTING_EXTERNAL_TRANSFER_MINUTES, SETTING_INTERNAL_TRANSFER_MINUTES, SYSTEM_ROLES,
+    PublicBranding, RecoverPasswordInput, RecoverPasswordResult, RegenerateRecoveryKeyResult,
+    ResetPasswordInput, Role, RoleWithPermissions, SessionInfo, Tenant, TenantBranding,
+    TenantSetting, UpdateAllocationSettingsInput, UpdateBrandingInput, UpdateCustomerInput,
+    UpdateUserInput, UpdateVenueInput, UserRecord, UserWithRole, Venue, VenueContact, VenueCursor,
+    VenueFilter, VenuePage, VenueSpace, VenueWithDetails, MAX_CHANGEOVER_MINUTES,
+    MAX_EXTERNAL_TRANSFER_MINUTES, MAX_INTERNAL_TRANSFER_SETTING_MINUTES, PERM_BRANDING_MANAGE,
+    PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ,
+    PERM_SETTINGS_MANAGE, PERM_SETTINGS_READ, PERM_SUPPLIER_MANAGE, PERM_SUPPLIER_READ,
+    PERM_USER_MANAGE, PERM_USER_READ, PERM_VENUE_MANAGE, PERM_VENUE_READ, ROLE_SLUG_OWNER,
+    SETTING_CHANGEOVER_MINUTES, SETTING_EXTERNAL_TRANSFER_MINUTES,
+    SETTING_INTERNAL_TRANSFER_MINUTES, SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
@@ -982,6 +983,192 @@ impl CoreServices {
         .await?;
 
         Ok(RecoverPasswordResult {
+            new_recovery_key: return_key,
+        })
+    }
+
+    /// Regenera a chave de recuperação de um usuário autenticado.
+    /// Exige a senha atual para validação, aplica política de lockout em caso de senha errada idêntica ao login,
+    /// grava auditoria na mesma transação e devolve a nova chave em texto plano para exibição única.
+    pub async fn regenerate_recovery_key(
+        &self,
+        session: &SessionInfo,
+        current_password: &str,
+        policy: &LoginPolicy,
+    ) -> Result<RegenerateRecoveryKeyResult> {
+        self.verify_session_active(session)?;
+
+        let maybe_user = self
+            .stores
+            .users
+            .find_by_id(&session.tenant_id, &session.user_id)
+            .await?;
+        let user = match maybe_user {
+            Some(u) if u.active => u,
+            _ => {
+                return Err(CoreError::Unauthorized(
+                    "Usuário inválido ou inativo.".to_string(),
+                ))
+            }
+        };
+
+        let now = Utc::now();
+        if let Some(ref locked_str) = user.locked_until {
+            if let Ok(locked_dt) = DateTime::parse_from_rfc3339(locked_str) {
+                if locked_dt.with_timezone(&Utc) > now {
+                    if policy.reveal_account_locked {
+                        return Err(CoreError::AccountLocked {
+                            locked_until: locked_str.clone(),
+                        });
+                    } else {
+                        return Err(CoreError::InvalidCredentials);
+                    }
+                }
+            }
+        }
+
+        if !verify_secret(current_password, &user.password_hash).await? {
+            let tenant_id_str = session.tenant_id.clone();
+            let user_id_str = user.id.clone();
+            let email_str = user.email.clone();
+
+            let outcome = self
+                .run_transaction(|stores| {
+                    let tenant_id = tenant_id_str.clone();
+                    let user_id = user_id_str.clone();
+                    let email = email_str.clone();
+
+                    Box::pin(async move {
+                        let now = Utc::now();
+                        let now_str = now.to_rfc3339();
+                        let new_failures = stores
+                            .users()
+                            .increment_login_failure(&tenant_id, &user_id, &now_str)
+                            .await?;
+                        let lockout_secs = calculate_lockout_seconds(new_failures);
+                        let locked_until = if lockout_secs > 0 {
+                            Some((now + Duration::seconds(lockout_secs)).to_rfc3339())
+                        } else {
+                            None
+                        };
+
+                        if let Some(ref until) = locked_until {
+                            stores
+                                .users()
+                                .set_login_lockout(
+                                    &tenant_id,
+                                    &user_id,
+                                    Some(until.as_str()),
+                                    &now_str,
+                                )
+                                .await?;
+
+                            stores
+                                .audit()
+                                .append(&build_audit_entry(
+                                    &tenant_id,
+                                    Some(&user_id),
+                                    "auth.regenerate_key_locked",
+                                    "user",
+                                    &user_id,
+                                    &format!(
+                                        "Conta bloqueada temporariamente após {new_failures} falhas consecutivas ao regenerar chave"
+                                    ),
+                                ))
+                                .await?;
+
+                            Ok(Some(until.clone()))
+                        } else {
+                            let masked_email = mask_email_for_audit(&email);
+                            stores
+                                .audit()
+                                .append(&build_audit_entry(
+                                    &tenant_id,
+                                    Some(&user_id),
+                                    "auth.regenerate_key_failed",
+                                    "user",
+                                    &user_id,
+                                    &format!(
+                                        "Senha incorreta ao tentar regenerar chave de recuperação ({new_failures}) para {masked_email}"
+                                    ),
+                                ))
+                                .await?;
+
+                            Ok(None)
+                        }
+                    })
+                })
+                .await?;
+
+            if let Some(locked_until) = outcome {
+                if policy.reveal_account_locked {
+                    return Err(CoreError::AccountLocked { locked_until });
+                }
+            }
+            return Err(CoreError::InvalidCredentials);
+        }
+
+        let new_recovery_key = generate_recovery_key();
+        let new_recovery_key_hash = hash_secret(&normalize_recovery_key(&new_recovery_key)).await?;
+
+        let tenant_id_str = session.tenant_id.clone();
+        let user_id_str = user.id.clone();
+        let email_str = user.email.clone();
+        let return_key = new_recovery_key.clone();
+
+        self.run_transaction(|stores| {
+            let tenant_id = tenant_id_str.clone();
+            let user_id = user_id_str.clone();
+            let email = email_str.clone();
+            let new_recovery_key_hash = new_recovery_key_hash.clone();
+
+            Box::pin(async move {
+                let now_str = Utc::now().to_rfc3339();
+                stores
+                    .users()
+                    .update_recovery_key(
+                        &tenant_id,
+                        &user_id,
+                        &new_recovery_key_hash,
+                        &now_str,
+                    )
+                    .await?;
+
+                let masked_email = mask_email_for_audit(&email);
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &tenant_id,
+                        Some(&user_id),
+                        "auth.recovery_key_regenerated",
+                        "user",
+                        &user_id,
+                        &format!(
+                            "Chave de recuperação regenerada com sucesso pelo próprio usuário para {masked_email}"
+                        ),
+                    ))
+                    .await?;
+
+                stores
+                    .audit()
+                    .append(&build_audit_entry(
+                        &tenant_id,
+                        Some(&user_id),
+                        "auth.recovery_key_rotated",
+                        "user",
+                        &user_id,
+                        &format!(
+                            "Chave de recuperação rotacionada com 80 bits de entropia para {masked_email}"
+                        ),
+                    ))
+                    .await?;
+
+                Ok(())
+            })
+        })
+        .await?;
+
+        Ok(RegenerateRecoveryKeyResult {
             new_recovery_key: return_key,
         })
     }

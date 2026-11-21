@@ -508,6 +508,28 @@ pub async fn contract_recovery_key_rotation_and_lockout(
     assert!(matches!(old_key_reuse, Err(CoreError::InvalidCredentials)));
 }
 
+/// 8e. Contrato: Regeneração autenticada de chave de recuperação (S1.3)
+pub async fn contract_authenticated_recovery_key_regeneration(
+    services: &CoreServices,
+    session: &SessionInfo,
+    current_password: &str,
+) -> String {
+    // Falha com senha errada incrementa falhas e retorna credenciais inválidas
+    let fail = services
+        .regenerate_recovery_key(session, "SenhaIncorreta#9999", &LoginPolicy::default())
+        .await;
+    assert!(matches!(fail, Err(CoreError::InvalidCredentials)));
+
+    // Sucesso com senha correta devolve nova chave
+    let regen_res = services
+        .regenerate_recovery_key(session, current_password, &LoginPolicy::default())
+        .await
+        .expect("Regeneração autenticada de chave deve ter sucesso");
+
+    assert!(regen_res.new_recovery_key.starts_with("ER-"));
+    regen_res.new_recovery_key
+}
+
 /// 9. Contrato: Log de Auditoria append-only.
 pub async fn contract_audit_log(stores: &StoreBundle, tenant_id: &str) {
     let audits = stores
@@ -2615,6 +2637,15 @@ mod unit_tests {
             async fn update_password_and_recovery_key(
                 &self,
                 _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update_recovery_key(
+                &self,
                 _: &str,
                 _: &str,
                 _: &str,
