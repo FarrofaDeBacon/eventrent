@@ -582,4 +582,76 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_tauri_csp_is_strict_and_free_of_unsafe_eval() {
+        use std::path::Path;
+
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let conf_path = manifest_dir.join("tauri.conf.json");
+        assert!(
+            conf_path.exists(),
+            "tauri.conf.json deve existir em {}",
+            conf_path.display()
+        );
+
+        let content = std::fs::read_to_string(&conf_path)
+            .unwrap_or_else(|e| panic!("Falha ao ler {}: {e}", conf_path.display()));
+        let val: serde_json::Value = serde_json::from_str(&content)
+            .unwrap_or_else(|e| panic!("JSON inválido em {}: {e}", conf_path.display()));
+
+        let csp_value = val
+            .get("app")
+            .and_then(|a| a.get("security"))
+            .and_then(|s| s.get("csp"));
+
+        let csp_str = csp_value
+            .and_then(|v| v.as_str())
+            .expect("app.security.csp deve ser uma string não-nula e válida");
+
+        assert!(!csp_str.trim().is_empty(), "CSP não pode ser string vazia");
+
+        // Não pode conter 'unsafe-eval'
+        assert!(
+            !csp_str.contains("'unsafe-eval'"),
+            "CSP não pode conter 'unsafe-eval': {csp_str}"
+        );
+
+        // script-src não pode ter wildcards (*) nem http:// / https://
+        let script_src_part = csp_str
+            .split(';')
+            .find(|p| p.trim().starts_with("script-src"))
+            .expect("CSP deve definir diretiva script-src");
+
+        assert!(
+            !script_src_part.contains('*'),
+            "script-src não pode conter wildcard (*): {script_src_part}"
+        );
+        assert!(
+            !script_src_part.contains("http:"),
+            "script-src não pode permitir http: {script_src_part}"
+        );
+        assert!(
+            !script_src_part.contains("https:"),
+            "script-src não pode permitir https: {script_src_part}"
+        );
+        assert!(
+            !script_src_part.contains("'unsafe-inline'"),
+            "script-src não pode conter 'unsafe-inline': {script_src_part}"
+        );
+        assert!(
+            script_src_part.contains("'self'"),
+            "script-src deve conter 'self': {script_src_part}"
+        );
+
+        // style-src permite 'unsafe-inline' para Tailwind/Svelte
+        let style_src_part = csp_str
+            .split(';')
+            .find(|p| p.trim().starts_with("style-src"))
+            .expect("CSP deve definir diretiva style-src");
+        assert!(
+            style_src_part.contains("'unsafe-inline'"),
+            "style-src deve permitir 'unsafe-inline' para tokens dinâmicos OKLCH do Tailwind"
+        );
+    }
 }

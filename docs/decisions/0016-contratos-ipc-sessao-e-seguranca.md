@@ -61,7 +61,8 @@ Avaliamos três abordagens para garantir consistência absoluta entre Rust e Typ
    - Remoção de qualquer script inline no HTML (`app.html`), transferindo a rotina anti-FOUC de tema para arquivo estático servido localmente (`static/anti-fouc.js`).
    - CSP estrita em `tauri.conf.json`:
      `default-src 'self'; script-src 'self'; img-src 'self' blob: data:; font-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; style-src 'self' 'unsafe-inline'`
-   - Teste automatizado no Rust (`guards.rs`) para impedir regressões na CSP (proibindo `'unsafe-eval'` e curingas em `script-src`).
+   - **Justificativa de `'unsafe-inline'` em `style-src`:** O motor de renderização do Svelte 5 e a biblioteca de utilitários Tailwind CSS (com tema dinâmico OKLCH) exigem injeção de propriedades customizadas reativas via atributos `style="..."` nos elementos HTML (por exemplo, `style="--primary: ..."` e variáveis dinâmicas de cores/dimensões). Diferente de scripts executáveis, estilos inline não permitem execução arbitrária de código, enquanto `script-src` permanece estritamente `'self'`, bloqueando totalmente scripts inline, avaliadores (`'unsafe-eval'`) e fontes externas não confiáveis.
+   - Teste automatizado no Rust (`guards.rs`) para impedir regressões na CSP (garantindo que não seja nula nem vazia, proibindo `'unsafe-eval'` e curingas em `script-src`, e validando a presença de `style-src 'self' 'unsafe-inline'`).
 
 4. **Isolamento de Mocks fora do Pacote de Produção:**
    - As implementações mockadas (`mock-*.ts`) são estritamente condicionadas a `import.meta.env.DEV`.
