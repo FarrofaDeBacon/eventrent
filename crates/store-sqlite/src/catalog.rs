@@ -3,6 +3,7 @@ use eventrent_core::{
     normalize_for_search, normalize_unique_key, AttributeDataType, AttributeDefinition, Brand,
     CatalogCursor, CatalogListFilter, CatalogListResult, CatalogStore, ControlMode, CoreError,
     EquipmentCategory, EquipmentModel, EquipmentModelAttributeValue, EquipmentModelListItem,
+    EquipmentModelMedia, EquipmentModelMediaView, MediaAsset, MediaBlob, MediaKind, MediaMimeType,
     Result, VoltageOption,
 };
 use sqlx::{QueryBuilder, Row, Sqlite};
@@ -570,13 +571,62 @@ impl CatalogStore for SqliteStore {
         Ok(())
     }
 
+    async fn count_models_using_attribute_definition(
+        &self,
+        tenant_id: &str,
+        definition_id: &str,
+    ) -> Result<i64> {
+        let row = self
+            .fetch_one(
+                sqlx::query(
+                    "SELECT COUNT(DISTINCT v.model_id) AS cnt
+                     FROM equipment_model_attribute_value v
+                     INNER JOIN equipment_model m ON m.tenant_id = v.tenant_id AND m.id = v.model_id
+                     WHERE v.tenant_id = ? AND v.definition_id = ?
+                       AND v.deleted_at IS NULL AND m.deleted_at IS NULL
+                       AND (v.value_text IS NOT NULL OR v.value_number IS NOT NULL OR v.value_bool IS NOT NULL)",
+                )
+                .bind(tenant_id)
+                .bind(definition_id),
+            )
+            .await?;
+        Ok(row.get("cnt"))
+    }
+
+    async fn list_distinct_text_values_for_attribute_definition(
+        &self,
+        tenant_id: &str,
+        definition_id: &str,
+    ) -> Result<Vec<String>> {
+        let rows = self
+            .fetch_all(
+                sqlx::query(
+                    "SELECT DISTINCT v.value_text AS val
+                     FROM equipment_model_attribute_value v
+                     INNER JOIN equipment_model m ON m.tenant_id = v.tenant_id AND m.id = v.model_id
+                     WHERE v.tenant_id = ? AND v.definition_id = ?
+                       AND v.deleted_at IS NULL AND m.deleted_at IS NULL
+                       AND v.value_text IS NOT NULL
+                     ORDER BY v.value_text ASC",
+                )
+                .bind(tenant_id)
+                .bind(definition_id),
+            )
+            .await?;
+        Ok(rows.iter().map(|r| r.get("val")).collect())
+    }
+
     async fn list_models(
         &self,
         tenant_id: &str,
         filter: &CatalogListFilter,
         descendant_category_ids: Option<&[String]>,
     ) -> Result<CatalogListResult> {
-        let limit = filter.limit.clamp(1, 200);
+        let limit = if filter.limit == 0 {
+            50
+        } else {
+            filter.limit.clamp(1, 100)
+        };
         let cursor = match filter.cursor.as_deref() {
             Some(c) if !c.trim().is_empty() => Some(CatalogCursor::decode(c)?),
             _ => None,
@@ -621,8 +671,16 @@ impl CatalogStore for SqliteStore {
                 }
             }
             for term in &terms {
+                let mut escaped = String::with_capacity(term.len());
+                for ch in term.chars() {
+                    if matches!(ch, '%' | '_' | '\\') {
+                        escaped.push('\\');
+                    }
+                    escaped.push(ch);
+                }
                 qb.push(" AND m.search_text LIKE ");
-                qb.push_bind(format!("%{}%", term));
+                qb.push_bind(format!("%{}%", escaped));
+                qb.push(" ESCAPE '\\'");
             }
         };
 
@@ -660,10 +718,21 @@ impl CatalogStore for SqliteStore {
                     m.voltage, m.amperage, m.requires_case, m.units_per_case,
                     m.daily_rate_cents, m.replacement_value_cents, m.cost_price_cents,
                     m.active, m.search_text, m.created_at, m.updated_at, m.deleted_at, m.created_by,
-                    c.name AS category_name, b.name AS brand_name
+                    c.name AS category_name, b.name AS brand_name,
+                    COALESCE(ma.thumb_blob_id, ma.blob_id) AS primary_thumb_blob_id,
+                    tmb.mime_type AS primary_thumb_mime_type
              FROM equipment_model m
              INNER JOIN equipment_category c ON c.tenant_id = m.tenant_id AND c.id = m.category_id
-             LEFT JOIN brand b ON b.tenant_id = m.tenant_id AND b.id = m.brand_id",
+             LEFT JOIN brand b ON b.tenant_id = m.tenant_id AND b.id = m.brand_id
+             LEFT JOIN equipment_model_media emm
+                ON emm.tenant_id = m.tenant_id AND emm.model_id = m.id
+               AND emm.is_primary = 1 AND emm.deleted_at IS NULL
+             LEFT JOIN media_asset ma
+                ON ma.tenant_id = emm.tenant_id AND ma.id = emm.asset_id AND ma.deleted_at IS NULL
+             LEFT JOIN media_blob tmb
+                ON tmb.tenant_id = ma.tenant_id
+               AND tmb.id = COALESCE(ma.thumb_blob_id, ma.blob_id)
+               AND tmb.deleted_at IS NULL",
         );
         apply_filters(&mut list_qb);
 
@@ -706,10 +775,14 @@ impl CatalogStore for SqliteStore {
             let model = parse_model_row(row)?;
             let category_name: String = row.get("category_name");
             let brand_name: Option<String> = row.get("brand_name");
+            let primary_thumb_blob_id: Option<String> = row.get("primary_thumb_blob_id");
+            let primary_thumb_mime_type: Option<String> = row.get("primary_thumb_mime_type");
             items.push(EquipmentModelListItem {
                 model,
                 category_name,
                 brand_name,
+                primary_thumb_blob_id,
+                primary_thumb_mime_type,
             });
         }
 
@@ -896,38 +969,72 @@ impl CatalogStore for SqliteStore {
         )
         .await?;
 
+        let existing_vals = self
+            .list_model_attribute_values(&model.tenant_id, &model.id)
+            .await?;
+        for prev in &existing_vals {
+            if !values.iter().any(|v| v.definition_id == prev.definition_id) {
+                self.execute(
+                    sqlx::query(
+                        "DELETE FROM equipment_model_attribute_value
+                         WHERE tenant_id = ? AND model_id = ? AND definition_id = ?",
+                    )
+                    .bind(&model.tenant_id)
+                    .bind(&model.id)
+                    .bind(&prev.definition_id),
+                )
+                .await?;
+            }
+        }
         self.execute(
             sqlx::query(
-                "UPDATE equipment_model_attribute_value SET deleted_at = ?, updated_at = ?
-                 WHERE tenant_id = ? AND model_id = ? AND deleted_at IS NULL",
+                "DELETE FROM equipment_model_attribute_value
+                 WHERE tenant_id = ? AND model_id = ? AND deleted_at IS NOT NULL",
             )
-            .bind(&model.updated_at)
-            .bind(&model.updated_at)
             .bind(&model.tenant_id)
             .bind(&model.id),
         )
         .await?;
 
         for val in values {
-            self.execute(
-                sqlx::query(
-                    "INSERT INTO equipment_model_attribute_value (
-                        id, tenant_id, model_id, definition_id, value_text, value_number, value_bool, created_at, updated_at, deleted_at, created_by
-                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            let updated_res = self
+                .execute(
+                    sqlx::query(
+                        "UPDATE equipment_model_attribute_value
+                         SET value_text = ?, value_number = ?, value_bool = ?, updated_at = ?, deleted_at = NULL
+                         WHERE tenant_id = ? AND model_id = ? AND definition_id = ?",
+                    )
+                    .bind(&val.value_text)
+                    .bind(val.value_number)
+                    .bind(val.value_bool.map(|b| if b { 1 } else { 0 }))
+                    .bind(&val.updated_at)
+                    .bind(&val.tenant_id)
+                    .bind(&val.model_id)
+                    .bind(&val.definition_id),
                 )
-                .bind(&val.id)
-                .bind(&val.tenant_id)
-                .bind(&val.model_id)
-                .bind(&val.definition_id)
-                .bind(&val.value_text)
-                .bind(val.value_number)
-                .bind(val.value_bool.map(|b| if b { 1 } else { 0 }))
-                .bind(&val.created_at)
-                .bind(&val.updated_at)
-                .bind(&val.deleted_at)
-                .bind(&val.created_by),
-            )
-            .await?;
+                .await?;
+
+            if updated_res.rows_affected() == 0 {
+                self.execute(
+                    sqlx::query(
+                        "INSERT INTO equipment_model_attribute_value (
+                            id, tenant_id, model_id, definition_id, value_text, value_number, value_bool, created_at, updated_at, deleted_at, created_by
+                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    )
+                    .bind(&val.id)
+                    .bind(&val.tenant_id)
+                    .bind(&val.model_id)
+                    .bind(&val.definition_id)
+                    .bind(&val.value_text)
+                    .bind(val.value_number)
+                    .bind(val.value_bool.map(|b| if b { 1 } else { 0 }))
+                    .bind(&val.created_at)
+                    .bind(&val.updated_at)
+                    .bind(&val.deleted_at)
+                    .bind(&val.created_by),
+                )
+                .await?;
+            }
         }
         Ok(())
     }
@@ -979,5 +1086,256 @@ impl CatalogStore for SqliteStore {
             .await?;
         let cnt: i64 = row.get("cnt");
         Ok(cnt.max(0) as u64)
+    }
+
+    async fn list_models_by_brand(
+        &self,
+        tenant_id: &str,
+        brand_id: &str,
+    ) -> Result<Vec<EquipmentModel>> {
+        let rows = self
+            .fetch_all(
+                sqlx::query(
+                    "SELECT id, tenant_id, category_id, brand_id, name, name_sort,
+                            model_code, sku, ean, ncm, description, control_mode,
+                            weight_kg, length_cm, width_cm, height_cm, power_watts,
+                            voltage, amperage, requires_case, units_per_case,
+                            daily_rate_cents, replacement_value_cents, cost_price_cents,
+                            active, search_text, created_at, updated_at, deleted_at, created_by
+                     FROM equipment_model
+                     WHERE tenant_id = ? AND brand_id = ? AND deleted_at IS NULL",
+                )
+                .bind(tenant_id)
+                .bind(brand_id),
+            )
+            .await?;
+        rows.iter().map(parse_model_row).collect()
+    }
+
+    async fn list_models_by_category(
+        &self,
+        tenant_id: &str,
+        category_id: &str,
+    ) -> Result<Vec<EquipmentModel>> {
+        let rows = self
+            .fetch_all(
+                sqlx::query(
+                    "SELECT id, tenant_id, category_id, brand_id, name, name_sort,
+                            model_code, sku, ean, ncm, description, control_mode,
+                            weight_kg, length_cm, width_cm, height_cm, power_watts,
+                            voltage, amperage, requires_case, units_per_case,
+                            daily_rate_cents, replacement_value_cents, cost_price_cents,
+                            active, search_text, created_at, updated_at, deleted_at, created_by
+                     FROM equipment_model
+                     WHERE tenant_id = ? AND category_id = ? AND deleted_at IS NULL",
+                )
+                .bind(tenant_id)
+                .bind(category_id),
+            )
+            .await?;
+        rows.iter().map(parse_model_row).collect()
+    }
+
+    async fn update_model_search_text(
+        &self,
+        tenant_id: &str,
+        model_id: &str,
+        search_text: &str,
+    ) -> Result<()> {
+        self.execute(
+            sqlx::query(
+                "UPDATE equipment_model SET search_text = ?
+                 WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL",
+            )
+            .bind(search_text)
+            .bind(tenant_id)
+            .bind(model_id),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn find_model_by_sku_normalized(
+        &self,
+        tenant_id: &str,
+        sku_normalized: &str,
+    ) -> Result<Option<EquipmentModel>> {
+        let row = self
+            .fetch_optional(
+                sqlx::query(
+                    "SELECT id, tenant_id, category_id, brand_id, name, name_sort,
+                            model_code, sku, ean, ncm, description, control_mode,
+                            weight_kg, length_cm, width_cm, height_cm, power_watts,
+                            voltage, amperage, requires_case, units_per_case,
+                            daily_rate_cents, replacement_value_cents, cost_price_cents,
+                            active, search_text, created_at, updated_at, deleted_at, created_by
+                     FROM equipment_model
+                     WHERE tenant_id = ? AND sku_normalized = ? AND deleted_at IS NULL",
+                )
+                .bind(tenant_id)
+                .bind(sku_normalized),
+            )
+            .await?;
+        row.as_ref().map(parse_model_row).transpose()
+    }
+
+    async fn find_model_by_brand_and_code_normalized(
+        &self,
+        tenant_id: &str,
+        brand_id: &str,
+        model_code_normalized: &str,
+    ) -> Result<Option<EquipmentModel>> {
+        let row = self
+            .fetch_optional(
+                sqlx::query(
+                    "SELECT id, tenant_id, category_id, brand_id, name, name_sort,
+                            model_code, sku, ean, ncm, description, control_mode,
+                            weight_kg, length_cm, width_cm, height_cm, power_watts,
+                            voltage, amperage, requires_case, units_per_case,
+                            daily_rate_cents, replacement_value_cents, cost_price_cents,
+                            active, search_text, created_at, updated_at, deleted_at, created_by
+                     FROM equipment_model
+                     WHERE tenant_id = ? AND brand_id = ? AND model_code_normalized = ? AND deleted_at IS NULL",
+                )
+                .bind(tenant_id)
+                .bind(brand_id)
+                .bind(model_code_normalized),
+            )
+            .await?;
+        row.as_ref().map(parse_model_row).transpose()
+    }
+
+    async fn find_media_blob_by_id(
+        &self,
+        tenant_id: &str,
+        blob_id: &str,
+    ) -> Result<Option<MediaBlob>> {
+        self.media_find_blob_by_id(tenant_id, blob_id).await
+    }
+
+    async fn find_media_blob_by_sha256_and_mime(
+        &self,
+        tenant_id: &str,
+        sha256: &str,
+        mime_type: MediaMimeType,
+    ) -> Result<Option<MediaBlob>> {
+        self.media_find_blob_by_sha256_and_mime(tenant_id, sha256, mime_type)
+            .await
+    }
+
+    async fn create_media_blob(&self, blob: &MediaBlob) -> Result<()> {
+        self.media_create_blob(blob).await
+    }
+
+    async fn find_media_asset_by_id(
+        &self,
+        tenant_id: &str,
+        asset_id: &str,
+    ) -> Result<Option<MediaAsset>> {
+        self.media_find_asset_by_id(tenant_id, asset_id).await
+    }
+
+    async fn create_media_asset(&self, asset: &MediaAsset) -> Result<()> {
+        self.media_create_asset(asset).await
+    }
+
+    async fn update_media_asset(&self, asset: &MediaAsset) -> Result<()> {
+        self.media_update_asset(asset).await
+    }
+
+    async fn list_model_media_views(
+        &self,
+        tenant_id: &str,
+        model_id: &str,
+    ) -> Result<Vec<EquipmentModelMediaView>> {
+        self.media_list_model_views(tenant_id, model_id).await
+    }
+
+    async fn find_model_media_link_by_id(
+        &self,
+        tenant_id: &str,
+        link_id: &str,
+    ) -> Result<Option<EquipmentModelMedia>> {
+        self.media_find_link_by_id(tenant_id, link_id).await
+    }
+
+    async fn find_model_media_view_by_link_id(
+        &self,
+        tenant_id: &str,
+        link_id: &str,
+    ) -> Result<Option<EquipmentModelMediaView>> {
+        self.media_find_view_by_link_id(tenant_id, link_id).await
+    }
+
+    async fn count_model_media_by_kind(
+        &self,
+        tenant_id: &str,
+        model_id: &str,
+        kind: MediaKind,
+    ) -> Result<usize> {
+        self.media_count_by_model_and_kind(tenant_id, model_id, kind)
+            .await
+    }
+
+    async fn create_model_media_link(&self, link: &EquipmentModelMedia) -> Result<()> {
+        self.media_create_link(link).await
+    }
+
+    async fn update_model_media_link(&self, link: &EquipmentModelMedia) -> Result<()> {
+        self.media_update_link(link).await
+    }
+
+    async fn clear_primary_model_photo(
+        &self,
+        tenant_id: &str,
+        model_id: &str,
+        updated_at: &str,
+        updated_by: Option<&str>,
+    ) -> Result<()> {
+        self.media_clear_primary_photo(tenant_id, model_id, updated_at, updated_by)
+            .await
+    }
+
+    async fn soft_delete_model_media_link(
+        &self,
+        tenant_id: &str,
+        link_id: &str,
+        deleted_at: &str,
+        updated_by: Option<&str>,
+    ) -> Result<()> {
+        self.media_soft_delete_link(tenant_id, link_id, deleted_at, updated_by)
+            .await
+    }
+
+    async fn purge_soft_deleted_model_media_links(&self, tenant_id: &str) -> Result<usize> {
+        self.media_purge_soft_deleted_links(tenant_id).await
+    }
+
+    async fn list_unreferenced_media_assets(&self, tenant_id: &str) -> Result<Vec<MediaAsset>> {
+        self.media_list_unreferenced_assets(tenant_id).await
+    }
+
+    async fn hard_delete_media_asset(&self, tenant_id: &str, asset_id: &str) -> Result<()> {
+        self.media_hard_delete_asset(tenant_id, asset_id).await
+    }
+
+    async fn list_unreferenced_media_blobs(
+        &self,
+        tenant_id: &str,
+        created_before: &str,
+    ) -> Result<Vec<MediaBlob>> {
+        self.media_list_unreferenced_blobs(tenant_id, created_before)
+            .await
+    }
+
+    async fn list_active_media_blob_shas(
+        &self,
+        tenant_id: &str,
+    ) -> Result<std::collections::HashSet<String>> {
+        self.media_list_active_blob_shas(tenant_id).await
+    }
+
+    async fn hard_delete_media_blob(&self, tenant_id: &str, blob_id: &str) -> Result<()> {
+        self.media_hard_delete_blob(tenant_id, blob_id).await
     }
 }

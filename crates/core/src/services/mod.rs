@@ -1,4 +1,5 @@
 mod catalog;
+mod media;
 
 use crate::domain::{
     build_customer_search_text, build_name_sort, build_venue_name_sort, build_venue_search_text,
@@ -318,6 +319,7 @@ impl<'a> TxStoreBundle for PassthroughTxStoreBundle<'a> {
 #[derive(Clone)]
 pub struct CoreServices {
     pub stores: StoreBundle,
+    pub media_store: std::sync::Arc<dyn crate::store::MediaStore>,
 }
 
 fn validate_customer_document_for_person_type(
@@ -345,7 +347,20 @@ fn validate_customer_document_for_person_type(
 
 impl CoreServices {
     pub fn new(stores: StoreBundle) -> Self {
-        Self { stores }
+        Self {
+            stores,
+            media_store: std::sync::Arc::new(crate::store::InMemoryMediaStore::new()),
+        }
+    }
+
+    pub fn with_media_store(
+        stores: StoreBundle,
+        media_store: std::sync::Arc<dyn crate::store::MediaStore>,
+    ) -> Self {
+        Self {
+            stores,
+            media_store,
+        }
     }
 
     pub async fn run_transaction<F, T>(&self, f: F) -> Result<T>

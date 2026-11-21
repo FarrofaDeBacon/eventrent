@@ -1,9 +1,17 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
-  import { ArrowLeft, Power, Trash2 } from "lucide-svelte";
+  import {
+    ArrowLeft,
+    FileText,
+    Image as ImageIcon,
+    Power,
+    Sliders,
+    Trash2,
+  } from "lucide-svelte";
   import { toast } from "svelte-sonner";
   import CatalogModelForm from "$lib/components/catalog-model-form.svelte";
+  import CatalogModelMedia from "$lib/components/catalog-model-media.svelte";
   import {
     appSession,
     getCatalogRepository,
@@ -25,6 +33,7 @@
   let loading = $state(true);
   let submitting = $state(false);
   let loadError = $state<string | null>(null);
+  let activeTab = $state<"details" | "photos" | "documents">("details");
 
   async function loadModel() {
     if (!modelId) return;
@@ -82,6 +91,22 @@
       toast.error(err instanceof Error ? err.message : String(err));
     }
   }
+
+  function handleTabKeydown(e: KeyboardEvent) {
+    const order: Array<"details" | "photos" | "documents"> = [
+      "details",
+      "photos",
+      "documents",
+    ];
+    const idx = order.indexOf(activeTab);
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      activeTab = order[(idx + 1) % order.length];
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      activeTab = order[(idx - 1 + order.length) % order.length];
+    }
+  }
 </script>
 
 <div class="mx-auto max-w-4xl space-y-6">
@@ -136,12 +161,87 @@
       {loadError}
     </div>
   {:else if details}
-    <CatalogModelForm
-      initial={details}
-      readonly={!canManage}
-      {submitting}
-      onSubmit={handleUpdate}
-      onCancel={() => goto("/catalog")}
-    />
+    <div
+      role="tablist"
+      aria-label="Seções da ficha do modelo"
+      tabindex="0"
+      onkeydown={handleTabKeydown}
+      class="flex items-center gap-1 rounded-xl border border-border bg-card p-1 shadow-xs"
+    >
+      <button
+        type="button"
+        role="tab"
+        aria-selected={activeTab === "details"}
+        data-testid="tab-model-details"
+        onclick={() => {
+          activeTab = "details";
+        }}
+        class="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors {activeTab ===
+        'details'
+          ? 'bg-primary text-primary-foreground shadow-xs'
+          : 'text-muted-foreground hover:bg-muted hover:text-foreground'}"
+      >
+        <Sliders class="h-4 w-4" />
+        Ficha Técnica
+      </button>
+
+      <button
+        type="button"
+        role="tab"
+        aria-selected={activeTab === "photos"}
+        data-testid="tab-model-photos"
+        onclick={() => {
+          activeTab = "photos";
+        }}
+        class="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors {activeTab ===
+        'photos'
+          ? 'bg-primary text-primary-foreground shadow-xs'
+          : 'text-muted-foreground hover:bg-muted hover:text-foreground'}"
+      >
+        <ImageIcon class="h-4 w-4" />
+        Fotos
+      </button>
+
+      <button
+        type="button"
+        role="tab"
+        aria-selected={activeTab === "documents"}
+        data-testid="tab-model-documents"
+        onclick={() => {
+          activeTab = "documents";
+        }}
+        class="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors {activeTab ===
+        'documents'
+          ? 'bg-primary text-primary-foreground shadow-xs'
+          : 'text-muted-foreground hover:bg-muted hover:text-foreground'}"
+      >
+        <FileText class="h-4 w-4" />
+        Documentos
+      </button>
+    </div>
+
+    {#if activeTab === "details"}
+      <CatalogModelForm
+        initial={details}
+        readonly={!canManage}
+        {submitting}
+        onSubmit={handleUpdate}
+        onCancel={() => goto("/catalog")}
+      />
+    {:else if activeTab === "photos"}
+      <CatalogModelMedia
+        modelId={details.model.id}
+        modelName={details.model.name}
+        mode="photos"
+        readonly={!canManage}
+      />
+    {:else}
+      <CatalogModelMedia
+        modelId={details.model.id}
+        modelName={details.model.name}
+        mode="documents"
+        readonly={!canManage}
+      />
+    {/if}
   {/if}
 </div>

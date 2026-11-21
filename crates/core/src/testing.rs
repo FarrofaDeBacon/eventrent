@@ -2902,6 +2902,20 @@ mod unit_tests {
             ) -> crate::error::Result<()> {
                 unreachable!()
             }
+            async fn count_models_using_attribute_definition(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<i64> {
+                unreachable!()
+            }
+            async fn list_distinct_text_values_for_attribute_definition(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Vec<String>> {
+                unreachable!()
+            }
             async fn list_models(
                 &self,
                 _: &str,
@@ -2957,6 +2971,43 @@ mod unit_tests {
                 unreachable!()
             }
             async fn count_active_models(&self, _: &str) -> crate::error::Result<u64> {
+                unreachable!()
+            }
+            async fn list_models_by_brand(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Vec<crate::domain::EquipmentModel>> {
+                unreachable!()
+            }
+            async fn list_models_by_category(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Vec<crate::domain::EquipmentModel>> {
+                unreachable!()
+            }
+            async fn update_model_search_text(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn find_model_by_sku_normalized(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::EquipmentModel>> {
+                unreachable!()
+            }
+            async fn find_model_by_brand_and_code_normalized(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::EquipmentModel>> {
                 unreachable!()
             }
         }
@@ -4215,6 +4266,7 @@ mod unit_tests {
     fn test_catalog_domain_validations_and_inheritance() {
         use crate::domain::catalog::{
             resolve_inherited_attributes, validate_attribute_definition_fields,
+            validate_attribute_key_in_hierarchy, validate_category_move_attribute_keys,
             validate_category_tree_placement, validate_ean, validate_equipment_model_fields,
             validate_model_attribute_values, validate_ncm, AttributeDataType, AttributeDefinition,
             AttributeValueInput, EquipmentCategory,
@@ -4383,6 +4435,45 @@ mod unit_tests {
         assert!(effective[0].is_inherited);
         assert!(!effective[1].is_inherited);
 
+        // Item 0.2: Proibir field_key repetida em ancestral ou descendente e colisão ao mover categoria
+        assert!(matches!(
+            validate_attribute_key_in_hierarchy(&cats, &defs, "c3", "impedancia", None),
+            Err(CoreError::Conflict(_))
+        ));
+        assert!(matches!(
+            validate_attribute_key_in_hierarchy(&cats, &defs, "c1", "banda", None),
+            Err(CoreError::Conflict(_))
+        ));
+        let mut cats_with_other_root = cats.clone();
+        cats_with_other_root.push(mk_cat("c_other", None, "Outra Raiz"));
+        let mut defs_with_other = defs.clone();
+        defs_with_other.push(AttributeDefinition {
+            id: "d_other".to_string(),
+            tenant_id: "t1".to_string(),
+            category_id: "c_other".to_string(),
+            field_key: "banda".to_string(),
+            label: "Banda Outra".to_string(),
+            data_type: AttributeDataType::Text,
+            unit: None,
+            choices: vec![],
+            is_required: false,
+            sort_order: 1,
+            active: true,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            deleted_at: None,
+            created_by: None,
+        });
+        assert!(matches!(
+            validate_category_move_attribute_keys(
+                &cats_with_other_root,
+                &defs_with_other,
+                "c2",
+                Some("c_other")
+            ),
+            Err(CoreError::Conflict(_))
+        ));
+
         // Falha se obrigatório faltar ou opção select inválida
         assert!(matches!(
             validate_model_attribute_values(&effective, &[]),
@@ -4426,5 +4517,474 @@ mod unit_tests {
             ],
         )
         .is_ok());
+    }
+
+    fn make_test_png(width: u32, height: u32, with_exif: bool) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        // IHDR chunk (13 bytes)
+        buf.extend_from_slice(&13u32.to_be_bytes());
+        buf.extend_from_slice(b"IHDR");
+        buf.extend_from_slice(&width.to_be_bytes());
+        buf.extend_from_slice(&height.to_be_bytes());
+        buf.extend_from_slice(&[8, 6, 0, 0, 0]);
+        buf.extend_from_slice(&[0, 0, 0, 0]); // CRC
+
+        if with_exif {
+            buf.extend_from_slice(&6u32.to_be_bytes());
+            buf.extend_from_slice(b"eXIf");
+            buf.extend_from_slice(b"MM\x00\x2a\x00\x00");
+            buf.extend_from_slice(&[0, 0, 0, 0]);
+        }
+
+        // IEND chunk
+        buf.extend_from_slice(&0u32.to_be_bytes());
+        buf.extend_from_slice(b"IEND");
+        buf.extend_from_slice(&[0xAE, 0x42, 0x60, 0x82]);
+        buf
+    }
+
+    fn make_test_jpeg(width: u16, height: u16, with_exif: bool) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&[0xFF, 0xD8]); // SOI
+        if with_exif {
+            // APP1 Exif
+            buf.extend_from_slice(&[
+                0xFF, 0xE1, 0x00, 0x0C, b'E', b'x', b'i', b'f', 0x00, 0x00, 0x49, 0x49, 0x2A, 0x00,
+            ]);
+        }
+        // SOF0
+        buf.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x0B, 0x08]);
+        buf.extend_from_slice(&height.to_be_bytes());
+        buf.extend_from_slice(&width.to_be_bytes());
+        buf.extend_from_slice(&[0x01, 0x01, 0x11, 0x00]);
+        // SOS
+        buf.extend_from_slice(&[
+            0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00, 0x00,
+        ]);
+        // EOI
+        buf.extend_from_slice(&[0xFF, 0xD9]);
+        buf
+    }
+
+    fn make_test_webp(
+        width: u32,
+        height: u32,
+        with_exif_chunk: bool,
+        with_vp8x_exif_flag: bool,
+    ) -> Vec<u8> {
+        let mut chunks = Vec::new();
+        chunks.extend_from_slice(b"WEBP");
+        // VP8X chunk (10 bytes)
+        chunks.extend_from_slice(b"VP8X");
+        chunks.extend_from_slice(&10u32.to_le_bytes());
+        let flags: u8 = if with_vp8x_exif_flag { 0x08 } else { 0x00 };
+        let w_minus_1 = width.saturating_sub(1);
+        let h_minus_1 = height.saturating_sub(1);
+        chunks.extend_from_slice(&[
+            flags,
+            0,
+            0,
+            0,
+            (w_minus_1 & 0xFF) as u8,
+            ((w_minus_1 >> 8) & 0xFF) as u8,
+            ((w_minus_1 >> 16) & 0xFF) as u8,
+            (h_minus_1 & 0xFF) as u8,
+            ((h_minus_1 >> 8) & 0xFF) as u8,
+            ((h_minus_1 >> 16) & 0xFF) as u8,
+        ]);
+
+        if with_exif_chunk {
+            chunks.extend_from_slice(b"EXIF");
+            chunks.extend_from_slice(&6u32.to_le_bytes());
+            chunks.extend_from_slice(b"II\x2a\x00\x08\x00");
+        }
+
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"RIFF");
+        buf.extend_from_slice(&(chunks.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&chunks);
+        buf
+    }
+
+    fn make_test_png_with_chunk(
+        width: u32,
+        height: u32,
+        chunk_type: &[u8; 4],
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        buf.extend_from_slice(&13u32.to_be_bytes());
+        buf.extend_from_slice(b"IHDR");
+        buf.extend_from_slice(&width.to_be_bytes());
+        buf.extend_from_slice(&height.to_be_bytes());
+        buf.extend_from_slice(&[8, 6, 0, 0, 0]);
+        buf.extend_from_slice(&[0, 0, 0, 0]);
+
+        buf.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        buf.extend_from_slice(chunk_type);
+        buf.extend_from_slice(payload);
+        buf.extend_from_slice(&[0, 0, 0, 0]);
+
+        buf.extend_from_slice(&0u32.to_be_bytes());
+        buf.extend_from_slice(b"IEND");
+        buf.extend_from_slice(&[0xAE, 0x42, 0x60, 0x82]);
+        buf
+    }
+
+    fn make_test_jpeg_with_marker(width: u16, height: u16, marker: u8, data: &[u8]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&[0xFF, 0xD8]);
+        let seg_len = (data.len() + 2) as u16;
+        buf.extend_from_slice(&[0xFF, marker]);
+        buf.extend_from_slice(&seg_len.to_be_bytes());
+        buf.extend_from_slice(data);
+        buf.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x0B, 0x08]);
+        buf.extend_from_slice(&height.to_be_bytes());
+        buf.extend_from_slice(&width.to_be_bytes());
+        buf.extend_from_slice(&[0x01, 0x01, 0x11, 0x00]);
+        buf.extend_from_slice(&[
+            0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00, 0x00,
+        ]);
+        buf.extend_from_slice(&[0xFF, 0xD9]);
+        buf
+    }
+
+    fn make_test_webp_with_chunk(
+        width: u32,
+        height: u32,
+        flags: u8,
+        chunk_fourcc: Option<(&[u8; 4], &[u8])>,
+    ) -> Vec<u8> {
+        let mut chunks = Vec::new();
+        chunks.extend_from_slice(b"WEBP");
+        chunks.extend_from_slice(b"VP8X");
+        chunks.extend_from_slice(&10u32.to_le_bytes());
+        let w_minus_1 = width.saturating_sub(1);
+        let h_minus_1 = height.saturating_sub(1);
+        chunks.extend_from_slice(&[
+            flags,
+            0,
+            0,
+            0,
+            (w_minus_1 & 0xFF) as u8,
+            ((w_minus_1 >> 8) & 0xFF) as u8,
+            ((w_minus_1 >> 16) & 0xFF) as u8,
+            (h_minus_1 & 0xFF) as u8,
+            ((h_minus_1 >> 8) & 0xFF) as u8,
+            ((h_minus_1 >> 16) & 0xFF) as u8,
+        ]);
+
+        if let Some((fourcc, payload)) = chunk_fourcc {
+            chunks.extend_from_slice(fourcc);
+            chunks.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            chunks.extend_from_slice(payload);
+            if payload.len() % 2 != 0 {
+                chunks.push(0);
+            }
+        }
+
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"RIFF");
+        buf.extend_from_slice(&(chunks.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&chunks);
+        buf
+    }
+
+    #[test]
+    fn test_media_core_validators_magic_exif_limits_and_filenames() {
+        use crate::domain::{
+            build_media_storage_key, compute_sha256_hex, sanitize_media_filename,
+            validate_display_image, validate_media_title, validate_model_media_quota,
+            validate_optional_media_language, validate_optional_media_note, validate_pdf_document,
+            validate_sha256_hex, validate_thumbnail_image, MediaKind, MediaMimeType,
+            MAX_DISPLAY_IMAGE_BYTES, MAX_PDF_DOCUMENT_BYTES, MAX_THUMB_IMAGE_BYTES,
+        };
+        use crate::error::CoreError;
+
+        // 1. SHA-256 conhecido (FIPS 180-4 / Vetores NIST oficiais: "", "abc", "abcd...", 1.000.000 "a")
+        assert_eq!(
+            compute_sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        let sha_abc = compute_sha256_hex(b"abc");
+        assert_eq!(
+            sha_abc,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            compute_sha256_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+        );
+        let one_million_a = vec![b'a'; 1_000_000];
+        assert_eq!(
+            compute_sha256_hex(&one_million_a),
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
+        );
+        assert!(validate_sha256_hex(&sha_abc).is_ok());
+        assert!(validate_sha256_hex("invalido").is_err());
+        assert_eq!(
+            build_media_storage_key("tenant-1", &sha_abc).unwrap(),
+            format!("tenant-1/ba/{sha_abc}")
+        );
+
+        // 2. Imagens válidas (WebP, JPEG, PNG)
+        let valid_webp = make_test_webp(1280, 720, false, false);
+        let res_webp = validate_display_image("image/webp", &valid_webp).unwrap();
+        assert_eq!(res_webp.mime_type, MediaMimeType::ImageWebp);
+        assert_eq!(res_webp.width, 1280);
+        assert_eq!(res_webp.height, 720);
+
+        let valid_jpeg = make_test_jpeg(1920, 1080, false);
+        let res_jpeg = validate_display_image("image/jpeg", &valid_jpeg).unwrap();
+        assert_eq!(res_jpeg.mime_type, MediaMimeType::ImageJpeg);
+        assert_eq!(res_jpeg.width, 1920);
+        assert_eq!(res_jpeg.height, 1080);
+
+        let valid_png = make_test_png(2048, 1536, false);
+        let res_png = validate_display_image("image/png", &valid_png).unwrap();
+        assert_eq!(res_png.mime_type, MediaMimeType::ImagePng);
+        assert_eq!(res_png.width, 2048);
+        assert_eq!(res_png.height, 1536);
+
+        // Miniatura válida (até 512 px e 60 KB)
+        let valid_thumb = make_test_webp(256, 256, false, false);
+        let res_thumb = validate_thumbnail_image("image/webp", &valid_thumb).unwrap();
+        assert_eq!(res_thumb.width, 256);
+        assert_eq!(res_thumb.height, 256);
+
+        // 3. Rejeição de EXIF em WebP (chunk EXIF e flag VP8X), JPEG (APP1 Exif) e PNG (chunk eXIf)
+        let webp_exif_chunk = make_test_webp(800, 600, true, false);
+        assert!(matches!(
+            validate_display_image("image/webp", &webp_exif_chunk),
+            Err(CoreError::Validation(msg)) if msg.contains("EXIF")
+        ));
+
+        let webp_exif_flag = make_test_webp(800, 600, false, true);
+        assert!(matches!(
+            validate_display_image("image/webp", &webp_exif_flag),
+            Err(CoreError::Validation(msg)) if msg.contains("EXIF")
+        ));
+
+        let jpeg_exif = make_test_jpeg(800, 600, true);
+        assert!(matches!(
+            validate_display_image("image/jpeg", &jpeg_exif),
+            Err(CoreError::Validation(msg)) if msg.contains("EXIF")
+        ));
+
+        let png_exif = make_test_png(800, 600, true);
+        assert!(matches!(
+            validate_display_image("image/png", &png_exif),
+            Err(CoreError::Validation(msg)) if msg.contains("EXIF")
+        ));
+
+        // R6: Rejeição abrangente de metadados adicionais por formato
+        // WebP: chunk "XMP " e flag XMP no VP8X (0x04)
+        let webp_xmp_chunk =
+            make_test_webp_with_chunk(800, 600, 0x00, Some((b"XMP ", b"<x:xmpmeta/>")));
+        assert!(matches!(
+            validate_display_image("image/webp", &webp_xmp_chunk),
+            Err(CoreError::Validation(msg)) if msg.contains("XMP")
+        ));
+        let webp_xmp_flag = make_test_webp_with_chunk(800, 600, 0x04, None);
+        assert!(matches!(
+            validate_display_image("image/webp", &webp_xmp_flag),
+            Err(CoreError::Validation(msg)) if msg.contains("XMP")
+        ));
+
+        // JPEG: APP13 (IPTC/Photoshop) e COM (Comentário)
+        let jpeg_app13 = make_test_jpeg_with_marker(800, 600, 0xED, b"Photoshop 3.0\0");
+        assert!(matches!(
+            validate_display_image("image/jpeg", &jpeg_app13),
+            Err(CoreError::Validation(msg)) if msg.contains("APP13")
+        ));
+        let jpeg_com = make_test_jpeg_with_marker(800, 600, 0xFE, b"Comentario confidencial");
+        assert!(matches!(
+            validate_display_image("image/jpeg", &jpeg_com),
+            Err(CoreError::Validation(msg)) if msg.contains("comentário")
+        ));
+
+        // PNG: tEXt, iTXt e zTXt
+        let png_text = make_test_png_with_chunk(800, 600, b"tEXt", b"Author\0Locadora");
+        assert!(matches!(
+            validate_display_image("image/png", &png_text),
+            Err(CoreError::Validation(msg)) if msg.contains("tEXt")
+        ));
+        let png_itxt = make_test_png_with_chunk(800, 600, b"iTXt", b"Author\0\0\0\0\0Locadora");
+        assert!(matches!(
+            validate_display_image("image/png", &png_itxt),
+            Err(CoreError::Validation(msg)) if msg.contains("iTXt")
+        ));
+        let png_ztxt = make_test_png_with_chunk(800, 600, b"zTXt", b"Author\0\0compressed");
+        assert!(matches!(
+            validate_display_image("image/png", &png_ztxt),
+            Err(CoreError::Validation(msg)) if msg.contains("zTXt")
+        ));
+
+        // 4. Limites de dimensão (exibição > 2048 px, miniatura > 512 px)
+        let oversized_display = make_test_png(2049, 1000, false);
+        assert!(matches!(
+            validate_display_image("image/png", &oversized_display),
+            Err(CoreError::Validation(msg)) if msg.contains("2048")
+        ));
+
+        let oversized_thumb = make_test_png(513, 256, false);
+        assert!(matches!(
+            validate_thumbnail_image("image/png", &oversized_thumb),
+            Err(CoreError::Validation(msg)) if msg.contains("512")
+        ));
+
+        // 5. Limites de tamanho em bytes (exibição > 600 KB, miniatura > 60 KB)
+        let mut big_display = valid_png.clone();
+        big_display.resize(MAX_DISPLAY_IMAGE_BYTES + 1, 0);
+        assert!(matches!(
+            validate_display_image("image/png", &big_display),
+            Err(CoreError::Validation(msg)) if msg.contains("600 KB")
+        ));
+
+        let mut big_thumb = valid_thumb.clone();
+        big_thumb.resize(MAX_THUMB_IMAGE_BYTES + 1, 0);
+        assert!(matches!(
+            validate_thumbnail_image("image/webp", &big_thumb),
+            Err(CoreError::Validation(msg)) if msg.contains("60 KB")
+        ));
+
+        // 6. MIME falso (declarado image/webp mas bytes são PNG ou PDF)
+        assert!(matches!(
+            validate_display_image("image/webp", &valid_png),
+            Err(CoreError::Validation(msg)) if msg.contains("não corresponde ao tipo MIME")
+        ));
+        assert!(matches!(
+            validate_display_image("application/pdf", &valid_png),
+            Err(CoreError::Validation(_))
+        ));
+
+        // 7. Arquivos truncados
+        assert!(validate_display_image("image/webp", &valid_webp[..14]).is_err());
+        assert!(validate_display_image("image/jpeg", &valid_jpeg[..6]).is_err());
+        assert!(validate_display_image("image/png", &valid_png[..20]).is_err());
+        assert!(validate_display_image("image/png", &[]).is_err());
+
+        // 8. PDF válido, MIME falso, truncado e acima de 25 MB
+        let valid_pdf = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF";
+        let res_pdf = validate_pdf_document("application/pdf", valid_pdf).unwrap();
+        assert_eq!(res_pdf.mime_type, MediaMimeType::ApplicationPdf);
+        assert_eq!(res_pdf.byte_size, valid_pdf.len() as i64);
+
+        assert!(validate_pdf_document("image/png", valid_pdf).is_err());
+        assert!(validate_pdf_document("application/pdf", &valid_png).is_err());
+        assert!(validate_pdf_document("application/pdf", b"%PDF-").is_err());
+        let big_pdf = vec![b'A'; MAX_PDF_DOCUMENT_BYTES + 1];
+        assert!(validate_pdf_document("application/pdf", &big_pdf).is_err());
+
+        // 9. Quotas por modelo (12 fotos, 20 documentos)
+        assert!(validate_model_media_quota(MediaKind::Image, 11).is_ok());
+        assert!(validate_model_media_quota(MediaKind::Image, 12).is_err());
+        assert!(validate_model_media_quota(MediaKind::Document, 19).is_ok());
+        assert!(validate_model_media_quota(MediaKind::Document, 20).is_err());
+
+        // 10. Metadados (título 1..=150, credit_note e version_note <= 300, nome de arquivo saneado)
+        assert_eq!(
+            validate_media_title("  Manual CDJ-3000  ").unwrap(),
+            "Manual CDJ-3000"
+        );
+        assert!(validate_media_title("   ").is_err());
+        assert!(validate_media_title(&"A".repeat(150)).is_ok());
+        assert!(validate_media_title(&"A".repeat(151)).is_err());
+        assert!(validate_media_title("Manual\nCDJ").is_err());
+
+        assert!(validate_optional_media_note("credit_note", Some(&"C".repeat(300))).is_ok());
+        assert!(validate_optional_media_note("credit_note", Some(&"C".repeat(301))).is_err());
+        assert!(validate_optional_media_note("version_note", Some("v1.0\0")).is_err());
+        assert!(validate_optional_media_language(Some("pt-BR")).is_ok());
+        assert!(validate_optional_media_language(Some(&"x".repeat(21))).is_err());
+
+        assert_eq!(
+            sanitize_media_filename("C:\\Users\\Operador\\Fotos\\cdj-3000.webp").unwrap(),
+            "cdj-3000.webp"
+        );
+        assert_eq!(
+            sanitize_media_filename("/var/tmp/manual:v1?.pdf").unwrap(),
+            "manual_v1_.pdf"
+        );
+        assert!(sanitize_media_filename("../segredo.pdf").is_err());
+        assert!(sanitize_media_filename("foto\0.webp").is_err());
+        assert!(sanitize_media_filename("foto\n.webp").is_err());
+        assert!(sanitize_media_filename("   ").is_err());
+        assert!(sanitize_media_filename(&format!("{}.pdf", "a".repeat(147))).is_err());
+
+        // R1: Normalização de original_filename e geração de stem/nome de documento seguro
+        use crate::domain::{
+            normalize_media_filename, safe_document_filename, sanitize_safe_document_stem,
+        };
+
+        let cases = [
+            "evil.bat",
+            "x.cmd",
+            "x.ps1",
+            "x.js",
+            "x.vbs",
+            "x.hta",
+            "x.url",
+            "x.lnk",
+            "x.scr",
+            "x.exe",
+            "a.pdf.bat",
+            "manual.pdf ",
+            ".pdf",
+            "CON",
+            "con.pdf",
+            "nul.pdf",
+            "",
+        ];
+
+        for case in cases {
+            let res = safe_document_filename(case).unwrap();
+            assert!(
+                res.ends_with(".pdf"),
+                "safe_document_filename({case:?}) deve terminar com .pdf, mas retornou: {res}"
+            );
+            assert!(
+                !res.ends_with(".bat")
+                    && !res.ends_with(".cmd")
+                    && !res.ends_with(".ps1")
+                    && !res.ends_with(".exe")
+                    && !res.ends_with(".url")
+                    && !res.ends_with(".lnk")
+            );
+        }
+
+        let long_300 = "a".repeat(300);
+        let res_long = safe_document_filename(&long_300).unwrap();
+        assert!(res_long.ends_with(".pdf"));
+        assert!(res_long.len() <= 65); // 60 chars stem + .pdf (4 chars)
+
+        // R1.3: Normalização de original_filename gravado
+        assert_eq!(
+            normalize_media_filename("manual.bat", MediaMimeType::ApplicationPdf).unwrap(),
+            "manual.pdf"
+        );
+        assert_eq!(
+            normalize_media_filename("foto.exe", MediaMimeType::ImageJpeg).unwrap(),
+            "foto.jpg"
+        );
+        assert_eq!(
+            normalize_media_filename("CON", MediaMimeType::ApplicationPdf).unwrap(),
+            "documento.pdf"
+        );
+        assert_eq!(
+            normalize_media_filename(".pdf", MediaMimeType::ApplicationPdf).unwrap(),
+            "documento.pdf"
+        );
+
+        // R2: Rejeição estrita de caracteres invisíveis e de direção bidi
+        assert!(sanitize_media_filename("manual\u{202E}fdp.bat").is_err());
+        assert!(sanitize_safe_document_stem("manual\u{202E}fdp.bat").is_err());
+        assert!(validate_media_title("Manual\u{200B}Invisivel").is_err());
+        assert!(validate_media_title("Manual\u{202A}Bidi").is_err());
+        assert!(validate_media_title("Manual\u{FEFF}BOM").is_err());
+        assert!(validate_optional_media_note("credit_note", Some("Autor\u{202C}")).is_err());
+        assert!(validate_optional_media_language(Some("pt\u{200E}-BR")).is_err());
     }
 }

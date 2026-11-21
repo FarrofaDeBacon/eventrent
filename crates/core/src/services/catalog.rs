@@ -4,7 +4,8 @@ use uuid::Uuid;
 
 use crate::domain::catalog::{
     build_catalog_search_text, normalize_unique_key, resolve_inherited_attributes,
-    validate_attribute_definition_fields, validate_brand_name, validate_category_fields,
+    validate_attribute_definition_fields, validate_attribute_key_in_hierarchy, validate_brand_name,
+    validate_category_fields, validate_category_move_attribute_keys,
     validate_category_tree_placement, validate_equipment_model_fields,
     validate_model_attribute_values, AttributeDataType, AttributeDefinition, Brand,
     CatalogListFilter, CatalogListResult, CreateAttributeDefinitionInput, CreateBrandInput,
@@ -139,6 +140,7 @@ impl CoreServices {
                         }
                     }
 
+                    let name_changed = existing.name != clean_name;
                     let updated = Brand {
                         id: existing.id,
                         tenant_id: existing.tenant_id,
@@ -152,6 +154,44 @@ impl CoreServices {
                     };
 
                     stores.catalog().update_brand(&updated).await?;
+                    if name_changed {
+                        let affected = stores
+                            .catalog()
+                            .list_models_by_brand(&session.tenant_id, &updated.id)
+                            .await?;
+                        if !affected.is_empty() {
+                            let all_cats = stores
+                                .catalog()
+                                .list_categories(&session.tenant_id, true)
+                                .await?;
+                            let cat_names: HashMap<String, String> =
+                                all_cats.into_iter().map(|c| (c.id, c.name)).collect();
+                            for m in affected {
+                                let cat_name = cat_names
+                                    .get(&m.category_id)
+                                    .map(String::as_str)
+                                    .unwrap_or("");
+                                let new_search = build_catalog_search_text(
+                                    &m.name,
+                                    m.model_code.as_deref(),
+                                    m.sku.as_deref(),
+                                    m.ean.as_deref(),
+                                    m.ncm.as_deref(),
+                                    cat_name,
+                                    Some(&updated.name),
+                                    m.description.as_deref(),
+                                );
+                                stores
+                                    .catalog()
+                                    .update_model_search_text(
+                                        &session.tenant_id,
+                                        &m.id,
+                                        &new_search,
+                                    )
+                                    .await?;
+                            }
+                        }
+                    }
                     stores
                         .audit()
                         .append(&build_audit_entry(
@@ -472,6 +512,19 @@ impl CoreServices {
                         parent_id.as_deref(),
                     )?;
 
+                    if parent_id != existing.parent_id {
+                        let all_defs = stores
+                            .catalog()
+                            .list_all_attribute_definitions(&session.tenant_id)
+                            .await?;
+                        validate_category_move_attribute_keys(
+                            &all_cats,
+                            &all_defs,
+                            &id,
+                            parent_id.as_deref(),
+                        )?;
+                    }
+
                     if let Some(other) = stores
                         .catalog()
                         .find_category_by_parent_and_name(
@@ -489,6 +542,8 @@ impl CoreServices {
                         }
                     }
 
+                    let name_or_parent_changed =
+                        existing.name != clean_name || existing.parent_id != parent_id;
                     let updated = EquipmentCategory {
                         id: existing.id,
                         tenant_id: existing.tenant_id,
@@ -505,6 +560,41 @@ impl CoreServices {
                     };
 
                     stores.catalog().update_category(&updated).await?;
+                    if name_or_parent_changed {
+                        let affected = stores
+                            .catalog()
+                            .list_models_by_category(&session.tenant_id, &updated.id)
+                            .await?;
+                        if !affected.is_empty() {
+                            let all_brands = stores
+                                .catalog()
+                                .list_brands(&session.tenant_id, true)
+                                .await?;
+                            let brand_names: HashMap<String, String> =
+                                all_brands.into_iter().map(|b| (b.id, b.name)).collect();
+                            for m in affected {
+                                let b_name = m
+                                    .brand_id
+                                    .as_ref()
+                                    .and_then(|bid| brand_names.get(bid))
+                                    .map(String::as_str);
+                                let new_search = build_catalog_search_text(
+                                    &m.name,
+                                    m.model_code.as_deref(),
+                                    m.sku.as_deref(),
+                                    m.ean.as_deref(),
+                                    m.ncm.as_deref(),
+                                    &updated.name,
+                                    b_name,
+                                    m.description.as_deref(),
+                                );
+                                stores
+                                    .catalog()
+                                    .update_model_search_text(&session.tenant_id, &m.id, &new_search)
+                                    .await?;
+                            }
+                        }
+                    }
                     stores
                         .audit()
                         .append(&build_audit_entry(
@@ -626,28 +716,31 @@ impl CoreServices {
             let session = session_clone.clone();
             let def = def_clone.clone();
             Box::pin(async move {
-                stores
+                let all_cats = stores
                     .catalog()
-                    .find_category_by_id(&session.tenant_id, &def.category_id)
-                    .await?
-                    .ok_or_else(|| CoreError::NotFound("Categoria não encontrada.".to_string()))?;
-
-                let existing_defs = stores
-                    .catalog()
-                    .list_attribute_definitions_by_category(&session.tenant_id, &def.category_id)
+                    .list_categories(&session.tenant_id, true)
                     .await?;
-                if existing_defs.len() >= MAX_ATTRIBUTES_PER_CATEGORY {
+                let all_defs = stores
+                    .catalog()
+                    .list_all_attribute_definitions(&session.tenant_id)
+                    .await?;
+                let own_count = all_defs
+                    .iter()
+                    .filter(|d| d.category_id == def.category_id)
+                    .count();
+                if own_count >= MAX_ATTRIBUTES_PER_CATEGORY {
                     return Err(CoreError::Validation(format!(
                         "Limite máximo de {} atributos por categoria atingido.",
                         MAX_ATTRIBUTES_PER_CATEGORY
                     )));
                 }
-                if existing_defs.iter().any(|d| d.field_key == def.field_key) {
-                    return Err(CoreError::Conflict(format!(
-                        "Já existe um atributo com a chave '{}' nesta categoria.",
-                        def.field_key
-                    )));
-                }
+                validate_attribute_key_in_hierarchy(
+                    &all_cats,
+                    &all_defs,
+                    &def.category_id,
+                    &def.field_key,
+                    None,
+                )?;
 
                 stores.catalog().create_attribute_definition(&def).await?;
                 stores
@@ -719,21 +812,52 @@ impl CoreServices {
                         ));
                     }
 
-                    let sibling_defs = stores
+                    let all_cats = stores
                         .catalog()
-                        .list_attribute_definitions_by_category(
-                            &session.tenant_id,
-                            &existing.category_id,
-                        )
+                        .list_categories(&session.tenant_id, true)
                         .await?;
-                    if sibling_defs
-                        .iter()
-                        .any(|d| d.id != existing.id && d.field_key == clean_key)
-                    {
-                        return Err(CoreError::Conflict(format!(
-                            "Já existe outro atributo com a chave '{}' nesta categoria.",
-                            clean_key
-                        )));
+                    let all_defs = stores
+                        .catalog()
+                        .list_all_attribute_definitions(&session.tenant_id)
+                        .await?;
+                    validate_attribute_key_in_hierarchy(
+                        &all_cats,
+                        &all_defs,
+                        &existing.category_id,
+                        &clean_key,
+                        Some(&existing.id),
+                    )?;
+
+                    if input.data_type != existing.data_type {
+                        let used_count = stores
+                            .catalog()
+                            .count_models_using_attribute_definition(&session.tenant_id, &existing.id)
+                            .await?;
+                        if used_count > 0 {
+                            return Err(CoreError::Conflict(format!(
+                                "Não é possível alterar o tipo do atributo '{}' pois ele já possui valores preenchidos em {} modelo(s).",
+                                existing.label, used_count
+                            )));
+                        }
+                    } else if existing.data_type == AttributeDataType::Select {
+                        let used_values = stores
+                            .catalog()
+                            .list_distinct_text_values_for_attribute_definition(
+                                &session.tenant_id,
+                                &existing.id,
+                            )
+                            .await?;
+                        let removed_in_use: Vec<String> = used_values
+                            .into_iter()
+                            .filter(|val| !clean_choices.iter().any(|c| c == val))
+                            .collect();
+                        if !removed_in_use.is_empty() {
+                            return Err(CoreError::Conflict(format!(
+                                "Não é possível remover opções do atributo '{}' que já estão em uso: {}.",
+                                existing.label,
+                                removed_in_use.join(", ")
+                            )));
+                        }
                     }
 
                     let updated = AttributeDefinition {
@@ -961,6 +1085,12 @@ impl CoreServices {
                         .ok_or_else(|| {
                             CoreError::NotFound("Categoria selecionada não encontrada.".to_string())
                         })?;
+                    if !category.active {
+                        return Err(CoreError::Validation(format!(
+                            "A categoria '{}' está inativa e não pode ser atribuída a um novo modelo.",
+                            category.name
+                        )));
+                    }
 
                     let brand_name = if let Some(ref bid) = brand_id {
                         let b = stores
@@ -970,6 +1100,12 @@ impl CoreServices {
                             .ok_or_else(|| {
                                 CoreError::NotFound("Marca selecionada não encontrada.".to_string())
                             })?;
+                        if !b.active {
+                            return Err(CoreError::Validation(format!(
+                                "A marca '{}' está inativa e não pode ser atribuída a um novo modelo.",
+                                b.name
+                            )));
+                        }
                         Some(b.name)
                     } else {
                         None
@@ -1002,6 +1138,39 @@ impl CoreServices {
                             created_by: Some(session.user_id.clone()),
                         })
                         .collect();
+
+                    if let Some(ref sku_norm) = v.sku_normalized {
+                        if let Some(other) = stores
+                            .catalog()
+                            .find_model_by_sku_normalized(&session.tenant_id, sku_norm)
+                            .await?
+                        {
+                            return Err(CoreError::Conflict(format!(
+                                "O SKU '{}' já está em uso pelo modelo '{}'.",
+                                v.sku.as_deref().unwrap_or(sku_norm),
+                                other.name
+                            )));
+                        }
+                    }
+                    if let (Some(ref bid), Some(ref code_norm)) =
+                        (&brand_id, &v.model_code_normalized)
+                    {
+                        if let Some(other) = stores
+                            .catalog()
+                            .find_model_by_brand_and_code_normalized(
+                                &session.tenant_id,
+                                bid,
+                                code_norm,
+                            )
+                            .await?
+                        {
+                            return Err(CoreError::Conflict(format!(
+                                "O código '{}' já está em uso para esta marca pelo modelo '{}'.",
+                                v.model_code.as_deref().unwrap_or(code_norm),
+                                other.name
+                            )));
+                        }
+                    }
 
                     let search_text = build_catalog_search_text(
                         &v.name,
@@ -1150,6 +1319,12 @@ impl CoreServices {
                         .ok_or_else(|| {
                             CoreError::NotFound("Categoria selecionada não encontrada.".to_string())
                         })?;
+                    if category.id != existing.category_id && !category.active {
+                        return Err(CoreError::Validation(format!(
+                            "A categoria '{}' está inativa e não pode ser atribuída ao modelo.",
+                            category.name
+                        )));
+                    }
 
                     let brand_name = if let Some(ref bid) = brand_id {
                         let b = stores
@@ -1159,6 +1334,12 @@ impl CoreServices {
                             .ok_or_else(|| {
                                 CoreError::NotFound("Marca selecionada não encontrada.".to_string())
                             })?;
+                        if existing.brand_id.as_deref() != Some(b.id.as_str()) && !b.active {
+                            return Err(CoreError::Validation(format!(
+                                "A marca '{}' está inativa e não pode ser atribuída ao modelo.",
+                                b.name
+                            )));
+                        }
                         Some(b.name)
                     } else {
                         None
@@ -1175,20 +1356,83 @@ impl CoreServices {
                         &input.attribute_values,
                     )?;
 
+                    let existing_attr_map: HashMap<String, EquipmentModelAttributeValue> = stores
+                        .catalog()
+                        .list_model_attribute_values(&session.tenant_id, &existing.id)
+                        .await?
+                        .into_iter()
+                        .map(|v| (v.definition_id.clone(), v))
+                        .collect();
+
+                    if let Some(ref sku_norm) = v.sku_normalized {
+                        if let Some(other) = stores
+                            .catalog()
+                            .find_model_by_sku_normalized(&session.tenant_id, sku_norm)
+                            .await?
+                        {
+                            if other.id != existing.id {
+                                return Err(CoreError::Conflict(format!(
+                                    "O SKU '{}' já está em uso pelo modelo '{}'.",
+                                    v.sku.as_deref().unwrap_or(sku_norm),
+                                    other.name
+                                )));
+                            }
+                        }
+                    }
+                    if let (Some(ref bid), Some(ref code_norm)) =
+                        (&brand_id, &v.model_code_normalized)
+                    {
+                        if let Some(other) = stores
+                            .catalog()
+                            .find_model_by_brand_and_code_normalized(
+                                &session.tenant_id,
+                                bid,
+                                code_norm,
+                            )
+                            .await?
+                        {
+                            if other.id != existing.id {
+                                return Err(CoreError::Conflict(format!(
+                                    "O código '{}' já está em uso para esta marca pelo modelo '{}'.",
+                                    v.model_code.as_deref().unwrap_or(code_norm),
+                                    other.name
+                                )));
+                            }
+                        }
+                    }
+
                     let attr_values: Vec<EquipmentModelAttributeValue> = validated_attrs
                         .into_iter()
-                        .map(|av| EquipmentModelAttributeValue {
-                            id: Uuid::now_v7().to_string(),
-                            tenant_id: session.tenant_id.clone(),
-                            model_id: existing.id.clone(),
-                            definition_id: av.definition_id,
-                            value_text: av.value_text,
-                            value_number: av.value_number,
-                            value_bool: av.value_bool,
-                            created_at: now.clone(),
-                            updated_at: now.clone(),
-                            deleted_at: None,
-                            created_by: Some(session.user_id.clone()),
+                        .map(|av| {
+                            if let Some(prev) = existing_attr_map.get(&av.definition_id) {
+                                EquipmentModelAttributeValue {
+                                    id: prev.id.clone(),
+                                    tenant_id: session.tenant_id.clone(),
+                                    model_id: existing.id.clone(),
+                                    definition_id: av.definition_id,
+                                    value_text: av.value_text,
+                                    value_number: av.value_number,
+                                    value_bool: av.value_bool,
+                                    created_at: prev.created_at.clone(),
+                                    updated_at: now.clone(),
+                                    deleted_at: None,
+                                    created_by: prev.created_by.clone(),
+                                }
+                            } else {
+                                EquipmentModelAttributeValue {
+                                    id: Uuid::now_v7().to_string(),
+                                    tenant_id: session.tenant_id.clone(),
+                                    model_id: existing.id.clone(),
+                                    definition_id: av.definition_id,
+                                    value_text: av.value_text,
+                                    value_number: av.value_number,
+                                    value_bool: av.value_bool,
+                                    created_at: now.clone(),
+                                    updated_at: now.clone(),
+                                    deleted_at: None,
+                                    created_by: Some(session.user_id.clone()),
+                                }
+                            }
                         })
                         .collect();
 
@@ -1620,6 +1864,102 @@ impl CoreServices {
                         parent_name: Some("Energia e Cabeamento"),
                         name: "Cabos de Energia",
                         sort_order: 2,
+                        attrs: &[],
+                    },
+                    SuggestedCat {
+                        parent_name: None,
+                        name: "DJ",
+                        sort_order: 7,
+                        attrs: &[],
+                    },
+                    SuggestedCat {
+                        parent_name: Some("DJ"),
+                        name: "Players (CDJ)",
+                        sort_order: 1,
+                        attrs: &[SuggestedAttr {
+                            field_key: "pro_dj_link",
+                            label: "Pro DJ Link",
+                            data_type: AttributeDataType::Boolean,
+                            unit: None,
+                            choices: &[],
+                        }],
+                    },
+                    SuggestedCat {
+                        parent_name: Some("DJ"),
+                        name: "Mixers DJ",
+                        sort_order: 2,
+                        attrs: &[
+                            SuggestedAttr {
+                                field_key: "canais",
+                                label: "Canais",
+                                data_type: AttributeDataType::Number,
+                                unit: Some("ch"),
+                                choices: &[],
+                            },
+                            SuggestedAttr {
+                                field_key: "efeitos",
+                                label: "Efeitos",
+                                data_type: AttributeDataType::Boolean,
+                                unit: None,
+                                choices: &[],
+                            },
+                        ],
+                    },
+                    SuggestedCat {
+                        parent_name: Some("DJ"),
+                        name: "Controladoras DJ",
+                        sort_order: 3,
+                        attrs: &[
+                            SuggestedAttr {
+                                field_key: "canais",
+                                label: "Canais",
+                                data_type: AttributeDataType::Number,
+                                unit: Some("ch"),
+                                choices: &[],
+                            },
+                            SuggestedAttr {
+                                field_key: "efeitos",
+                                label: "Efeitos",
+                                data_type: AttributeDataType::Boolean,
+                                unit: None,
+                                choices: &[],
+                            },
+                        ],
+                    },
+                    SuggestedCat {
+                        parent_name: None,
+                        name: "Acessórios",
+                        sort_order: 8,
+                        attrs: &[],
+                    },
+                    SuggestedCat {
+                        parent_name: Some("Acessórios"),
+                        name: "Pedestais e suportes",
+                        sort_order: 1,
+                        attrs: &[SuggestedAttr {
+                            field_key: "carga_maxima_kg",
+                            label: "Carga Máxima",
+                            data_type: AttributeDataType::Number,
+                            unit: Some("kg"),
+                            choices: &[],
+                        }],
+                    },
+                    SuggestedCat {
+                        parent_name: Some("Acessórios"),
+                        name: "Cases e racks",
+                        sort_order: 2,
+                        attrs: &[SuggestedAttr {
+                            field_key: "unidades_rack_u",
+                            label: "Unidades de Rack",
+                            data_type: AttributeDataType::Number,
+                            unit: Some("U"),
+                            choices: &[],
+                        }],
+                    },
+                    SuggestedCat {
+                        parent_name: Some("Acessórios"),
+                        name: "Fitas e consumíveis",
+                        sort_order: 3,
                         attrs: &[],
                     },
                 ];

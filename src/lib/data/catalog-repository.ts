@@ -1,6 +1,11 @@
 export type AttributeDataType = "text" | "number" | "boolean" | "select";
 export type ControlMode = "serialized" | "quantity";
 export type VoltageOption = "110" | "220" | "bivolt";
+export type MediaMimeType =
+  "image/webp" | "image/jpeg" | "image/png" | "application/pdf";
+export type MediaKind = "image" | "document";
+export type MediaDocType = "manual" | "datasheet" | "certificate" | "other";
+export type MediaOrigin = "manufacturer" | "own" | "website" | "other";
 
 export interface Brand {
   id: string;
@@ -112,6 +117,84 @@ export interface EquipmentModelListItem {
   model: EquipmentModel;
   category_name: string;
   brand_name: string | null;
+  primary_thumb_blob_id?: string | null;
+  primary_thumb_mime_type?: string | null;
+}
+
+export interface EquipmentModelMediaView {
+  id: string;
+  tenant_id: string;
+  model_id: string;
+  asset_id: string;
+  kind: MediaKind;
+  blob_id: string;
+  blob_sha256: string;
+  mime_type: MediaMimeType;
+  thumb_blob_id: string | null;
+  thumb_sha256: string | null;
+  thumb_mime_type: MediaMimeType | null;
+  title: string;
+  doc_type: MediaDocType | null;
+  origin: MediaOrigin;
+  credit_note: string | null;
+  language: string | null;
+  version_note: string | null;
+  original_filename: string;
+  width: number | null;
+  height: number | null;
+  byte_size: number;
+  is_primary: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AttachModelPhotoInput {
+  model_id: string;
+  title: string;
+  origin: MediaOrigin;
+  credit_note: string | null;
+  original_filename: string;
+  display_mime_type: MediaMimeType;
+  display_bytes: Uint8Array;
+  thumb_mime_type: MediaMimeType;
+  thumb_bytes: Uint8Array;
+}
+
+export interface AttachModelDocumentInput {
+  model_id: string;
+  title: string;
+  doc_type: MediaDocType;
+  origin: MediaOrigin;
+  credit_note: string | null;
+  language: string | null;
+  version_note: string | null;
+  original_filename: string;
+  mime_type: MediaMimeType;
+  bytes: Uint8Array;
+}
+
+export interface UpdateModelMediaInput {
+  media_link_id: string;
+  title: string;
+  doc_type: MediaDocType | null;
+  origin: MediaOrigin;
+  credit_note: string | null;
+  language: string | null;
+  version_note: string | null;
+  expected_updated_at: string;
+}
+
+export interface ReorderModelMediaInput {
+  model_id: string;
+  kind: MediaKind;
+  ordered_link_ids: string[];
+}
+
+export interface MediaGarbageCollectionResult {
+  deleted_assets: number;
+  deleted_blobs: number;
+  deleted_files: number;
 }
 
 export interface EquipmentModelWithDetails {
@@ -273,4 +356,24 @@ export interface CatalogRepository {
   deleteEquipmentModel(id: string): Promise<void>;
 
   loadSuggestedCategories(): Promise<SuggestedCategoriesResult>;
+
+  listModelMedia(modelId: string): Promise<EquipmentModelMediaView[]>;
+  getMediaBlobBytes(blobId: string): Promise<Uint8Array>;
+  attachModelPhoto(
+    input: AttachModelPhotoInput,
+  ): Promise<EquipmentModelMediaView>;
+  attachModelDocument(
+    input: AttachModelDocumentInput,
+  ): Promise<EquipmentModelMediaView>;
+  updateModelMediaMetadata(
+    input: UpdateModelMediaInput,
+  ): Promise<EquipmentModelMediaView>;
+  reorderModelMedia(
+    input: ReorderModelMediaInput,
+  ): Promise<EquipmentModelMediaView[]>;
+  setPrimaryModelPhoto(mediaLinkId: string): Promise<EquipmentModelMediaView>;
+  removeModelMedia(mediaLinkId: string): Promise<void>;
+  collectUnreferencedMedia(): Promise<MediaGarbageCollectionResult>;
+  openModelDocumentExternal(mediaLinkId: string): Promise<string>;
+  saveModelDocumentAs(mediaLinkId: string): Promise<string | null>;
 }

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissões padrão para a janela principal do EventRent",
+  "description": "Permissões padrão de menor privilégio para a janela principal do EventRent",
   "windows": ["main"],
-  "permissions": ["core:default", "opener:default"]
+  "permissions": ["core:default"]
 }
