@@ -4,6 +4,12 @@ import type {
   UpdateAllocationSettingsInput,
 } from "./types";
 
+if (!import.meta.env.DEV) {
+  throw new Error(
+    "Mocks não podem ser carregados no ambiente de produção. Execute o aplicativo desktop EventRent.",
+  );
+}
+
 const STORAGE_KEY = "eventrent:mock:allocation_settings:v2";
 
 const DEFAULT_SETTINGS: AllocationSettings = {

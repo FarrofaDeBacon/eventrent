@@ -65,9 +65,9 @@ Avaliamos três abordagens para garantir consistência absoluta entre Rust e Typ
    - Teste automatizado no Rust (`guards.rs`) para impedir regressões na CSP (garantindo que não seja nula nem vazia, proibindo `'unsafe-eval'` e curingas em `script-src`, e validando a presença de `style-src 'self' 'unsafe-inline'`).
 
 4. **Isolamento de Mocks fora do Pacote de Produção:**
-   - As implementações mockadas (`mock-*.ts`) são estritamente condicionadas a `import.meta.env.DEV`.
-   - No build de produção (`pnpm tauri build`), apenas os repositórios Tauri reais são empacotados.
-   - Se a aplicação Web for acessada fora do Tauri em modo produção, uma mensagem instrutiva é renderizada ("Execute o aplicativo desktop EventRent"). Em modo de desenvolvimento no navegador, uma tarja visual persistente de aviso ("MODO DE DEMONSTRAÇÃO: Não use dados reais") é exibida.
+   - Todas as 7 implementações mockadas (`mock-*.ts`) contêm guards explícitos `if (!import.meta.env.DEV) throw new Error(...)`, impedindo estritamente sua execução fora do ambiente de desenvolvimento ou testes.
+   - Em `src/lib/data/index.ts`, a fábrica de repositórios valida o ambiente via `requireDesktopOrDev`. Caso executada em produção fora do runtime Tauri, ela lança erro imediato em vez de instanciar mocks silenciosamente.
+   - Na camada de apresentação (`src/routes/+layout.svelte`), o acesso web de produção renderiza uma tela bloqueante com instrução explícita ("Execute o aplicativo desktop EventRent"). Em modo de desenvolvimento no navegador (mocks ativos), exibe uma tarja visual persistente e não-armazenada em storage ("MODO DE DEMONSTRAÇÃO: Não use dados reais") com semântica de alerta acessível.
 
 ## Consequências
 

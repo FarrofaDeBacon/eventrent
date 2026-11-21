@@ -14,6 +14,12 @@ import {
 } from "./types";
 import type { UserRepository } from "./user-repository";
 
+if (!import.meta.env.DEV) {
+  throw new Error(
+    "Mocks não podem ser carregados no ambiente de produção. Execute o aplicativo desktop EventRent.",
+  );
+}
+
 function toPublicUser(user: MockInternalUser): UserWithRole {
   return {
     id: user.id,

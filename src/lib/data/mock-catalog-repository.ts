@@ -30,6 +30,12 @@ import type {
 import { appSession } from "./session.svelte";
 import { PERMISSIONS } from "./types";
 
+if (!import.meta.env.DEV) {
+  throw new Error(
+    "Mocks não podem ser carregados no ambiente de produção. Execute o aplicativo desktop EventRent.",
+  );
+}
+
 function normalizeText(value: string): string {
   return value
     .normalize("NFD")

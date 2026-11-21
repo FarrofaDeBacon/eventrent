@@ -10,6 +10,12 @@ import type {
 } from "./types";
 import type { VenueRepository } from "./venue-repository";
 
+if (!import.meta.env.DEV) {
+  throw new Error(
+    "Mocks não podem ser carregados no ambiente de produção. Execute o aplicativo desktop EventRent.",
+  );
+}
+
 const STORAGE_KEY = "eventrent:mock:venues:v1";
 
 function normalizeSearch(value: string): string {

@@ -30,6 +30,12 @@ interface MockCustomerStore {
   initialized: boolean;
 }
 
+if (!import.meta.env.DEV) {
+  throw new Error(
+    "Mocks não podem ser carregados no ambiente de produção. Execute o aplicativo desktop EventRent.",
+  );
+}
+
 const STORAGE_KEY = "eventrent:mock:customers:v1";
 
 const memoryStore: MockCustomerStore = {
