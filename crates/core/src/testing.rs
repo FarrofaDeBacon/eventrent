@@ -4986,5 +4986,46 @@ mod unit_tests {
         assert!(validate_media_title("Manual\u{FEFF}BOM").is_err());
         assert!(validate_optional_media_note("credit_note", Some("Autor\u{202C}")).is_err());
         assert!(validate_optional_media_language(Some("pt\u{200E}-BR")).is_err());
+
+        // B4: Nomes reservados com dígitos sobrescritos (COM¹..³, LPT¹..³) e exclusão de dígitos não ASCII
+        let reserved_superscripts = [
+            "COM¹",
+            "com¹",
+            "COM²",
+            "com²",
+            "COM³",
+            "com³",
+            "LPT¹",
+            "lpt¹",
+            "LPT²",
+            "lpt²",
+            "LPT³",
+            "lpt³",
+            "COM¹.pdf",
+            "LPT¹.pdf",
+        ];
+        for name in reserved_superscripts {
+            assert_eq!(
+                safe_document_filename(name).unwrap(),
+                "documento.pdf",
+                "Nome reservado com sobrescrito {name} deve virar documento.pdf"
+            );
+            assert_eq!(
+                normalize_media_filename(name, MediaMimeType::ApplicationPdf).unwrap(),
+                "documento.pdf",
+                "Nome reservado com sobrescrito {name} em original_filename deve virar documento.pdf"
+            );
+        }
+
+        // B4: Dígitos não ASCII (como sobrescritos ¹, ² ou numerais Devanagari) são excluídos do stem seguro,
+        // enquanto letras Unicode e dígitos ASCII permanecem.
+        assert_eq!(
+            safe_document_filename("Manual-Versão¹²-3").unwrap(),
+            "Manual-Versão-3.pdf"
+        );
+        assert_eq!(
+            safe_document_filename("Guia de Operação 2026").unwrap(),
+            "Guia de Operação 2026.pdf"
+        );
     }
 }
