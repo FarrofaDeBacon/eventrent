@@ -424,6 +424,44 @@ impl CoreServices {
         Ok(())
     }
 
+    /// Revalida a sessão dinamicamente contra o banco de dados (S3 / ADR-0016):
+    /// 1. Verifica expiração por inatividade;
+    /// 2. Recarrega o usuário atualizado com papel e permissões live do banco;
+    /// 3. Assegura que o usuário está ativo (active == true e deleted_at IS NULL);
+    /// 4. Assegura que session.auth_epoch == user.auth_epoch (se divergir: Unauthorized);
+    /// 5. Retorna o SessionInfo atualizado com permissões e papel recarregados.
+    pub async fn revalidate_session(&self, session: &SessionInfo) -> Result<SessionInfo> {
+        self.verify_session_active(session)?;
+        let user = self
+            .stores
+            .users
+            .find_with_role(&session.tenant_id, &session.user_id)
+            .await?
+            .ok_or_else(|| {
+                CoreError::Unauthorized("Usuário da sessão não encontrado ou removido.".to_string())
+            })?;
+
+        if !user.active || user.deleted_at.is_some() {
+            return Err(CoreError::Unauthorized(
+                "Conta de usuário inativa ou desativada.".to_string(),
+            ));
+        }
+
+        if session.auth_epoch != user.auth_epoch {
+            return Err(CoreError::Unauthorized(
+                "Sessão revogada por alteração de credenciais ou permissões.".to_string(),
+            ));
+        }
+
+        let mut updated = session.clone();
+        updated.role_id = user.role_id;
+        updated.role_name = user.role_name;
+        updated.role_slug = user.role_slug;
+        updated.permissions = user.permissions;
+        updated.auth_epoch = user.auth_epoch;
+        Ok(updated)
+    }
+
     /// Executa o assistente de primeira execução no modo Local:
     /// configura nome da empresa, perfis de sistema, conta do Proprietário e retorna a chave de recuperação única.
     /// Todas as operações de banco e auditoria ocorrem de forma atômica sob a mesma transação.
@@ -528,6 +566,7 @@ impl CoreServices {
                     updated_at: now.clone(),
                     deleted_at: None,
                     created_by: Some(owner_id.clone()),
+                    auth_epoch: 0,
                 };
 
                 let created_owner = stores.users().create(&owner_record).await?;
@@ -571,6 +610,7 @@ impl CoreServices {
                     authenticated_at: now.clone(),
                     last_activity_at: now,
                     inactivity_timeout_minutes,
+                    auth_epoch: created_owner.auth_epoch,
                 };
 
                 Ok(InitialSetupResult {
@@ -769,6 +809,7 @@ impl CoreServices {
                         authenticated_at: now_str.clone(),
                         last_activity_at: now_str,
                         inactivity_timeout_minutes,
+                        auth_epoch: user_with_role.auth_epoch,
                     })
                 })
             })
@@ -1248,6 +1289,7 @@ impl CoreServices {
                     updated_at: now,
                     deleted_at: None,
                     created_by: Some(session.user_id.clone()),
+                    auth_epoch: 0,
                 };
 
                 let created = stores.users().create(&record).await?;

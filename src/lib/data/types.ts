@@ -18,6 +18,7 @@ export interface SessionInfo {
   authenticated_at: string;
   last_activity_at: string;
   inactivity_timeout_minutes: number;
+  auth_epoch?: number;
 }
 
 export interface AppStatus {
@@ -83,6 +84,7 @@ export interface UserWithRole {
   updated_at: string;
   deleted_at: string | null;
   created_by: string | null;
+  auth_epoch?: number;
 }
 
 export interface CreateUserInput {
@@ -114,6 +116,7 @@ export interface RoleWithPermissions {
   updated_at: string;
   deleted_at: string | null;
   created_by: string | null;
+  auth_epoch?: number;
 }
 
 export interface TenantBranding {
@@ -131,6 +134,7 @@ export interface TenantBranding {
   updated_at: string;
   deleted_at: string | null;
   created_by: string | null;
+  auth_epoch?: number;
 }
 
 export interface UpdateBrandingInput {

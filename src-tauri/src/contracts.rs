@@ -444,17 +444,18 @@ pub fn build_fixture_for_command(cmd_name: &str) -> Option<ContractFixture> {
 
 fn sample_session_json() -> serde_json::Value {
     json!({
-        "token": "sample-token-jwt-login",
-        "tenant_id": "018f0000-0000-7000-8000-000000000001",
         "user_id": "018f0000-0000-7000-8000-000000000002",
+        "tenant_id": "018f0000-0000-7000-8000-000000000001",
         "name": "Operador Audiovisual",
         "email": "operador@eventrent.com.br",
-        "role_slug": "proprietario",
+        "role_id": "018f0000-0000-7000-8000-000000000031",
         "role_name": "Proprietário",
+        "role_slug": "proprietario",
         "permissions": ["all"],
-        "mode": "local",
+        "authenticated_at": "2026-11-21T10:00:00Z",
+        "last_activity_at": "2026-11-21T10:00:00Z",
         "inactivity_timeout_minutes": 30,
-        "last_activity_at": "2026-11-21T10:00:00Z"
+        "auth_epoch": 0
     })
 }
 
@@ -489,7 +490,8 @@ fn sample_user_json() -> serde_json::Value {
         "created_at": "2026-11-21T10:00:00Z",
         "updated_at": "2026-11-21T10:00:00Z",
         "deleted_at": null,
-        "created_by": null
+        "created_by": null,
+        "auth_epoch": 0
     })
 }
 

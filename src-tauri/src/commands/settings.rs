@@ -7,7 +7,7 @@ use tauri::State;
 pub async fn get_allocation_settings(
     state: State<'_, AppState>,
 ) -> Result<AllocationSettings, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .get_allocation_settings(&session)
@@ -20,7 +20,7 @@ pub async fn update_allocation_settings(
     state: State<'_, AppState>,
     input: UpdateAllocationSettingsInput,
 ) -> Result<AllocationSettings, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .update_allocation_settings(&session, &input)

@@ -271,6 +271,7 @@ pub async fn contract_user_creation_and_rbac(
         authenticated_at: chrono::Utc::now().to_rfc3339(),
         last_activity_at: chrono::Utc::now().to_rfc3339(),
         inactivity_timeout_minutes: 30,
+        auth_epoch: 0,
     };
     let owner_role = services
         .stores
@@ -585,6 +586,7 @@ pub async fn contract_unique_partial_indexes(stores: &StoreBundle, tenant_id: &s
         updated_at: now.clone(),
         deleted_at: None,
         created_by: None,
+        auth_epoch: 0,
     };
     stores
         .users
@@ -611,6 +613,7 @@ pub async fn contract_unique_partial_indexes(stores: &StoreBundle, tenant_id: &s
         updated_at: now,
         deleted_at: None,
         created_by: None,
+        auth_epoch: 0,
     };
     let duplicate_result = stores.users.create(&user2).await;
     assert!(
@@ -1948,6 +1951,7 @@ mod unit_tests {
                 authenticated_at: "2026-01-01T00:00:00Z".to_string(),
                 last_activity_at: "2026-01-01T00:00:00Z".to_string(),
                 inactivity_timeout_minutes: 30,
+                auth_epoch: 0,
             },
             branding: TenantBranding {
                 id: "b1".to_string(),
@@ -1988,6 +1992,7 @@ mod unit_tests {
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             deleted_at: None,
             created_by: None,
+            auth_epoch: 0,
         };
         let user_rec_debug = format!("{user_rec:?}");
         assert!(!user_rec_debug.contains("secret_hash_value"));

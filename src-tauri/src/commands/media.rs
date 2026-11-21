@@ -174,7 +174,7 @@ pub async fn list_model_media(
     state: State<'_, AppState>,
     model_id: String,
 ) -> Result<Vec<EquipmentModelMediaView>, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .list_model_media(&session, &model_id)
@@ -187,7 +187,7 @@ pub async fn get_media_blob_bytes(
     state: State<'_, AppState>,
     blob_id: String,
 ) -> Result<Response, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     let (_blob, bytes) = state
         .services
         .get_media_blob_bytes(&session, &blob_id)
@@ -201,7 +201,7 @@ pub async fn attach_model_photo(
     state: State<'_, AppState>,
     request: Request<'_>,
 ) -> Result<EquipmentModelMediaView, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     let raw_bytes = match request.body() {
         InvokeBody::Raw(bytes) => bytes,
         InvokeBody::Json(_) => {
@@ -225,7 +225,7 @@ pub async fn attach_model_document(
     state: State<'_, AppState>,
     request: Request<'_>,
 ) -> Result<EquipmentModelMediaView, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     let raw_bytes = match request.body() {
         InvokeBody::Raw(bytes) => bytes,
         InvokeBody::Json(_) => {
@@ -249,7 +249,7 @@ pub async fn update_model_media_metadata(
     state: State<'_, AppState>,
     input: UpdateModelMediaInput,
 ) -> Result<EquipmentModelMediaView, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .update_model_media_metadata(&session, &input)
@@ -262,7 +262,7 @@ pub async fn reorder_model_media(
     state: State<'_, AppState>,
     input: ReorderModelMediaInput,
 ) -> Result<Vec<EquipmentModelMediaView>, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .reorder_model_media(&session, &input)
@@ -275,7 +275,7 @@ pub async fn set_primary_model_photo(
     state: State<'_, AppState>,
     media_link_id: String,
 ) -> Result<EquipmentModelMediaView, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .set_primary_model_photo(&session, &media_link_id)
@@ -288,7 +288,7 @@ pub async fn remove_model_media(
     state: State<'_, AppState>,
     media_link_id: String,
 ) -> Result<(), String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .remove_model_media(&session, &media_link_id)
@@ -300,7 +300,7 @@ pub async fn remove_model_media(
 pub async fn collect_unreferenced_media(
     state: State<'_, AppState>,
 ) -> Result<MediaGarbageCollectionResult, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .collect_unreferenced_media(&session)
@@ -415,7 +415,7 @@ pub async fn open_model_document_external(
     state: State<'_, AppState>,
     media_link_id: String,
 ) -> Result<String, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     let (view, bytes) = state
         .services
         .get_model_document_for_external(&session, &media_link_id)
@@ -439,7 +439,7 @@ pub async fn save_model_document_as(
     state: State<'_, AppState>,
     media_link_id: String,
 ) -> Result<Option<String>, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     let (view, bytes) = state
         .services
         .get_model_document_for_external(&session, &media_link_id)

@@ -156,3 +156,27 @@ Para manter o princípio do menor privilégio e evitar exposição desnecessári
 5. **Backup, Migração para Nuvem (Fase 2.6) e Antivírus na Nuvem (Fase 2.5)**:
    - Os blobs da árvore `<dados_do_app>/media/` integram obrigatoriamente o pacote de backup local e o assistente de migração local para nuvem (Fase 2.6), com verificação de integridade SHA-256 ponta a ponta.
    - Na operação em nuvem (Fase 2.5), todo blob enviado passará por verificação assíncrona de antivírus/antimalware em quarentena antes de ser disponibilizado para download pelos usuários do tenant.
+
+---
+
+## 10. Revalidação Dinâmica de Sessão por Época (`auth_epoch`) e Permissões Vivas (Fase 2S / ADR-0016)
+
+Para eliminar brechas de privilégio estático e garantir a revogação instantânea de sessões comprometidas ou clonadas:
+
+1. **Controle de Época de Autenticação (`auth_epoch`)**:
+   - A tabela `app_user` armazena a coluna `auth_epoch INTEGER NOT NULL DEFAULT 0` (migração `0010_auth_epoch.sql`).
+   - Cada sessão autenticada (`SessionInfo`) recebe e carrega o `auth_epoch` vigente no momento do login.
+
+2. **Invalidação em Cascata Obrigatória**:
+   O valor de `auth_epoch` é incrementado atomicamente (`auth_epoch = auth_epoch + 1`) no banco SQLite em qualquer uma das seguintes situações:
+   - **Troca ou redefinição de senha** (`reset_user_password` / `update_password`);
+   - **Recuperação de senha via chave mestre** (`recover_password`);
+   - **Regeneração da chave de recuperação** (`regenerate_recovery_key`);
+   - **Alteração de papel/perfil do usuário** (`update_user`);
+   - **Desativação da conta do usuário** (`set_user_active(false)`).
+
+3. **Revalidação a Cada Comando Protegido (`require_session`)**:
+   A guarda central `require_session` (e o método `revalidate_session` do Core) valida dinamicamente no banco SQLite:
+   - Se o usuário continua ativo (`active == true` e `deleted_at IS NULL`);
+   - Se `session.auth_epoch == user.auth_epoch`: se divergir, a sessão em memória é **imediatamente revogada** e o comando aborta com `CoreError::Unauthorized`;
+   - **Recarregamento dinâmico de permissões**: As permissões associadas ao papel do usuário são recarregadas dinamicamente do banco a cada comando protegido, garantindo que concessões ou remoções de direitos entrem em vigor instantaneamente, sem necessidade de logout/login.

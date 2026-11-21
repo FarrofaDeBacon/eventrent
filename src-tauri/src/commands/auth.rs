@@ -61,7 +61,7 @@ pub async fn regenerate_recovery_key(
     state: State<'_, AppState>,
     input: RegenerateRecoveryKeyInput,
 ) -> Result<RegenerateRecoveryKeyResult, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     let policy = eventrent_core::LoginPolicy {
         reveal_account_locked: true,
     };

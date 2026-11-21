@@ -16,16 +16,17 @@
     },
     "recovery_key": "ER-ABCD-EFGH-1234-5678",
     "session": {
+      "auth_epoch": 0,
+      "authenticated_at": "2026-11-21T10:00:00Z",
       "email": "operador@eventrent.com.br",
       "inactivity_timeout_minutes": 30,
       "last_activity_at": "2026-11-21T10:00:00Z",
-      "mode": "local",
       "name": "Operador Audiovisual",
       "permissions": ["all"],
+      "role_id": "018f0000-0000-7000-8000-000000000031",
       "role_name": "Proprietário",
       "role_slug": "proprietario",
       "tenant_id": "018f0000-0000-7000-8000-000000000001",
-      "token": "sample-token-jwt-login",
       "user_id": "018f0000-0000-7000-8000-000000000002"
     },
     "tenant_id": "018f0000-0000-7000-8000-000000000001"

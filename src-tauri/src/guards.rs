@@ -272,8 +272,8 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
 /// 3. Atualização automática do timestamp de última atividade (touch).
 ///
 /// Nota: A autoridade e validação de permissões RBAC pertencem exclusivamente ao Core.
-pub fn require_session(state: &AppState) -> Result<SessionInfo, String> {
-    state.require_session()
+pub async fn require_session(state: &AppState) -> Result<SessionInfo, String> {
+    state.require_session().await
 }
 
 #[cfg(test)]
@@ -392,6 +392,7 @@ mod tests {
             authenticated_at: base_time.to_rfc3339(),
             last_activity_at: base_time.to_rfc3339(),
             inactivity_timeout_minutes: timeout_minutes,
+            auth_epoch: 0,
         };
 
         // 1. Acesso 15 minutos depois: dentro do limite (OK)

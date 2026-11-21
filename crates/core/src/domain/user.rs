@@ -30,6 +30,7 @@ pub struct UserRecord {
     pub updated_at: String,
     pub deleted_at: Option<String>,
     pub created_by: Option<String>,
+    pub auth_epoch: i64,
 }
 
 impl fmt::Debug for UserRecord {
@@ -55,6 +56,7 @@ impl fmt::Debug for UserRecord {
             .field("updated_at", &self.updated_at)
             .field("deleted_at", &self.deleted_at)
             .field("created_by", &self.created_by)
+            .field("auth_epoch", &self.auth_epoch)
             .finish()
     }
 }
@@ -77,6 +79,8 @@ pub struct UserWithRole {
     pub updated_at: String,
     pub deleted_at: Option<String>,
     pub created_by: Option<String>,
+    #[serde(default)]
+    pub auth_epoch: i64,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -207,6 +211,8 @@ pub struct SessionInfo {
     pub authenticated_at: String,
     pub last_activity_at: String,
     pub inactivity_timeout_minutes: u32,
+    #[serde(default)]
+    pub auth_epoch: i64,
 }
 
 impl SessionInfo {

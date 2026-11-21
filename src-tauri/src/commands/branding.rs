@@ -31,7 +31,7 @@ pub async fn get_branding(
     state: State<'_, AppState>,
     _tenant_id: String,
 ) -> Result<Option<TenantBranding>, String> {
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .get_branding(&session)
@@ -46,7 +46,7 @@ pub async fn save_branding(
     input: UpdateBrandingInput,
 ) -> Result<TenantBranding, String> {
     let _ = resolve_tenant_id(&state, &tenant_id);
-    let session = require_session(&state)?;
+    let session = require_session(&state).await?;
     state
         .services
         .save_branding(&session, &input)

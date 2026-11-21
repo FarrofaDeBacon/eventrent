@@ -879,7 +879,7 @@ impl UserStore for SqliteStore {
                     SELECT id, tenant_id, name, email, password_hash, recovery_key_hash,
                            role_id, active, last_login_at, failed_attempts, locked_until,
                            recovery_failed_attempts, recovery_locked_until,
-                           created_at, updated_at, deleted_at, created_by
+                           created_at, updated_at, deleted_at, created_by, auth_epoch
                     FROM app_user
                     WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
                     LIMIT 1
@@ -910,6 +910,7 @@ impl UserStore for SqliteStore {
                 updated_at: r.get("updated_at"),
                 deleted_at: r.get("deleted_at"),
                 created_by: r.get("created_by"),
+                auth_epoch: r.get("auth_epoch"),
             }
         }))
     }
@@ -922,7 +923,7 @@ impl UserStore for SqliteStore {
                     SELECT id, tenant_id, name, email, password_hash, recovery_key_hash,
                            role_id, active, last_login_at, failed_attempts, locked_until,
                            recovery_failed_attempts, recovery_locked_until,
-                           created_at, updated_at, deleted_at, created_by
+                           created_at, updated_at, deleted_at, created_by, auth_epoch
                     FROM app_user
                     WHERE tenant_id = ? AND email = ? AND deleted_at IS NULL
                     LIMIT 1
@@ -953,6 +954,7 @@ impl UserStore for SqliteStore {
                 updated_at: r.get("updated_at"),
                 deleted_at: r.get("deleted_at"),
                 created_by: r.get("created_by"),
+                auth_epoch: r.get("auth_epoch"),
             }
         }))
     }
@@ -965,7 +967,7 @@ impl UserStore for SqliteStore {
                     SELECT u.id, u.tenant_id, u.name, u.email, u.role_id,
                            r.name AS role_name, r.slug AS role_slug,
                            u.active, u.last_login_at, u.failed_attempts, u.locked_until,
-                           u.created_at, u.updated_at, u.deleted_at, u.created_by
+                           u.created_at, u.updated_at, u.deleted_at, u.created_by, u.auth_epoch
                     FROM app_user u
                     INNER JOIN role r ON r.id = u.role_id AND r.deleted_at IS NULL
                     WHERE u.tenant_id = ? AND u.id = ? AND u.deleted_at IS NULL
@@ -1002,6 +1004,7 @@ impl UserStore for SqliteStore {
             updated_at: r.get("updated_at"),
             deleted_at: r.get("deleted_at"),
             created_by: r.get("created_by"),
+            auth_epoch: r.get("auth_epoch"),
         }))
     }
 
@@ -1013,7 +1016,7 @@ impl UserStore for SqliteStore {
                     SELECT u.id, u.tenant_id, u.name, u.email, u.role_id,
                            r.name AS role_name, r.slug AS role_slug,
                            u.active, u.last_login_at, u.failed_attempts, u.locked_until,
-                           u.created_at, u.updated_at, u.deleted_at, u.created_by
+                           u.created_at, u.updated_at, u.deleted_at, u.created_by, u.auth_epoch
                     FROM app_user u
                     INNER JOIN role r ON r.id = u.role_id AND r.deleted_at IS NULL
                     WHERE u.tenant_id = ? AND u.deleted_at IS NULL
@@ -1046,6 +1049,7 @@ impl UserStore for SqliteStore {
                 updated_at: r.get("updated_at"),
                 deleted_at: r.get("deleted_at"),
                 created_by: r.get("created_by"),
+                auth_epoch: r.get("auth_epoch"),
             });
         }
 
@@ -1099,8 +1103,8 @@ impl UserStore for SqliteStore {
                     id, tenant_id, name, email, password_hash, recovery_key_hash,
                     role_id, active, last_login_at, failed_attempts, locked_until,
                     recovery_failed_attempts, recovery_locked_until,
-                    created_at, updated_at, deleted_at, created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, updated_at, deleted_at, created_by, auth_epoch
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(&user.id)
@@ -1119,7 +1123,8 @@ impl UserStore for SqliteStore {
             .bind(&user.created_at)
             .bind(&user.updated_at)
             .bind(&user.deleted_at)
-            .bind(&user.created_by),
+            .bind(&user.created_by)
+            .bind(user.auth_epoch),
         )
         .await?;
 
@@ -1141,7 +1146,7 @@ impl UserStore for SqliteStore {
             sqlx::query(
                 r#"
                 UPDATE app_user
-                SET name = ?, email = ?, role_id = ?, updated_at = ?
+                SET name = ?, email = ?, role_id = ?, auth_epoch = auth_epoch + 1, updated_at = ?
                 WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
                 "#,
             )
@@ -1170,7 +1175,7 @@ impl UserStore for SqliteStore {
             sqlx::query(
                 r#"
                 UPDATE app_user
-                SET active = ?, updated_at = ?
+                SET active = ?, auth_epoch = auth_epoch + 1, updated_at = ?
                 WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
                 "#,
             )
@@ -1197,7 +1202,7 @@ impl UserStore for SqliteStore {
             sqlx::query(
                 r#"
                 UPDATE app_user
-                SET password_hash = ?, failed_attempts = 0, locked_until = NULL, updated_at = ?
+                SET password_hash = ?, failed_attempts = 0, locked_until = NULL, auth_epoch = auth_epoch + 1, updated_at = ?
                 WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
                 "#,
             )
@@ -1353,6 +1358,7 @@ impl UserStore for SqliteStore {
                     locked_until = NULL,
                     recovery_failed_attempts = 0,
                     recovery_locked_until = NULL,
+                    auth_epoch = auth_epoch + 1,
                     updated_at = ?
                 WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
                 "#,
@@ -1382,6 +1388,7 @@ impl UserStore for SqliteStore {
                 SET recovery_key_hash = ?,
                     recovery_failed_attempts = 0,
                     recovery_locked_until = NULL,
+                    auth_epoch = auth_epoch + 1,
                     updated_at = ?
                 WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
                 "#,
@@ -4972,6 +4979,7 @@ mod tests {
             authenticated_at: now.clone(),
             last_activity_at: now.clone(),
             inactivity_timeout_minutes: 30,
+            auth_epoch: 0,
         };
 
         let tech_session_t1 = SessionInfo {
@@ -5301,6 +5309,7 @@ mod tests {
             authenticated_at: now.clone(),
             last_activity_at: now.clone(),
             inactivity_timeout_minutes: 30,
+            auth_epoch: 0,
         };
 
         let readonly_session = SessionInfo {
@@ -5480,6 +5489,7 @@ mod tests {
                 authenticated_at: now.clone(),
                 last_activity_at: now,
                 inactivity_timeout_minutes: 30,
+                auth_epoch: 0,
             }
         };
 
@@ -6436,6 +6446,7 @@ mod tests {
             authenticated_at: now.clone(),
             last_activity_at: now.clone(),
             inactivity_timeout_minutes: 30,
+            auth_epoch: 0,
         };
 
         let manager_a = make_session(
@@ -7033,6 +7044,7 @@ mod tests {
             authenticated_at: now.clone(),
             last_activity_at: now.clone(),
             inactivity_timeout_minutes: 30,
+            auth_epoch: 0,
         };
 
         let cat = services
@@ -7111,5 +7123,239 @@ mod tests {
             .exists_blob("t-race", &attached.blob_sha256)
             .await
             .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_auth_epoch_invalidation_and_dynamic_permissions() {
+        use eventrent_core::{
+            ensure_default_tenant, CreateUserInput, InitialSetupInput, LoginInput, LoginPolicy,
+            OperationMode, ResetPasswordInput, UpdateUserInput,
+        };
+
+        let pool = init_memory_db().await.unwrap();
+        let stores = SqliteStore::new(pool).into_bundle();
+        let tenant_id = ensure_default_tenant(stores.tenants.as_ref(), stores.branding.as_ref())
+            .await
+            .unwrap();
+
+        let services = CoreServices::new(stores);
+
+        // 1. Setup inicial do Tenant e Proprietário
+        let setup = services
+            .complete_initial_setup(
+                &tenant_id,
+                &InitialSetupInput {
+                    company_name: "Locadora Epoch".to_string(),
+                    owner_name: "Proprietário Epoch".to_string(),
+                    owner_email: "owner@epoch.local".to_string(),
+                    owner_password: "SenhaForte123!".to_string(),
+                    mode: OperationMode::Local,
+                },
+                30,
+            )
+            .await
+            .unwrap();
+
+        let owner_session = setup.session;
+
+        // 2. Proprietário cria papel de Técnico com permissão "catalog:read"
+        let tech_role = services
+            .stores
+            .roles
+            .create(
+                &Role {
+                    id: "role-tech-test".to_string(),
+                    tenant_id: tenant_id.clone(),
+                    name: "Técnico Teste".to_string(),
+                    slug: "tech_test".to_string(),
+                    description: None,
+                    is_system: false,
+                    created_at: Utc::now().to_rfc3339(),
+                    updated_at: Utc::now().to_rfc3339(),
+                    deleted_at: None,
+                    created_by: Some(owner_session.user_id.clone()),
+                },
+                &["catalog:read".to_string()],
+            )
+            .await
+            .unwrap();
+
+        // 3. Proprietário cria usuário Técnico
+        let tech_user = services
+            .create_user(
+                &owner_session,
+                &CreateUserInput {
+                    name: "Carlos Técnico".to_string(),
+                    email: "carlos@epoch.local".to_string(),
+                    password: "SenhaTecnico123!".to_string(),
+                    role_id: tech_role.id.clone(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(tech_user.auth_epoch, 0);
+
+        // 4. Técnico realiza login -> gera sessão com auth_epoch = 0
+        let tech_session_v1 = services
+            .login(
+                &tenant_id,
+                &LoginInput {
+                    email: "carlos@epoch.local".to_string(),
+                    password: "SenhaTecnico123!".to_string(),
+                },
+                &LoginPolicy::default(),
+                30,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(tech_session_v1.auth_epoch, 0);
+        assert!(tech_session_v1.has_permission("catalog:read"));
+        assert!(!tech_session_v1.has_permission("catalog:manage"));
+
+        // Revalidação dinâmica com auth_epoch idêntico deve passar
+        let revalidated_v1 = services.revalidate_session(&tech_session_v1).await.unwrap();
+        assert_eq!(revalidated_v1.auth_epoch, 0);
+
+        // 5. CENÁRIO 1: Troca de senha incrementa auth_epoch e invalida sessão anterior imediatamente
+        services
+            .reset_user_password(
+                &owner_session,
+                &tech_user.id,
+                &ResetPasswordInput {
+                    new_password: "NovaSenhaSegura456!".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+
+        // A sessão antiga tech_session_v1 DEVE ser rejeitada imediatamente
+        let err_v1 = services
+            .revalidate_session(&tech_session_v1)
+            .await
+            .unwrap_err();
+        assert!(matches!(err_v1, CoreError::Unauthorized(_)));
+
+        // Login com nova senha obtém auth_epoch = 1
+        let tech_session_v2 = services
+            .login(
+                &tenant_id,
+                &LoginInput {
+                    email: "carlos@epoch.local".to_string(),
+                    password: "NovaSenhaSegura456!".to_string(),
+                },
+                &LoginPolicy::default(),
+                30,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(tech_session_v2.auth_epoch, 1);
+        assert!(services.revalidate_session(&tech_session_v2).await.is_ok());
+
+        // 6. CENÁRIO 2: Regeneração de chave de recuperação incrementa auth_epoch e invalida sessão anterior
+        services
+            .regenerate_recovery_key(
+                &tech_session_v2,
+                "NovaSenhaSegura456!",
+                &LoginPolicy::default(),
+            )
+            .await
+            .unwrap();
+
+        // tech_session_v2 agora está revogada
+        let err_v2 = services
+            .revalidate_session(&tech_session_v2)
+            .await
+            .unwrap_err();
+        assert!(matches!(err_v2, CoreError::Unauthorized(_)));
+
+        // Novo login obtém auth_epoch = 2
+        let tech_session_v3 = services
+            .login(
+                &tenant_id,
+                &LoginInput {
+                    email: "carlos@epoch.local".to_string(),
+                    password: "NovaSenhaSegura456!".to_string(),
+                },
+                &LoginPolicy::default(),
+                30,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(tech_session_v3.auth_epoch, 2);
+
+        // 7. CENÁRIO 3: Alteração de papel/permissões reflete dinamicamente
+        let manager_role = services
+            .stores
+            .roles
+            .create(
+                &Role {
+                    id: "role-mgr-test".to_string(),
+                    tenant_id: tenant_id.clone(),
+                    name: "Gerente Teste".to_string(),
+                    slug: "mgr_test".to_string(),
+                    description: None,
+                    is_system: false,
+                    created_at: Utc::now().to_rfc3339(),
+                    updated_at: Utc::now().to_rfc3339(),
+                    deleted_at: None,
+                    created_by: Some(owner_session.user_id.clone()),
+                },
+                &["catalog:read".to_string(), "catalog:manage".to_string()],
+            )
+            .await
+            .unwrap();
+
+        services
+            .update_user(
+                &owner_session,
+                &tech_user.id,
+                &UpdateUserInput {
+                    name: "Carlos Gerente".to_string(),
+                    email: "carlos@epoch.local".to_string(),
+                    role_id: manager_role.id.clone(),
+                },
+            )
+            .await
+            .unwrap();
+
+        // Sessão anterior é invalidada porque o papel/dados do usuário mudaram (auth_epoch incrementou para 3)
+        let err_v3 = services
+            .revalidate_session(&tech_session_v3)
+            .await
+            .unwrap_err();
+        assert!(matches!(err_v3, CoreError::Unauthorized(_)));
+
+        // Novo login tem as permissões de gerente
+        let tech_session_v4 = services
+            .login(
+                &tenant_id,
+                &LoginInput {
+                    email: "carlos@epoch.local".to_string(),
+                    password: "NovaSenhaSegura456!".to_string(),
+                },
+                &LoginPolicy::default(),
+                30,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(tech_session_v4.auth_epoch, 3);
+        assert!(tech_session_v4.has_permission("catalog:manage"));
+
+        // 8. CENÁRIO 4: Desativação do usuário rejeita a sessão imediatamente
+        services
+            .set_user_active(&owner_session, &tech_user.id, false)
+            .await
+            .unwrap();
+
+        let err_v4 = services
+            .revalidate_session(&tech_session_v4)
+            .await
+            .unwrap_err();
+        assert!(matches!(err_v4, CoreError::Unauthorized(_)));
     }
 }
