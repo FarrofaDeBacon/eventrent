@@ -10,7 +10,7 @@ import type {
 } from "./types";
 import type { VenueRepository } from "./venue-repository";
 
-if (!import.meta.env.DEV) {
+if (!import.meta.env.DEV && import.meta.env.VITE_E2E !== "1") {
   throw new Error(
     "Mocks não podem ser carregados no ambiente de produção. Execute o aplicativo desktop EventRent.",
   );

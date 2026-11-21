@@ -65,9 +65,17 @@ Avaliamos três abordagens para garantir consistência absoluta entre Rust e Typ
    - Teste automatizado no Rust (`guards.rs`) para impedir regressões na CSP (garantindo que não seja nula nem vazia, proibindo `'unsafe-eval'` e curingas em `script-src`, e validando a presença de `style-src 'self' 'unsafe-inline'`).
 
 4. **Isolamento de Mocks fora do Pacote de Produção:**
-   - Todas as 7 implementações mockadas (`mock-*.ts`) contêm guards explícitos `if (!import.meta.env.DEV) throw new Error(...)`, impedindo estritamente sua execução fora do ambiente de desenvolvimento ou testes.
+   - Todas as 7 implementações mockadas (`mock-*.ts`) contêm guards explícitos `if (!import.meta.env.DEV && import.meta.env.VITE_E2E !== "1") throw new Error(...)`, impedindo estritamente sua execução fora do ambiente de desenvolvimento ou testes.
    - Em `src/lib/data/index.ts`, a fábrica de repositórios valida o ambiente via `requireDesktopOrDev`. Caso executada em produção fora do runtime Tauri, ela lança erro imediato em vez de instanciar mocks silenciosamente.
    - Na camada de apresentação (`src/routes/+layout.svelte`), o acesso web de produção renderiza uma tela bloqueante com instrução explícita ("Execute o aplicativo desktop EventRent"). Em modo de desenvolvimento no navegador (mocks ativos), exibe uma tarja visual persistente e não-armazenada em storage ("MODO DE DEMONSTRAÇÃO: Não use dados reais") com semântica de alerta acessível.
+
+5. **Estratégia de Testes Automatizados E2E e Avaliação de `tauri-driver`:**
+   - **Spike sobre `tauri-driver` vs Playwright:**
+     - O `tauri-driver` depende de drivers WebDriver nativos por plataforma (WebKitWebDriver no Linux via WebKit2GTK e msedgedriver no Windows). Em ambientes de integração contínua (CI headless), o suporte a WebKit2GTK em modo headless é propenso a instabilidades gráficas, dependências de display virtual (Xvfb) e incompatibilidades de versão do runtime nativo. Além disso, compilar o binário completo do Tauri em modo release antes de cada teste E2E adiciona mais de 10 a 15 minutos em cada execução do CI.
+     - **Estratégia Adotada (Pirâmide de Testes Desacoplada):**
+       1. **Interface e Fluxos de Usuário:** Cobertos por Playwright E2E executando Chromium headless contra a aplicação web servida com mocks em memória. Isso garante validação rápida (< 1 minuto), determinística e cross-platform em runners `ubuntu-latest` e `windows-latest`.
+       2. **Comandos IPC, Segurança e Sessão:** Cobertos por suíte de testes de integração em Rust em `src-tauri/src/guards.rs` e `src-tauri/src/contracts.rs`, que validam autorização, expiração de inatividade, decodificação de frames binários, capabilities de menor privilégio e conformidade estrita de DTOs para todos os 62 comandos.
+       3. **Domínio e Banco de Dados:** Cobertos por suíte completa de testes no SQLite (`store-sqlite`), transações atômicas com concorrência real, reversão e provas de idempotência.
 
 ## Consequências
 

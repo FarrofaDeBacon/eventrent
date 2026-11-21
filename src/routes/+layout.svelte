@@ -29,9 +29,10 @@
   let commandPaletteOpen = $state(false);
 
   let isTauri = $state(isTauriRuntime());
-  let isDev = import.meta.env.DEV;
-  let isDemoMockMode = $derived(!isTauri && isDev);
-  let isUnsupportedProductionWeb = $derived(!isTauri && !isDev);
+  let isDevOrE2E =
+    Boolean(import.meta.env.DEV) || import.meta.env.VITE_E2E === "1";
+  let isDemoMockMode = $derived(!isTauri && isDevOrE2E);
+  let isUnsupportedProductionWeb = $derived(!isTauri && !isDevOrE2E);
 
   setupI18n();
 
@@ -149,7 +150,7 @@
 {:else}
   {#if isDemoMockMode}
     <aside
-      class="sticky top-0 z-50 flex items-center justify-center gap-2 border-b border-warning/40 bg-warning/15 px-4 py-1.5 text-xs font-semibold text-warning"
+      class="z-50 flex w-full items-center justify-center gap-2 border-b border-warning/40 bg-warning/15 px-4 py-1.5 text-xs font-semibold text-warning"
       aria-label="Aviso de Modo de Demonstração"
     >
       <svg

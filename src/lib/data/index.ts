@@ -57,8 +57,12 @@ export function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+export function isDevOrMockMode(): boolean {
+  return Boolean(import.meta.env.DEV) || import.meta.env.VITE_E2E === "1";
+}
+
 function requireDesktopOrDev(target: string): void {
-  if (!isTauriRuntime() && !import.meta.env.DEV) {
+  if (!isTauriRuntime() && !isDevOrMockMode()) {
     throw new Error(
       `[EventRent] Execute o aplicativo desktop EventRent. O repositório ${target} não pode ser instanciado em modo web fora do Tauri em produção.`,
     );

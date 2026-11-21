@@ -141,3 +141,72 @@ pub const SYSTEM_ROLES: &[SystemRoleSpec] = &[
         ],
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use std::path::Path;
+
+    fn extract_resource_action_strings(text: &str) -> Vec<String> {
+        let mut results = Vec::new();
+        for word in text.split(|c: char| !(c.is_ascii_lowercase() || c == '_' || c == ':')) {
+            if let Some((left, right)) = word.split_once(':') {
+                if !left.is_empty()
+                    && !right.is_empty()
+                    && !right.contains(':')
+                    && left.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+                    && right.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+                {
+                    results.push(word.to_string());
+                }
+            }
+        }
+        results.sort();
+        results.dedup();
+        results
+    }
+
+    #[test]
+    fn test_all_permissions_in_documentation_match_canonical_catalog() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir
+            .parent()
+            .and_then(|p| p.parent())
+            .unwrap_or(manifest_dir);
+        let docs_to_check = [
+            root_dir.join("docs").join("03-regras-negocio.md"),
+            root_dir.join("docs").join("06-requisitos-de-produto.md"),
+        ];
+
+        let canonical_set: HashSet<&str> = ALL_PERMISSIONS.iter().copied().collect();
+        let mut total_found = 0;
+
+        for doc_path in &docs_to_check {
+            assert!(
+                doc_path.exists(),
+                "Documento obrigatório não encontrado: {}",
+                doc_path.display()
+            );
+
+            let content = std::fs::read_to_string(doc_path)
+                .unwrap_or_else(|e| panic!("Falha ao ler {}: {e}", doc_path.display()));
+
+            let extracted = extract_resource_action_strings(&content);
+            for perm in extracted {
+                total_found += 1;
+                assert!(
+                    canonical_set.contains(perm.as_str()),
+                    "Permissão fictícia ou descontinuada encontrada em {}: '{}'. Deve pertencer a ALL_PERMISSIONS.",
+                    doc_path.display(),
+                    perm
+                );
+            }
+        }
+
+        assert!(
+            total_found > 0,
+            "O validador deve encontrar e validar as permissões na documentação"
+        );
+    }
+}
