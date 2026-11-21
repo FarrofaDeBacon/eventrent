@@ -4692,14 +4692,15 @@ mod unit_tests {
         buf
     }
 
-    #[test]
-    fn test_media_core_validators_magic_exif_limits_and_filenames() {
+    #[tokio::test]
+    async fn test_media_core_validators_magic_exif_limits_and_filenames() {
         use crate::domain::{
-            build_media_storage_key, compute_sha256_hex, sanitize_media_filename,
-            validate_display_image, validate_media_title, validate_model_media_quota,
-            validate_optional_media_language, validate_optional_media_note, validate_pdf_document,
-            validate_sha256_hex, validate_thumbnail_image, MediaKind, MediaMimeType,
-            MAX_DISPLAY_IMAGE_BYTES, MAX_PDF_DOCUMENT_BYTES, MAX_THUMB_IMAGE_BYTES,
+            build_media_storage_key, compute_sha256_hex, compute_sha256_hex_async,
+            sanitize_media_filename, validate_display_image, validate_media_title,
+            validate_model_media_quota, validate_optional_media_language,
+            validate_optional_media_note, validate_pdf_document, validate_sha256_hex,
+            validate_thumbnail_image, MediaKind, MediaMimeType, MAX_DISPLAY_IMAGE_BYTES,
+            MAX_PDF_DOCUMENT_BYTES, MAX_THUMB_IMAGE_BYTES,
         };
         use crate::error::CoreError;
 
@@ -4712,6 +4713,18 @@ mod unit_tests {
         assert_eq!(
             sha_abc,
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+
+        // B2: Validação de compute_sha256_hex_async (propaga Result<String, CoreError>, pequeno e grande)
+        assert_eq!(
+            compute_sha256_hex_async(b"abc".to_vec()).await.unwrap(),
+            sha_abc
+        );
+        let big_buffer = vec![b'x'; 64 * 1024]; // 64 KB (> 32 KB, offload para spawn_blocking)
+        let expected_big_sha = compute_sha256_hex(&big_buffer);
+        assert_eq!(
+            compute_sha256_hex_async(big_buffer).await.unwrap(),
+            expected_big_sha
         );
         assert_eq!(
             compute_sha256_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
@@ -4868,15 +4881,23 @@ mod unit_tests {
 
         // 8. PDF válido, MIME falso, truncado e acima de 25 MB
         let valid_pdf = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF";
-        let res_pdf = validate_pdf_document("application/pdf", valid_pdf).unwrap();
+        let res_pdf = validate_pdf_document("application/pdf", valid_pdf)
+            .await
+            .unwrap();
         assert_eq!(res_pdf.mime_type, MediaMimeType::ApplicationPdf);
         assert_eq!(res_pdf.byte_size, valid_pdf.len() as i64);
 
-        assert!(validate_pdf_document("image/png", valid_pdf).is_err());
-        assert!(validate_pdf_document("application/pdf", &valid_png).is_err());
-        assert!(validate_pdf_document("application/pdf", b"%PDF-").is_err());
+        assert!(validate_pdf_document("image/png", valid_pdf).await.is_err());
+        assert!(validate_pdf_document("application/pdf", &valid_png)
+            .await
+            .is_err());
+        assert!(validate_pdf_document("application/pdf", b"%PDF-")
+            .await
+            .is_err());
         let big_pdf = vec![b'A'; MAX_PDF_DOCUMENT_BYTES + 1];
-        assert!(validate_pdf_document("application/pdf", &big_pdf).is_err());
+        assert!(validate_pdf_document("application/pdf", &big_pdf)
+            .await
+            .is_err());
 
         // 9. Quotas por modelo (12 fotos, 20 documentos)
         assert!(validate_model_media_quota(MediaKind::Image, 11).is_ok());

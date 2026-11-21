@@ -320,13 +320,18 @@ pub fn compute_sha256_hex(data: &[u8]) -> String {
 
 /// Calcula o hash SHA-256 de forma assíncrona, offloadando para `tokio::task::spawn_blocking`
 /// para arquivos médios e grandes (evita bloquear o loop do Tokio).
-pub async fn compute_sha256_hex_async(data: Vec<u8>) -> String {
+/// B2: Propaga erros do JoinHandle (`Result<String, CoreError>`) em vez de retornar string vazia em caso de falha.
+pub async fn compute_sha256_hex_async(data: Vec<u8>) -> Result<String> {
     if data.len() < 32 * 1024 {
-        compute_sha256_hex(&data)
+        Ok(compute_sha256_hex(&data))
     } else {
         tokio::task::spawn_blocking(move || compute_sha256_hex(&data))
             .await
-            .unwrap_or_else(|_| String::new())
+            .map_err(|e| {
+                CoreError::Internal(format!(
+                    "Falha na execução de tarefa de hash assíncrono: {e}"
+                ))
+            })
     }
 }
 
@@ -745,7 +750,11 @@ pub fn validate_thumbnail_image(
 }
 
 /// Valida documento PDF (magic "%PDF-", coerente com application/pdf, até 25 MB).
-pub fn validate_pdf_document(declared_mime: &str, bytes: &[u8]) -> Result<ValidatedPdfPayload> {
+/// B2: Calcula o hash SHA-256 de forma assíncrona via `compute_sha256_hex_async` em tarefa `spawn_blocking`.
+pub async fn validate_pdf_document(
+    declared_mime: &str,
+    bytes: &[u8],
+) -> Result<ValidatedPdfPayload> {
     if bytes.is_empty() {
         return Err(CoreError::Validation(
             "O arquivo PDF está vazio.".to_string(),
@@ -786,9 +795,11 @@ pub fn validate_pdf_document(declared_mime: &str, bytes: &[u8]) -> Result<Valida
         ));
     }
 
+    let sha256 = compute_sha256_hex_async(bytes.to_vec()).await?;
+
     Ok(ValidatedPdfPayload {
         mime_type: MediaMimeType::ApplicationPdf,
-        sha256: compute_sha256_hex(bytes),
+        sha256,
         byte_size: bytes.len() as i64,
     })
 }
