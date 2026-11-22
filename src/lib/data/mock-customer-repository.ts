@@ -30,12 +30,6 @@ interface MockCustomerStore {
   initialized: boolean;
 }
 
-if (!import.meta.env.DEV && import.meta.env.VITE_E2E !== "1") {
-  throw new Error(
-    "Mocks não podem ser carregados no ambiente de produção. Execute o aplicativo desktop EventRent.",
-  );
-}
-
 const STORAGE_KEY = "eventrent:mock:customers:v1";
 
 const memoryStore: MockCustomerStore = {
@@ -403,6 +397,13 @@ function validateInput(input: CreateCustomerInput): {
 }
 
 export class MockCustomerRepository implements CustomerRepository {
+  constructor() {
+    if (!import.meta.env.DEV && import.meta.env.VITE_E2E !== "1") {
+      throw new Error(
+        "Mocks não podem ser carregados no ambiente de produção. Execute o aplicativo desktop EventRent.",
+      );
+    }
+  }
   async listCustomers(filter: CustomerFilter): Promise<CustomerPage> {
     const session = requireMockSession();
     const readCust = canReadCustomer(session);

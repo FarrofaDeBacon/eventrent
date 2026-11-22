@@ -14,12 +14,6 @@ import {
 } from "./types";
 import type { UserRepository } from "./user-repository";
 
-if (!import.meta.env.DEV && import.meta.env.VITE_E2E !== "1") {
-  throw new Error(
-    "Mocks não podem ser carregados no ambiente de produção. Execute o aplicativo desktop EventRent.",
-  );
-}
-
 function toPublicUser(user: MockInternalUser): UserWithRole {
   return {
     id: user.id,
@@ -53,6 +47,13 @@ function requireMockPermission(permission: string) {
 }
 
 export class MockUserRepository implements UserRepository {
+  constructor() {
+    if (!import.meta.env.DEV && import.meta.env.VITE_E2E !== "1") {
+      throw new Error(
+        "Mocks não podem ser carregados no ambiente de produção. Execute o aplicativo desktop EventRent.",
+      );
+    }
+  }
   async listRoles(): Promise<RoleWithPermissions[]> {
     const { state } = requireMockPermission(PERMISSIONS.ROLE_READ);
     return state.roles.map((r) => ({

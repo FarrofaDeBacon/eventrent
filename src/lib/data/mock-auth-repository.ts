@@ -18,12 +18,6 @@ import {
   type UserWithRole,
 } from "./types";
 
-if (!import.meta.env.DEV && import.meta.env.VITE_E2E !== "1") {
-  throw new Error(
-    "Mocks não podem ser carregados no ambiente de produção. Execute o aplicativo desktop EventRent.",
-  );
-}
-
 const DEFAULT_TENANT_ID = "018f0000-0000-7000-8000-000000000001";
 const STORAGE_KEY = "eventrent_mock_state_v1";
 
@@ -239,6 +233,13 @@ function generateMockRecoveryKey(): string {
 }
 
 export class MockAuthRepository implements AuthRepository {
+  constructor() {
+    if (!import.meta.env.DEV && import.meta.env.VITE_E2E !== "1") {
+      throw new Error(
+        "Mocks não podem ser carregados no ambiente de produção. Execute o aplicativo desktop EventRent.",
+      );
+    }
+  }
   async getAppStatus(): Promise<AppStatus> {
     const state = getSharedMockState();
     return {
