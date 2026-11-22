@@ -47,7 +47,12 @@ let cachedVenueRepository: VenueRepository | null = null;
 let cachedCatalogRepository: CatalogRepository | null = null;
 
 export function isTauriRuntime(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  return (
+    typeof window !== "undefined" &&
+    ("__TAURI_INTERNALS__" in window ||
+      "__TAURI__" in window ||
+      Boolean((window as unknown as { isTauri?: boolean }).isTauri))
+  );
 }
 
 export function isDevOrMockMode(): boolean {
