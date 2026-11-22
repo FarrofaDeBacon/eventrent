@@ -19,6 +19,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
 
+pub use sqlx;
 pub type DbPool = Pool<Sqlite>;
 
 pub(crate) fn map_sqlx_err(err: sqlx::Error) -> CoreError {
@@ -1395,6 +1396,25 @@ impl UserStore for SqliteStore {
             )
             .bind(recovery_key_hash)
             .bind(updated_at)
+            .bind(tenant_id)
+            .bind(user_id),
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    async fn soft_delete(&self, tenant_id: &str, user_id: &str, deleted_at: &str) -> Result<()> {
+        self.execute(
+            sqlx::query(
+                r#"
+                UPDATE app_user
+                SET deleted_at = ?, auth_epoch = auth_epoch + 1, updated_at = ?
+                WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
+                "#,
+            )
+            .bind(deleted_at)
+            .bind(deleted_at)
             .bind(tenant_id)
             .bind(user_id),
         )

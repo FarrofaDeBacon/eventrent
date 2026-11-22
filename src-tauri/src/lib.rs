@@ -813,3 +813,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_root);
     }
 }
+
+#[cfg(test)]
+mod session_lifecycle_tests;

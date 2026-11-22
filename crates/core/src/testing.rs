@@ -2658,6 +2658,9 @@ mod unit_tests {
             ) -> crate::error::Result<()> {
                 unreachable!()
             }
+            async fn soft_delete(&self, _: &str, _: &str, _: &str) -> crate::error::Result<()> {
+                unreachable!()
+            }
         }
         #[async_trait::async_trait]
         impl AuditStore for DummyStore {
