@@ -15,6 +15,16 @@ const steps = [
     args: ["scripts/test-check-migrations.js"],
   },
   {
+    name: "Prova Estrutural de Trechos de Código em Relatórios (test-check-report-snippets)",
+    command: "node",
+    args: ["scripts/test-check-report-snippets.js"],
+  },
+  {
+    name: "Verificação Estrutural de Snippets em Relatórios (check-report-snippets)",
+    command: "node",
+    args: ["scripts/check-report-snippets.js"],
+  },
+  {
     name: "Rustfmt Check",
     command: "cargo",
     args: ["fmt", "--all", "--", "--check"],

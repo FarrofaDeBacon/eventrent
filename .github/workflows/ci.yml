@@ -35,6 +35,12 @@ jobs:
       - name: Prova estrutural do congelamento dinâmico de migrações
         run: node scripts/test-check-migrations.js
 
+      - name: Prova estrutural de snippets em relatórios
+        run: node scripts/test-check-report-snippets.js
+
+      - name: Verificação de snippets em relatórios
+        run: node scripts/check-report-snippets.js
+
       - name: Instalar Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
