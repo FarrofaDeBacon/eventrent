@@ -644,14 +644,30 @@ mod tests {
             "script-src deve conter 'self': {script_src_part}"
         );
 
-        // style-src permite 'unsafe-inline' para Tailwind/Svelte
+        // style-src é estrito ('self' sem 'unsafe-inline'), e style-src-attr permite 'unsafe-inline'
+        // estritamente para atributos style inline de listas virtualizadas e anti-FOUC
         let style_src_part = csp_str
             .split(';')
-            .find(|p| p.trim().starts_with("style-src"))
+            .map(|p| p.trim())
+            .find(|p| p.starts_with("style-src") && !p.starts_with("style-src-attr"))
             .expect("CSP deve definir diretiva style-src");
         assert!(
-            style_src_part.contains("'unsafe-inline'"),
-            "style-src deve permitir 'unsafe-inline' para tokens dinâmicos OKLCH do Tailwind"
+            style_src_part.contains("'self'"),
+            "style-src deve conter 'self': {style_src_part}"
+        );
+        assert!(
+            !style_src_part.contains("'unsafe-inline'"),
+            "style-src não deve conter 'unsafe-inline' (estilos devem vir de arquivos estáticos): {style_src_part}"
+        );
+
+        let style_src_attr_part = csp_str
+            .split(';')
+            .map(|p| p.trim())
+            .find(|p| p.starts_with("style-src-attr"))
+            .expect("CSP deve definir diretiva style-src-attr para bindings dinâmicos");
+        assert!(
+            style_src_attr_part.contains("'unsafe-inline'"),
+            "style-src-attr deve conter 'unsafe-inline' para virtual-list e anti-FOUC: {style_src_attr_part}"
         );
     }
 }

@@ -57,12 +57,22 @@ Avaliamos três abordagens para garantir consistência absoluta entre Rust e Typ
    - O Core, a cada comando protegido, recarrega o estado atual do usuário no banco SQLite, checando se a conta está ativa e se `session.auth_epoch == user.auth_epoch`. Qualquer divergência invalida a sessão imediatamente com erro `Unauthorized`, impedindo uso de sessões clonadas ou obsoletas.
    - As permissões do usuário são recarregadas dinamicamente do banco a cada comando, eliminando janelas de privilégio estático.
 
-3. **Isolamento de Scripts e CSP Estrita:**
+3. **Isolamento de Scripts e CSP Estrita (Avaliação Empírica de Estilos):**
    - Remoção de qualquer script inline no HTML (`app.html`), transferindo a rotina anti-FOUC de tema para arquivo estático servido localmente (`static/anti-fouc.js`).
    - CSP estrita em `tauri.conf.json`:
-     `default-src 'self'; script-src 'self'; img-src 'self' blob: data:; font-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; style-src 'self' 'unsafe-inline'`
-   - **Justificativa de `'unsafe-inline'` em `style-src`:** O motor de renderização do Svelte 5 e a biblioteca de utilitários Tailwind CSS (com tema dinâmico OKLCH) exigem injeção de propriedades customizadas reativas via atributos `style="..."` nos elementos HTML (por exemplo, `style="--primary: ..."` e variáveis dinâmicas de cores/dimensões). Diferente de scripts executáveis, estilos inline não permitem execução arbitrária de código, enquanto `script-src` permanece estritamente `'self'`, bloqueando totalmente scripts inline, avaliadores (`'unsafe-eval'`) e fontes externas não confiáveis.
-   - Teste automatizado no Rust (`guards.rs`) para impedir regressões na CSP (garantindo que não seja nula nem vazia, proibindo `'unsafe-eval'` e curingas em `script-src`, e validando a presença de `style-src 'self' 'unsafe-inline'`).
+     `default-src 'self'; script-src 'self'; img-src 'self' blob: data:; font-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; style-src 'self'; style-src-attr 'unsafe-inline'`
+   - **Avaliação Empírica de `style-src` e `style-src-attr`:**
+     1. Na avaliação empírica de compilação e execução empacotada (`pnpm tauri build --no-bundle`), constatou-se que todas as folhas de estilo globais do Tailwind 4 OKLCH e do SvelteKit são compiladas para arquivos estáticos (`.css` em `/_app/immutable/assets/`), não necessitando de `'unsafe-inline'` na diretiva `style-src` (que governa blocos `<style>...</style>`).
+     2. Por outro lado, atributos de estilo inline (`style="..."`) são estritamente necessários em tempo de execução para:
+        - `virtual-list.svelte`: cálculo dinâmico de `height` do container e `transform: translateY(...)` durante a rolagem de milhares de itens de catálogo/clientes/locais.
+        - `categories/+page.svelte`: indentação dinâmica por profundidade na árvore (`style="padding-left: ...px"`).
+        - `appearance/+page.svelte`: amostras visuais de cor de branding (`style="background-color: ..."`).
+        - `anti-fouc.js`: definição dinâmica de variáveis CSS no elemento raiz (`document.documentElement.style.setProperty`).
+     3. **Decisão:** Separar as duas políticas no CSP Level 3:
+        - `style-src 'self'`: **SEM 'unsafe-inline'**, bloqueando categoricamente qualquer injeção de tags `<style>` ou carregamento de CSS externo.
+        - `style-src-attr 'unsafe-inline'`: permitindo exclusivamente bindings de estilo dinâmicos em atributos de elementos existentes.
+        - `script-src 'self'`: estritamente `'self'`, bloqueando totalmente scripts inline, avaliadores (`'unsafe-eval'`) e fontes externas não confiáveis.
+   - Teste automatizado no Rust (`guards.rs`) para proteger contra regressões na CSP (garantindo que não seja nula nem vazia, proibindo `'unsafe-eval'` e curingas em `script-src`, garantindo que `style-src` não contenha `'unsafe-inline'` e que `style-src-attr` contenha `'unsafe-inline'`).
 
 4. **Isolamento de Mocks fora do Pacote de Produção:**
    - Todas as 7 implementações mockadas (`mock-*.ts`) contêm guards explícitos `if (!import.meta.env.DEV && import.meta.env.VITE_E2E !== "1") throw new Error(...)`, impedindo estritamente sua execução fora do ambiente de desenvolvimento ou testes.

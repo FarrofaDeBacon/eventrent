@@ -118,3 +118,45 @@ jobs:
 
       - name: Testes Unitários Rust
         run: cargo test --workspace
+
+  compilar-app:
+    name: Compilação Real do App Tauri (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout do Repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache do Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: windows-cargo-tauri-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            windows-cargo-tauri-build-
+
+      - name: Instalar pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.16.1
+          standalone: true
+
+      - name: Instalar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+
+      - name: Instalar dependências Frontend
+        run: pnpm install
+
+      - name: Compilar App Tauri Real (sem mocks, sem VITE_E2E)
+        run: pnpm tauri build --no-bundle

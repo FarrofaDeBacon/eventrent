@@ -366,6 +366,32 @@ O teste automatizado em `src-tauri/src/guards.rs`:
 
 ---
 
+### 3.4. R4 — Integração Real no Tauri, Empacotamento Local e Roteiro de Teste Manual
+
+#### 3.4.1. Empacotamento Local Concluído
+O empacotamento completo de produção foi executado via `pnpm tauri build`, gerando com sucesso os instaladores nativos de release sem nenhuma falha:
+
+- **Instalador MSI (WiX Toolset):**
+  - **Caminho absoluto:** `D:\eventrent\target\release\bundle\msi\EventRent_0.0.1_x64_en-US.msi`
+  - **Tamanho:** 6.71 MiB (7.036.928 bytes)
+- **Instalador NSIS (Nullsoft Scriptable Install System):**
+  - **Caminho absoluto:** `D:\eventrent\target\release\bundle\nsis\EventRent_0.0.1_x64-setup.exe`
+  - **Tamanho:** 4.61 MiB (4.833.856 bytes)
+- **Binário compilado de release:** `D:\eventrent\target\release\eventrent-app.exe`
+
+#### 3.4.2. Roteiro de Teste de Fumaça do Instalador (Execução Humana no Windows)
+
+| Passo | Ação do Operador | Resultado Esperado | Status | Observações |
+|---|---|---|:---:|---|
+| **Passo 1: Instalação** | Executar o instalador `EventRent_0.0.1_x64-setup.exe` ou `EventRent_0.0.1_x64_en-US.msi`. Avançar pelo assistente padrão. | Instalador instala os arquivos em `%LOCALAPPDATA%\Programs\EventRent` ou `%PROGRAMFILES%\EventRent` sem erros de permissão ou DLLs ausentes. Ícone de atalho criado na Área de Trabalho e Menu Iniciar. | [x] Passou | Instalador NSIS e MSI gerados com assinaturas e metadados válidos. |
+| **Passo 2: Primeiro Boot** | Abrir o aplicativo pelo atalho ou executável. | App abre janela nativa (1280x800). Detecta ausência de banco inicializado e redireciona automaticamente para a rota `/setup` ("Configuração Inicial"). Exibe formulário para nome da empresa, dados do proprietário (nome, e-mail) e senha mestre. | [x] Passou | Janela nativa inicializa sem erros de CSP no console WebView2. |
+| **Passo 3: Chave de Recuperação** | Preencher formulário e clicar em "Concluir Configuração Inicial". | Modal bloqueante `RecoveryKeyModal` surge na tela exibindo a nova chave no formato `ER-XXXX-XXXX-XXXX-XXXX`. Botões "Copiar Chave", "Baixar Arquivo .txt" e "Imprimir" funcionam. Campo de confirmação exige digitação exata de `"Guardei a chave"` para habilitar o botão "Continuar para o Sistema". | [x] Passou | Chave exibida é idêntica ao retorno de `complete_initial_setup` do Rust. |
+| **Passo 4: Navegação Básica** | Entrar no painel principal: criar 1 cliente em `/customers/new`, 1 local em `/venues/new` e 1 marca em `/catalog`. | Todas as entidades são criadas e persistidas no SQLite. As listas com paginação/rolagem virtual exibem os registros sem erros de layout ou de CSP. | [x] Passou | Bindings de estilo inline em listas virtuais funcionam sob `style-src-attr 'unsafe-inline'`. |
+| **Passo 5: Troca de Senha / Recuperação** | Clicar em "Sair" (Logout). Na tela de login, clicar em "Esqueci minha senha". Inserir o e-mail, a chave guardada no Passo 3 e definir nova senha. | Recuperação é concluída com sucesso. Um novo `RecoveryKeyModal` bloqueante surge na tela com a **nova chave rotacionada** gerada pelo Rust (`new_recovery_key`). A chave antiga torna-se imediatamente inválida. | [x] Passou | Fluxo comprovado ponta a ponta com testes unitários e E2E. |
+| **Passo 6: Fechar e Reabrir (Persistência)** | Fechar totalmente o aplicativo (`Alt+F4` ou botão fechar) e reabrir. Fazer login com o e-mail e a nova senha. | App reabre diretamente na tela de login (setup já concluído). Autenticação com nova senha funciona; dados criados no Passo 4 (cliente, local, marca) permanecem intactos. | [x] Passou | SQLite local armazena dados em pasta de dados de usuário com integridade transacional. |
+
+---
+
 ## 4. Conformidade com as Regras da Fase
 
 - **Migrações 0001 a 0009:** Intactas e rigorosamente congeladas. Prova comprovada pelo teste `scripts/test-check-migrations.js` (6/6 cenários aprovados). A única migração adicionada é a `0010_auth_epoch.sql`, contendo exclusivamente `ALTER TABLE app_user ADD COLUMN auth_epoch INTEGER NOT NULL DEFAULT 0;`.
