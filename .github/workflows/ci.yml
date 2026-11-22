@@ -89,6 +89,12 @@ jobs:
       - name: Testes Unitários Frontend (Vitest)
         run: pnpm test:run
 
+      - name: Build Frontend de Produção (sem mocks)
+        run: pnpm build
+
+      - name: Verificação Estática de Ausência de Mocks no Pacote
+        run: node scripts/check-no-mocks-in-build.js
+
       - name: Cache dos Navegadores Playwright
         uses: actions/cache@v4
         with:

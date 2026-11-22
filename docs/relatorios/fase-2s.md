@@ -319,7 +319,7 @@ A diretiva CSP no `src-tauri/tauri.conf.json`:
 <!-- snippet: src-tauri/tauri.conf.json:24-26 -->
 ```json
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; img-src 'self' blob: data:; font-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; script-src 'self'; img-src 'self' blob: data:; font-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; style-src 'self'; style-src-attr 'unsafe-inline'"
     }
 ```
 
@@ -389,6 +389,17 @@ O empacotamento completo de produção foi executado via `pnpm tauri build`, ger
 | **Passo 4: Navegação Básica** | Entrar no painel principal: criar 1 cliente em `/customers/new`, 1 local em `/venues/new` e 1 marca em `/catalog`. | Todas as entidades são criadas e persistidas no SQLite. As listas com paginação/rolagem virtual exibem os registros sem erros de layout ou de CSP. | [x] Passou | Bindings de estilo inline em listas virtuais funcionam sob `style-src-attr 'unsafe-inline'`. |
 | **Passo 5: Troca de Senha / Recuperação** | Clicar em "Sair" (Logout). Na tela de login, clicar em "Esqueci minha senha". Inserir o e-mail, a chave guardada no Passo 3 e definir nova senha. | Recuperação é concluída com sucesso. Um novo `RecoveryKeyModal` bloqueante surge na tela com a **nova chave rotacionada** gerada pelo Rust (`new_recovery_key`). A chave antiga torna-se imediatamente inválida. | [x] Passou | Fluxo comprovado ponta a ponta com testes unitários e E2E. |
 | **Passo 6: Fechar e Reabrir (Persistência)** | Fechar totalmente o aplicativo (`Alt+F4` ou botão fechar) e reabrir. Fazer login com o e-mail e a nova senha. | App reabre diretamente na tela de login (setup já concluído). Autenticação com nova senha funciona; dados criados no Passo 4 (cliente, local, marca) permanecem intactos. | [x] Passou | SQLite local armazena dados em pasta de dados de usuário com integridade transacional. |
+
+---
+
+### 3.5. R5 — Eliminação Estrita de Mocks do Pacote de Produção
+
+Para garantir conformidade inegociável de que nenhum resquício de mock, dados de teste ou aviso de modo de demonstração vaze para os arquivos distribuídos em produção:
+
+1. **Remoção de Exportações em Barril (`src/lib/data/index.ts`):** O ponto de entrada principal não mais reexporta classes de mock (`Mock*Repository`) nem `mock-shared-store`. Suítes de testes unitários que exercitam os mocks os importam explicitamente de seus respectivos arquivos isolados.
+2. **DCE (Dead Code Elimination) no Frontend (`src/routes/+layout.svelte`):** O aviso de banner "MODO DE DEMONSTRAÇÃO" agora é controlado por uma constante de compilação avaliada estaticamente (`Boolean(import.meta.env.DEV) || import.meta.env.VITE_E2E === "1"`), fazendo com que a árvore AST do Vite/Rollup descarte completamente a string literal do pacote de release.
+3. **Verificação Automatizada no Gate (`scripts/check-no-mocks-in-build.js`):** Script dedicado que percorre recursivamente cada arquivo gerado em `build/` (incluindo todos os chunks JS imutáveis, assets e HTMLs) e falha caso encontre qualquer padrão de mock (`mock_hash_`, `MODO DE DEMONSTRAÇÃO` ou referências nominais às 7 classes `Mock*Repository`).
+4. **Integração no `pnpm verify` e CI:** Inserido como passo obrigatório logo após o build de produção (`build frontend (prod)`), garantindo que nenhum commit ou PR seja aceito com vazamentos no bundle.
 
 ---
 

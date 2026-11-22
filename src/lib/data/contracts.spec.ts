@@ -7,8 +7,8 @@ import {
   getBrandingRepository,
   getCatalogRepository,
   getSettingsRepository,
-  resetSharedMockState,
 } from "./index";
+import { resetSharedMockState } from "./mock-auth-repository";
 
 interface ContractFixture {
   command: string;

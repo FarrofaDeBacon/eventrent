@@ -31,6 +31,10 @@
   let isTauri = $state(isTauriRuntime());
   let isDevOrE2E =
     Boolean(import.meta.env.DEV) || import.meta.env.VITE_E2E === "1";
+  let demoWarningText =
+    Boolean(import.meta.env.DEV) || import.meta.env.VITE_E2E === "1"
+      ? "MODO DE DEMONSTRAÇÃO: Não use dados reais"
+      : "";
   let isDemoMockMode = $derived(!isTauri && isDevOrE2E);
   let isUnsupportedProductionWeb = $derived(!isTauri && !isDevOrE2E);
 
@@ -148,7 +152,7 @@
     </div>
   </div>
 {:else}
-  {#if isDemoMockMode}
+  {#if demoWarningText && isDemoMockMode}
     <aside
       class="z-50 flex w-full items-center justify-center gap-2 border-b border-warning/40 bg-warning/15 px-4 py-1.5 text-xs font-semibold text-warning"
       aria-label="Aviso de Modo de Demonstração"
@@ -166,7 +170,7 @@
           d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
         />
       </svg>
-      <span>MODO DE DEMONSTRAÇÃO: Não use dados reais</span>
+      <span>{demoWarningText}</span>
     </aside>
   {/if}
 

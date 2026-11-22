@@ -10,6 +10,16 @@ const steps = [
     args: ["test:run"],
   },
   {
+    name: "Build Frontend de Produção (sem mocks)",
+    command: "pnpm",
+    args: ["build"],
+  },
+  {
+    name: "Verificação Estática de Ausência de Mocks no Pacote (check-no-mocks-in-build)",
+    command: "node",
+    args: ["scripts/check-no-mocks-in-build.js"],
+  },
+  {
     name: "Prova Estrutural de Congelamento Dinâmico de Migrações",
     command: "node",
     args: ["scripts/test-check-migrations.js"],
