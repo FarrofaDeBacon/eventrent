@@ -1,0 +1,22 @@
+{
+  "command": "list_backups",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": [
+    {
+      "app_version": "0.10.0-fase2n",
+      "byte_size": 2048576,
+      "created_at": "2026-11-23T10:00:00Z",
+      "file_count": 4,
+      "file_name": "eventrent-backup-2026-11-23-100000.eventrent-backup",
+      "file_path": "C:\\Backups\\EventRent\\eventrent-backup-2026-11-23-100000.eventrent-backup",
+      "is_compatible": true,
+      "last_applied_migration": 10,
+      "verified": true
+    }
+  ],
+  "sample_errors": {
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada."
+  }
+}

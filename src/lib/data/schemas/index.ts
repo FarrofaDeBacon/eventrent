@@ -7,6 +7,7 @@ export * from "./customers";
 export * from "./venues";
 export * from "./catalog";
 export * from "./settings";
+export * from "./backup";
 
 import {
   AppStatusSchema,
@@ -33,6 +34,13 @@ import {
   MediaGarbageCollectionResultSchema,
 } from "./catalog";
 import { AllocationSettingsSchema } from "./settings";
+import {
+  BackupStatusSchema,
+  BackupSettingsSchema,
+  BackupMetadataViewSchema,
+  VerifyBackupResultSchema,
+  RestorePendingMarkerSchema,
+} from "./backup";
 
 /**
  * Registro de schemas de retorno em runtime para todos os comandos IPC do Tauri.
@@ -127,4 +135,14 @@ export const commandReturnSchemas: Record<string, z.ZodTypeAny> = {
   // Settings
   get_allocation_settings: AllocationSettingsSchema,
   update_allocation_settings: AllocationSettingsSchema,
+
+  // Backup & Restore (ADR-0017)
+  get_backup_status: BackupStatusSchema,
+  set_backup_settings: BackupSettingsSchema,
+  run_backup_now: BackupMetadataViewSchema,
+  list_backups: z.array(BackupMetadataViewSchema),
+  verify_backup: VerifyBackupResultSchema,
+  schedule_restore: RestorePendingMarkerSchema,
+  choose_backup_folder: z.string().nullable(),
+  choose_backup_file: z.string().nullable(),
 };

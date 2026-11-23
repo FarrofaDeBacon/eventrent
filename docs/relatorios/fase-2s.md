@@ -231,7 +231,7 @@ ALTER TABLE app_user ADD COLUMN auth_epoch INTEGER NOT NULL DEFAULT 0;
 A revalidação no Core (`crates/core/src/services/mod.rs`):
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/core/src/services/mod.rs:433-461 -->
+<!-- snippet: crates/core/src/services/mod.rs:433-461@64e038b -->
 ```rust
     pub async fn revalidate_session(&self, session: &SessionInfo) -> Result<SessionInfo> {
         self.verify_session_active(session)?;

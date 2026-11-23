@@ -1,0 +1,24 @@
+{
+  "command": "get_backup_status",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": {
+    "days_since_last_backup": 0,
+    "is_backup_due": false,
+    "is_stale": false,
+    "settings": {
+      "destination_folder": "C:\\Backups\\EventRent",
+      "last_backup_at": "2026-11-23T10:00:00Z",
+      "last_backup_error": null,
+      "last_backup_status": "success",
+      "retention_daily": 7,
+      "retention_monthly": 6,
+      "retention_weekly": 4,
+      "schedule_enabled": true
+    }
+  },
+  "sample_errors": {
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada."
+  }
+}

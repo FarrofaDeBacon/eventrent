@@ -1079,6 +1079,7 @@ name = "eventrent-app"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "eventrent-backup-fs",
  "eventrent-core",
  "eventrent-media-fs",
  "eventrent-store-sqlite",

@@ -1,0 +1,10 @@
+{
+  "command": "choose_backup_folder",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": "C:\\Backups\\EventRent",
+  "sample_errors": {
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada."
+  }
+}

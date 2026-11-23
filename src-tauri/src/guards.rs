@@ -261,6 +261,38 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
         name: "save_model_document_as",
         is_public: false,
     },
+    CommandDefinition {
+        name: "get_backup_status",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "set_backup_settings",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "run_backup_now",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "list_backups",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "verify_backup",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "schedule_restore",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "choose_backup_folder",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "choose_backup_file",
+        is_public: false,
+    },
 ];
 
 /// Guarda central de autenticação para comandos protegidos do Tauri.

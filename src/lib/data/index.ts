@@ -1,8 +1,10 @@
 import type { AuthRepository } from "./auth-repository";
+import type { BackupRepository } from "./backup-repository";
 import type { BrandingRepository } from "./branding-repository";
 import type { CatalogRepository } from "./catalog-repository";
 import type { CustomerRepository } from "./customer-repository";
 import { MockAuthRepository } from "./mock-auth-repository";
+import { MockBackupRepository } from "./mock-backup-repository";
 import { MockBrandingRepository } from "./mock-branding-repository";
 import { MockCatalogRepository } from "./mock-catalog-repository";
 import { MockCustomerRepository } from "./mock-customer-repository";
@@ -11,6 +13,7 @@ import { MockUserRepository } from "./mock-user-repository";
 import { MockVenueRepository } from "./mock-venue-repository";
 import type { SettingsRepository } from "./settings-repository";
 import { TauriAuthRepository } from "./tauri-auth-repository";
+import { TauriBackupRepository } from "./tauri-backup-repository";
 import { TauriBrandingRepository } from "./tauri-branding-repository";
 import { TauriCatalogRepository } from "./tauri-catalog-repository";
 import { TauriCustomerRepository } from "./tauri-customer-repository";
@@ -22,12 +25,14 @@ import type { UserRepository } from "./user-repository";
 import type { VenueRepository } from "./venue-repository";
 
 export * from "./auth-repository";
+export * from "./backup-repository";
 export * from "./branding-repository";
 export * from "./catalog-repository";
 export * from "./customer-repository";
 export * from "./session.svelte";
 export * from "./settings-repository";
 export * from "./tauri-auth-repository";
+export * from "./tauri-backup-repository";
 export * from "./tauri-branding-repository";
 export * from "./tauri-catalog-repository";
 export * from "./tauri-customer-repository";
@@ -45,6 +50,7 @@ let cachedCustomerRepository: CustomerRepository | null = null;
 let cachedSettingsRepository: SettingsRepository | null = null;
 let cachedVenueRepository: VenueRepository | null = null;
 let cachedCatalogRepository: CatalogRepository | null = null;
+let cachedBackupRepository: BackupRepository | null = null;
 
 export function isTauriRuntime(): boolean {
   return (
@@ -244,4 +250,18 @@ export function getCatalogRepository(): CatalogRepository {
 
 export function setCatalogRepository(repo: CatalogRepository): void {
   cachedCatalogRepository = repo;
+}
+
+export function getBackupRepository(): BackupRepository {
+  requireDesktopOrDev("BackupRepository");
+  if (!cachedBackupRepository) {
+    cachedBackupRepository = isTauriRuntime()
+      ? new TauriBackupRepository()
+      : new MockBackupRepository();
+  }
+  return cachedBackupRepository;
+}
+
+export function setBackupRepository(repo: BackupRepository): void {
+  cachedBackupRepository = repo;
 }

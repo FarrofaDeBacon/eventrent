@@ -10,6 +10,7 @@ import { TauriCustomerRepository } from "./tauri-customer-repository";
 import { TauriVenueRepository } from "./tauri-venue-repository";
 import { TauriCatalogRepository } from "./tauri-catalog-repository";
 import { TauriSettingsRepository } from "./tauri-settings-repository";
+import { TauriBackupRepository } from "./tauri-backup-repository";
 
 import { commandReturnSchemas } from "./schemas";
 
@@ -1135,6 +1136,117 @@ describe("R3 / Tarefa 0.3 — Contratos Reais Rust ↔ TypeScript e Cobertura do
     });
   });
 
+  describe("8. Repositório de Backup e Restauração (TauriBackupRepository)", () => {
+    const repo = new TauriBackupRepository();
+
+    it("get_backup_status: consulta status e métricas do backup", async () => {
+      coveredCommands.add("get_backup_status");
+      const fix = getFixture("get_backup_status");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const res = await repo.getStatus();
+      expect(
+        commandReturnSchemas["get_backup_status"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("get_backup_status");
+    });
+
+    it("set_backup_settings: atualiza configurações de retenção e agendamento", async () => {
+      coveredCommands.add("set_backup_settings");
+      const fix = getFixture("set_backup_settings");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const input = {
+        destination_folder: "C:\\Backups\\EventRent",
+        schedule_enabled: true,
+        retention_daily: 7,
+        retention_weekly: 4,
+        retention_monthly: 6,
+      };
+      const res = await repo.updateSettings(input);
+      expect(
+        commandReturnSchemas["set_backup_settings"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("set_backup_settings", {
+        input,
+      });
+    });
+
+    it("run_backup_now: executa backup imediato consistente", async () => {
+      coveredCommands.add("run_backup_now");
+      const fix = getFixture("run_backup_now");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const res = await repo.runBackupNow();
+      expect(
+        commandReturnSchemas["run_backup_now"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("run_backup_now");
+    });
+
+    it("list_backups: lista backups na pasta configurada", async () => {
+      coveredCommands.add("list_backups");
+      const fix = getFixture("list_backups");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const res = await repo.listBackups();
+      expect(commandReturnSchemas["list_backups"].safeParse(res).success).toBe(
+        true,
+      );
+      expect(mockedInvoke).toHaveBeenCalledWith("list_backups", {
+        input: { folder: null },
+      });
+    });
+
+    it("verify_backup: valida integridade física SHA-256 e compatibilidade de migrações", async () => {
+      coveredCommands.add("verify_backup");
+      const fix = getFixture("verify_backup");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const res = await repo.verifyBackup(
+        "C:\\Backups\\EventRent\\backup.eventrent-backup",
+      );
+      expect(commandReturnSchemas["verify_backup"].safeParse(res).success).toBe(
+        true,
+      );
+      expect(mockedInvoke).toHaveBeenCalledWith("verify_backup", {
+        input: { file_path: "C:\\Backups\\EventRent\\backup.eventrent-backup" },
+      });
+    });
+
+    it("schedule_restore: agenda restauração a frio para próximo boot", async () => {
+      coveredCommands.add("schedule_restore");
+      const fix = getFixture("schedule_restore");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const res = await repo.scheduleRestore(
+        "C:\\Backups\\EventRent\\backup.eventrent-backup",
+      );
+      expect(
+        commandReturnSchemas["schedule_restore"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("schedule_restore", {
+        input: { file_path: "C:\\Backups\\EventRent\\backup.eventrent-backup" },
+      });
+    });
+
+    it("choose_backup_folder: abre seletor nativo de pasta de backup", async () => {
+      coveredCommands.add("choose_backup_folder");
+      const fix = getFixture("choose_backup_folder");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const res = await repo.chooseFolder();
+      expect(
+        commandReturnSchemas["choose_backup_folder"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("choose_backup_folder");
+    });
+
+    it("choose_backup_file: abre seletor nativo de arquivo de backup", async () => {
+      coveredCommands.add("choose_backup_file");
+      const fix = getFixture("choose_backup_file");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const res = await repo.chooseFile();
+      expect(
+        commandReturnSchemas["choose_backup_file"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("choose_backup_file");
+    });
+  });
+
   describe("10. R3.4 — Prova de Fluxo de Recuperação com RecoveryKeyModal", () => {
     it("chama RecoveryKeyModal com o resultado do repositório (fixture real) e prova que a chave exibida é a que o Rust devolveu", async () => {
       const authRepo = new TauriAuthRepository();
@@ -1170,13 +1282,13 @@ describe("R3 / Tarefa 0.3 — Contratos Reais Rust ↔ TypeScript e Cobertura do
     });
   });
 
-  describe("11. Tarefa 0.3 — Garantia Estrutural: Cobertura Integral dos 62 Comandos IPC", () => {
-    it("FALHA se qualquer comando do registro COMMAND_REGISTRY (62 fixtures) não possuir teste de contrato de repositório", () => {
+  describe("11. Tarefa 0.3 — Garantia Estrutural: Cobertura Integral dos 70 Comandos IPC", () => {
+    it("FALHA se qualquer comando do registro COMMAND_REGISTRY (70 fixtures) não possuir teste de contrato de repositório", () => {
       const allFixtureCommands = Object.keys(fixtureModules)
         .map((p) => p.replace("./fixtures/contracts/", "").replace(".json", ""))
         .sort();
 
-      expect(allFixtureCommands.length).toBe(62);
+      expect(allFixtureCommands.length).toBe(70);
 
       const missingCommands: string[] = [];
       for (const cmd of allFixtureCommands) {
@@ -1190,7 +1302,7 @@ describe("R3 / Tarefa 0.3 — Contratos Reais Rust ↔ TypeScript e Cobertura do
         `Os seguintes comandos estão em COMMAND_REGISTRY / fixtures mas NÃO possuem teste de contrato em repositório: ${missingCommands.join(", ")}`,
       ).toEqual([]);
 
-      expect(coveredCommands.size).toBe(62);
+      expect(coveredCommands.size).toBe(70);
     });
   });
 });

@@ -32,7 +32,7 @@ async fn setup_real_app_state() -> (
         .await
         .expect("Falha ao inicializar SQLite em arquivo temporário");
 
-    let stores = SqliteStore::new(pool).into_bundle();
+    let stores = SqliteStore::new(pool.clone()).into_bundle();
     let tenant_id = ensure_default_tenant(stores.tenants.as_ref(), stores.branding.as_ref())
         .await
         .expect("Falha ao inicializar tenant padrão");
@@ -58,11 +58,21 @@ async fn setup_real_app_state() -> (
     let temp_media_dir = temp_dir.join("temp-media");
     std::fs::create_dir_all(&temp_media_dir).expect("Falha ao criar pasta de mídia");
 
+    let backup_service = eventrent_backup_fs::BackupFsService::new(
+        temp_dir.clone(),
+        db_path.clone(),
+        temp_dir.join("media"),
+        config_path.clone(),
+    );
+
     let app_state = AppState {
         services,
         default_tenant_id: tenant_id.clone(),
         config_path,
         temp_media_dir,
+        backup_service,
+        db_pool: pool,
+        app_version: "0.1.0".to_string(),
         config: Mutex::new(AppConfig::default()),
         session: Mutex::new(Some(setup.session.clone())),
     };
@@ -463,6 +473,9 @@ async fn test_appstate_regenerating_recovery_key_invalidates_other_sessions() {
         default_tenant_id: tenant_id.clone(),
         config_path: app_state1.config_path.clone(),
         temp_media_dir: app_state1.temp_media_dir.clone(),
+        backup_service: app_state1.backup_service.clone(),
+        db_pool: app_state1.db_pool.clone(),
+        app_version: app_state1.app_version.clone(),
         config: Mutex::new(AppConfig::default()),
         session: Mutex::new(Some(session_dev2.clone())),
     };

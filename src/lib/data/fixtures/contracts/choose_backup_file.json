@@ -1,0 +1,10 @@
+{
+  "command": "choose_backup_file",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": "C:\\Backups\\EventRent\\backup-2026-11-23.eventrent-backup",
+  "sample_errors": {
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada."
+  }
+}
