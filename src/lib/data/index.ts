@@ -26,6 +26,7 @@ import type { VenueRepository } from "./venue-repository";
 
 export * from "./auth-repository";
 export * from "./backup-repository";
+export * from "./schemas/backup";
 export * from "./branding-repository";
 export * from "./catalog-repository";
 export * from "./customer-repository";
