@@ -10,9 +10,29 @@ const steps = [
     args: ["test:run"],
   },
   {
+    name: "Build Frontend de Produção (sem mocks)",
+    command: "pnpm",
+    args: ["build"],
+  },
+  {
+    name: "Verificação Estática de Ausência de Mocks no Pacote (check-no-mocks-in-build)",
+    command: "node",
+    args: ["scripts/check-no-mocks-in-build.js"],
+  },
+  {
     name: "Prova Estrutural de Congelamento Dinâmico de Migrações",
     command: "node",
     args: ["scripts/test-check-migrations.js"],
+  },
+  {
+    name: "Prova Estrutural de Trechos de Código em Relatórios (test-check-report-snippets)",
+    command: "node",
+    args: ["scripts/test-check-report-snippets.js"],
+  },
+  {
+    name: "Verificação Estrutural de Snippets em Relatórios (check-report-snippets)",
+    command: "node",
+    args: ["scripts/check-report-snippets.js"],
   },
   {
     name: "Rustfmt Check",

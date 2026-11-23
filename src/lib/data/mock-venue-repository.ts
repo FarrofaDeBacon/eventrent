@@ -28,6 +28,13 @@ function genId(): string {
 }
 
 export class MockVenueRepository implements VenueRepository {
+  constructor() {
+    if (!import.meta.env.DEV && import.meta.env.VITE_E2E !== "1") {
+      throw new Error(
+        "Mocks não podem ser carregados no ambiente de produção. Execute o aplicativo desktop EventRent.",
+      );
+    }
+  }
   private loadAll(): VenueWithDetails[] {
     if (typeof window === "undefined") return [];
     const raw = window.localStorage.getItem(STORAGE_KEY);

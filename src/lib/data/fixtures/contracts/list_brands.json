@@ -1,0 +1,19 @@
+{
+  "command": "list_brands",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": [
+    {
+      "active": true,
+      "created_at": "2026-11-21T10:00:00Z",
+      "id": "018f0000-0000-7000-8000-000000000060",
+      "name": "Pioneer DJ",
+      "tenant_id": "018f0000-0000-7000-8000-000000000001",
+      "updated_at": "2026-11-21T10:00:00Z"
+    }
+  ],
+  "sample_errors": {
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada."
+  }
+}

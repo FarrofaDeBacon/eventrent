@@ -20,6 +20,7 @@
   } from "$lib/ui/card";
   import { Dialog } from "$lib/ui/dialog";
   import { Input } from "$lib/ui/input";
+  import RecoveryKeyModal from "$lib/components/recovery-key-modal.svelte";
 
   let email = $state("");
   let password = $state("");
@@ -32,6 +33,9 @@
   let recoveryNewPassword = $state("");
   let isRecovering = $state(false);
   let recoveryError = $state<string | null>(null);
+
+  let showNewKeyModal = $state(false);
+  let newRecoveryKeyToDisplay = $state("");
 
   async function handleLogin(event: SubmitEvent) {
     event.preventDefault();
@@ -59,7 +63,7 @@
 
     try {
       const repo = getAuthRepository();
-      await repo.recoverPasswordWithKey({
+      const result = await repo.recoverPasswordWithKey({
         email: recoveryEmail,
         recovery_key: recoveryKey,
         new_password: recoveryNewPassword,
@@ -70,13 +74,22 @@
       password = "";
       recoveryKey = "";
       recoveryNewPassword = "";
-      toast.success($_("login.recoverySuccessToast"));
+
+      // S1.2: Abre modal bloqueante exibindo a nova chave
+      newRecoveryKeyToDisplay = result.new_recovery_key;
+      showNewKeyModal = true;
     } catch (err) {
       recoveryError = err instanceof Error ? err.message : String(err);
       toast.error(recoveryError);
     } finally {
       isRecovering = false;
     }
+  }
+
+  function handleCloseRecoveryModal() {
+    newRecoveryKeyToDisplay = "";
+    showNewKeyModal = false;
+    toast.success($_("login.recoverySuccessToast"));
   }
 
   onMount(async () => {
@@ -278,3 +291,9 @@
     </div>
   </form>
 </Dialog>
+
+<RecoveryKeyModal
+  open={showNewKeyModal}
+  recoveryKey={newRecoveryKeyToDisplay}
+  onclose={handleCloseRecoveryModal}
+/>

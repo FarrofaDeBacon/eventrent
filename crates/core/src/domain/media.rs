@@ -320,13 +320,18 @@ pub fn compute_sha256_hex(data: &[u8]) -> String {
 
 /// Calcula o hash SHA-256 de forma assíncrona, offloadando para `tokio::task::spawn_blocking`
 /// para arquivos médios e grandes (evita bloquear o loop do Tokio).
-pub async fn compute_sha256_hex_async(data: Vec<u8>) -> String {
+/// B2: Propaga erros do JoinHandle (`Result<String, CoreError>`) em vez de retornar string vazia em caso de falha.
+pub async fn compute_sha256_hex_async(data: Vec<u8>) -> Result<String> {
     if data.len() < 32 * 1024 {
-        compute_sha256_hex(&data)
+        Ok(compute_sha256_hex(&data))
     } else {
         tokio::task::spawn_blocking(move || compute_sha256_hex(&data))
             .await
-            .unwrap_or_else(|_| String::new())
+            .map_err(|e| {
+                CoreError::Internal(format!(
+                    "Falha na execução de tarefa de hash assíncrono: {e}"
+                ))
+            })
     }
 }
 
@@ -745,7 +750,11 @@ pub fn validate_thumbnail_image(
 }
 
 /// Valida documento PDF (magic "%PDF-", coerente com application/pdf, até 25 MB).
-pub fn validate_pdf_document(declared_mime: &str, bytes: &[u8]) -> Result<ValidatedPdfPayload> {
+/// B2: Calcula o hash SHA-256 de forma assíncrona via `compute_sha256_hex_async` em tarefa `spawn_blocking`.
+pub async fn validate_pdf_document(
+    declared_mime: &str,
+    bytes: &[u8],
+) -> Result<ValidatedPdfPayload> {
     if bytes.is_empty() {
         return Err(CoreError::Validation(
             "O arquivo PDF está vazio.".to_string(),
@@ -786,9 +795,11 @@ pub fn validate_pdf_document(declared_mime: &str, bytes: &[u8]) -> Result<Valida
         ));
     }
 
+    let sha256 = compute_sha256_hex_async(bytes.to_vec()).await?;
+
     Ok(ValidatedPdfPayload {
         mime_type: MediaMimeType::ApplicationPdf,
-        sha256: compute_sha256_hex(bytes),
+        sha256,
         byte_size: bytes.len() as i64,
     })
 }
@@ -815,9 +826,11 @@ pub fn validate_model_media_quota(kind: MediaKind, current_count: usize) -> Resu
 }
 
 /// Nomes reservados de dispositivos no Windows que nunca podem ser usados como nomes de arquivos ou stems.
-pub const WINDOWS_RESERVED_NAMES: [&str; 22] = [
+/// B4: Inclui também variantes com dígitos sobrescritos (COM¹..³, LPT¹..³) tratadas como reservadas no Windows 11.
+pub const WINDOWS_RESERVED_NAMES: [&str; 28] = [
     "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    "COM9", "COM¹", "COM²", "COM³", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8",
+    "LPT9", "LPT¹", "LPT²", "LPT³",
 ];
 
 /// Valida o título da mídia (1 a 150 caracteres, sem caracteres de controle, invisíveis ou bidi).
@@ -964,6 +977,15 @@ pub fn sanitize_safe_document_stem(raw_title: &str) -> Result<String> {
         base
     };
 
+    // B4: Verifica se o nome base já corresponde a um nome reservado do Windows (incluindo COM¹..³ e LPT¹..³)
+    let raw_upper = without_pdf.trim().to_uppercase();
+    let raw_base = raw_upper.split('.').next().unwrap_or(&raw_upper);
+    if WINDOWS_RESERVED_NAMES.contains(&raw_upper.as_str())
+        || WINDOWS_RESERVED_NAMES.contains(&raw_base)
+    {
+        return Ok("documento".to_string());
+    }
+
     // Substitui caracteres especiais de arquivo por '_' antes de filtrar
     let pre_sanitized: String = without_pdf
         .chars()
@@ -973,9 +995,11 @@ pub fn sanitize_safe_document_stem(raw_title: &str) -> Result<String> {
         })
         .collect();
 
+    // B4: Restringe o stem a letras Unicode (is_alphabetic) e dígitos estritamente ASCII (is_ascii_digit),
+    // excluindo dígitos não ASCII (como sobrescritos ¹, ², ³ ou numerais de outros scripts).
     let filtered: String = pre_sanitized
         .chars()
-        .filter(|&c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.'))
+        .filter(|&c| c.is_alphabetic() || c.is_ascii_digit() || matches!(c, ' ' | '-' | '_' | '.'))
         .take(60)
         .collect();
 
@@ -985,7 +1009,7 @@ pub fn sanitize_safe_document_stem(raw_title: &str) -> Result<String> {
         return Ok("documento".to_string());
     }
 
-    let upper = stem.to_ascii_uppercase();
+    let upper = stem.to_uppercase();
     let base_name = upper.split('.').next().unwrap_or(&upper);
     if WINDOWS_RESERVED_NAMES.contains(&upper.as_str())
         || WINDOWS_RESERVED_NAMES.contains(&base_name)
@@ -1048,7 +1072,7 @@ pub fn normalize_media_filename(raw_filename: &str, mime: MediaMimeType) -> Resu
     let base_stem = if trimmed_stem.is_empty() {
         fallback
     } else {
-        let upper = trimmed_stem.to_ascii_uppercase();
+        let upper = trimmed_stem.to_uppercase();
         let base_name = upper.split('.').next().unwrap_or(&upper);
         if WINDOWS_RESERVED_NAMES.contains(&upper.as_str())
             || WINDOWS_RESERVED_NAMES.contains(&base_name)

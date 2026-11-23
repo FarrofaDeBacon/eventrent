@@ -30,6 +30,7 @@ pub struct UserRecord {
     pub updated_at: String,
     pub deleted_at: Option<String>,
     pub created_by: Option<String>,
+    pub auth_epoch: i64,
 }
 
 impl fmt::Debug for UserRecord {
@@ -55,6 +56,7 @@ impl fmt::Debug for UserRecord {
             .field("updated_at", &self.updated_at)
             .field("deleted_at", &self.deleted_at)
             .field("created_by", &self.created_by)
+            .field("auth_epoch", &self.auth_epoch)
             .finish()
     }
 }
@@ -77,6 +79,8 @@ pub struct UserWithRole {
     pub updated_at: String,
     pub deleted_at: Option<String>,
     pub created_by: Option<String>,
+    #[serde(default)]
+    pub auth_epoch: i64,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -151,6 +155,34 @@ impl fmt::Debug for RecoverPasswordResult {
     }
 }
 
+/// Parâmetros para regeneração autenticada de chave de recuperação.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RegenerateRecoveryKeyInput {
+    pub current_password: String,
+}
+
+impl fmt::Debug for RegenerateRecoveryKeyInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RegenerateRecoveryKeyInput")
+            .field("current_password", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// Resultado da regeneração autenticada de chave de recuperação.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RegenerateRecoveryKeyResult {
+    pub new_recovery_key: String,
+}
+
+impl fmt::Debug for RegenerateRecoveryKeyResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RegenerateRecoveryKeyResult")
+            .field("new_recovery_key", &"[REDACTED]")
+            .finish()
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LoginInput {
     pub email: String,
@@ -179,6 +211,8 @@ pub struct SessionInfo {
     pub authenticated_at: String,
     pub last_activity_at: String,
     pub inactivity_timeout_minutes: u32,
+    #[serde(default)]
+    pub auth_epoch: i64,
 }
 
 impl SessionInfo {

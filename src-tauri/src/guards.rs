@@ -42,6 +42,10 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
     },
     // Comandos protegidos por autenticação (o core é a autoridade única de permissões)
     CommandDefinition {
+        name: "regenerate_recovery_key",
+        is_public: false,
+    },
+    CommandDefinition {
         name: "get_branding",
         is_public: false,
     },
@@ -268,8 +272,8 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
 /// 3. Atualização automática do timestamp de última atividade (touch).
 ///
 /// Nota: A autoridade e validação de permissões RBAC pertencem exclusivamente ao Core.
-pub fn require_session(state: &AppState) -> Result<SessionInfo, String> {
-    state.require_session()
+pub async fn require_session(state: &AppState) -> Result<SessionInfo, String> {
+    state.require_session().await
 }
 
 #[cfg(test)]
@@ -388,6 +392,7 @@ mod tests {
             authenticated_at: base_time.to_rfc3339(),
             last_activity_at: base_time.to_rfc3339(),
             inactivity_timeout_minutes: timeout_minutes,
+            auth_epoch: 0,
         };
 
         // 1. Acesso 15 minutos depois: dentro do limite (OK)
@@ -576,5 +581,93 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_tauri_csp_is_strict_and_free_of_unsafe_eval() {
+        use std::path::Path;
+
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let conf_path = manifest_dir.join("tauri.conf.json");
+        assert!(
+            conf_path.exists(),
+            "tauri.conf.json deve existir em {}",
+            conf_path.display()
+        );
+
+        let content = std::fs::read_to_string(&conf_path)
+            .unwrap_or_else(|e| panic!("Falha ao ler {}: {e}", conf_path.display()));
+        let val: serde_json::Value = serde_json::from_str(&content)
+            .unwrap_or_else(|e| panic!("JSON inválido em {}: {e}", conf_path.display()));
+
+        let csp_value = val
+            .get("app")
+            .and_then(|a| a.get("security"))
+            .and_then(|s| s.get("csp"));
+
+        let csp_str = csp_value
+            .and_then(|v| v.as_str())
+            .expect("app.security.csp deve ser uma string não-nula e válida");
+
+        assert!(!csp_str.trim().is_empty(), "CSP não pode ser string vazia");
+
+        // Não pode conter 'unsafe-eval'
+        assert!(
+            !csp_str.contains("'unsafe-eval'"),
+            "CSP não pode conter 'unsafe-eval': {csp_str}"
+        );
+
+        // script-src não pode ter wildcards (*) nem http:// / https://
+        let script_src_part = csp_str
+            .split(';')
+            .find(|p| p.trim().starts_with("script-src"))
+            .expect("CSP deve definir diretiva script-src");
+
+        assert!(
+            !script_src_part.contains('*'),
+            "script-src não pode conter wildcard (*): {script_src_part}"
+        );
+        assert!(
+            !script_src_part.contains("http:"),
+            "script-src não pode permitir http: {script_src_part}"
+        );
+        assert!(
+            !script_src_part.contains("https:"),
+            "script-src não pode permitir https: {script_src_part}"
+        );
+        assert!(
+            !script_src_part.contains("'unsafe-inline'"),
+            "script-src não pode conter 'unsafe-inline': {script_src_part}"
+        );
+        assert!(
+            script_src_part.contains("'self'"),
+            "script-src deve conter 'self': {script_src_part}"
+        );
+
+        // style-src é estrito ('self' sem 'unsafe-inline'), e style-src-attr permite 'unsafe-inline'
+        // estritamente para atributos style inline de listas virtualizadas e anti-FOUC
+        let style_src_part = csp_str
+            .split(';')
+            .map(|p| p.trim())
+            .find(|p| p.starts_with("style-src") && !p.starts_with("style-src-attr"))
+            .expect("CSP deve definir diretiva style-src");
+        assert!(
+            style_src_part.contains("'self'"),
+            "style-src deve conter 'self': {style_src_part}"
+        );
+        assert!(
+            !style_src_part.contains("'unsafe-inline'"),
+            "style-src não deve conter 'unsafe-inline' (estilos devem vir de arquivos estáticos): {style_src_part}"
+        );
+
+        let style_src_attr_part = csp_str
+            .split(';')
+            .map(|p| p.trim())
+            .find(|p| p.starts_with("style-src-attr"))
+            .expect("CSP deve definir diretiva style-src-attr para bindings dinâmicos");
+        assert!(
+            style_src_attr_part.contains("'unsafe-inline'"),
+            "style-src-attr deve conter 'unsafe-inline' para virtual-list e anti-FOUC: {style_src_attr_part}"
+        );
     }
 }

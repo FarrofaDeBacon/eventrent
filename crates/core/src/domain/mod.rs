@@ -42,7 +42,8 @@ pub use settings::{
 pub use tenant::Tenant;
 pub use user::{
     CreateUserInput, LoginInput, LoginPolicy, RecoverPasswordInput, RecoverPasswordResult,
-    ResetPasswordInput, SessionInfo, UpdateUserInput, UserRecord, UserWithRole,
+    RegenerateRecoveryKeyInput, RegenerateRecoveryKeyResult, ResetPasswordInput, SessionInfo,
+    UpdateUserInput, UserRecord, UserWithRole,
 };
 pub use validation::{
     ensure_no_control_or_invisible_chars, is_dangerous_or_invisible_control_char,

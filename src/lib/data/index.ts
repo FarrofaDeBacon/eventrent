@@ -25,13 +25,6 @@ export * from "./auth-repository";
 export * from "./branding-repository";
 export * from "./catalog-repository";
 export * from "./customer-repository";
-export * from "./mock-auth-repository";
-export * from "./mock-branding-repository";
-export * from "./mock-catalog-repository";
-export * from "./mock-customer-repository";
-export * from "./mock-settings-repository";
-export * from "./mock-user-repository";
-export * from "./mock-venue-repository";
 export * from "./session.svelte";
 export * from "./settings-repository";
 export * from "./tauri-auth-repository";
@@ -53,11 +46,29 @@ let cachedSettingsRepository: SettingsRepository | null = null;
 let cachedVenueRepository: VenueRepository | null = null;
 let cachedCatalogRepository: CatalogRepository | null = null;
 
-function isTauriRuntime(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+export function isTauriRuntime(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    ("__TAURI_INTERNALS__" in window ||
+      "__TAURI__" in window ||
+      Boolean((window as unknown as { isTauri?: boolean }).isTauri))
+  );
+}
+
+export function isDevOrMockMode(): boolean {
+  return Boolean(import.meta.env.DEV) || import.meta.env.VITE_E2E === "1";
+}
+
+function requireDesktopOrDev(target: string): void {
+  if (!isTauriRuntime() && !isDevOrMockMode()) {
+    throw new Error(
+      `[EventRent] Execute o aplicativo desktop EventRent. O repositório ${target} não pode ser instanciado em modo web fora do Tauri em produção.`,
+    );
+  }
 }
 
 export function getBrandingRepository(): BrandingRepository {
+  requireDesktopOrDev("BrandingRepository");
   if (!cachedBrandingRepository) {
     cachedBrandingRepository = isTauriRuntime()
       ? new TauriBrandingRepository()
@@ -71,6 +82,7 @@ export function setBrandingRepository(repo: BrandingRepository): void {
 }
 
 export function getAuthRepository(): AuthRepository {
+  requireDesktopOrDev("AuthRepository");
   if (!cachedAuthRepository) {
     cachedAuthRepository = isTauriRuntime()
       ? new TauriAuthRepository()
@@ -84,6 +96,7 @@ export function setAuthRepository(repo: AuthRepository): void {
 }
 
 export function getUserRepository(): UserRepository {
+  requireDesktopOrDev("UserRepository");
   if (!cachedUserRepository) {
     cachedUserRepository = isTauriRuntime()
       ? new TauriUserRepository()
@@ -97,6 +110,7 @@ export function setUserRepository(repo: UserRepository): void {
 }
 
 export function getCustomerRepository(): CustomerRepository {
+  requireDesktopOrDev("CustomerRepository");
   if (!cachedCustomerRepository) {
     cachedCustomerRepository = isTauriRuntime()
       ? new TauriCustomerRepository()
@@ -155,6 +169,9 @@ export function canAccessRoute(
   if (pathname.startsWith("/customers")) {
     return hasPermission(session, PERMISSIONS.CUSTOMER_READ);
   }
+  if (pathname.startsWith("/settings/account")) {
+    return true;
+  }
   if (pathname.startsWith("/settings/users")) {
     return hasPermission(session, PERMISSIONS.USER_READ);
   }
@@ -188,6 +205,7 @@ export function canAccessRoute(
 }
 
 export function getSettingsRepository(): SettingsRepository {
+  requireDesktopOrDev("SettingsRepository");
   if (!cachedSettingsRepository) {
     cachedSettingsRepository = isTauriRuntime()
       ? new TauriSettingsRepository()
@@ -201,6 +219,7 @@ export function setSettingsRepository(repo: SettingsRepository): void {
 }
 
 export function getVenueRepository(): VenueRepository {
+  requireDesktopOrDev("VenueRepository");
   if (!cachedVenueRepository) {
     cachedVenueRepository = isTauriRuntime()
       ? new TauriVenueRepository()
@@ -214,6 +233,7 @@ export function setVenueRepository(repo: VenueRepository): void {
 }
 
 export function getCatalogRepository(): CatalogRepository {
+  requireDesktopOrDev("CatalogRepository");
   if (!cachedCatalogRepository) {
     cachedCatalogRepository = isTauriRuntime()
       ? new TauriCatalogRepository()

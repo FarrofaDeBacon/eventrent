@@ -1,0 +1,15 @@
+{
+  "command": "get_public_branding",
+  "is_public": true,
+  "has_return_value": true,
+  "sample_output": {
+    "accent_color": "#F59E0B",
+    "company_name": "EventRent Audiovisual",
+    "icon_url": null,
+    "logo_dark_url": null,
+    "logo_url": null,
+    "primary_color": "#E11D48",
+    "secondary_color": "#1E293B"
+  },
+  "sample_errors": {}
+}

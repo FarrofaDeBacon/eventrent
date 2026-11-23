@@ -156,12 +156,16 @@ impl MediaStore for FsMediaStore {
                 ));
             }
 
-            // Idempotência: se o arquivo já existe com o mesmo tamanho e hash válido, não reescreve
+            // Idempotência: se o arquivo já existe com o mesmo tamanho e hash válido, renova a data de modificação
+            // (mtime) para SystemTime::now() para que a coleta de lixo (GC) não o trate como órfão obsoleto (B3) e retorna a chave.
             if target_path.exists() {
                 if let Ok(existing_bytes) = fs::read(&target_path) {
                     if existing_bytes.len() == bytes_vec.len()
                         && compute_sha256_hex(&existing_bytes) == clean_sha
                     {
+                        if let Ok(file) = fs::OpenOptions::new().write(true).open(&target_path) {
+                            let _ = file.set_modified(SystemTime::now());
+                        }
                         return Ok(storage_key);
                     }
                 }
@@ -362,9 +366,24 @@ mod tests {
         assert!(resolved.starts_with(store.root_dir()));
         assert!(resolved.exists());
 
-        // 2. Idempotência / deduplicação
+        // 2. Idempotência / deduplicação e renovação de mtime (B3)
+        // Envelhece o blob preexistente para 2 horas atrás
+        let two_hours_ago = SystemTime::now() - Duration::from_secs(7200);
+        let f = fs::OpenOptions::new().write(true).open(&resolved).unwrap();
+        f.set_modified(two_hours_ago).unwrap();
+        drop(f);
+        let mtime_before = fs::metadata(&resolved).unwrap().modified().unwrap();
+        assert!(mtime_before < SystemTime::now() - Duration::from_secs(3600));
+
+        // Reenvio do mesmo blob: deve manter a mesma chave e renovar mtime para agora
         let key2 = store.put_blob("tenant-1", &sha, payload).await.unwrap();
         assert_eq!(key1, key2);
+
+        let mtime_after = fs::metadata(&resolved).unwrap().modified().unwrap();
+        assert!(
+            mtime_after > SystemTime::now() - Duration::from_secs(60),
+            "Reenvio de blob preexistente deve renovar mtime para evitar descarte por GC"
+        );
 
         let read_back = store.get_blob("tenant-1", &sha).await.unwrap();
         assert_eq!(read_back, payload);

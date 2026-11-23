@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   appSession,
   canAccessRoute,
-  MockCatalogRepository,
   PERMISSIONS,
   type SessionInfo,
 } from "./index";
+import { MockCatalogRepository } from "./mock-catalog-repository";
 
 function makeSession(permissions: string[]): SessionInfo {
   const now = new Date().toISOString();

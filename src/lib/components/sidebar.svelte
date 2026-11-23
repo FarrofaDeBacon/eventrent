@@ -11,6 +11,7 @@
     Shield,
     Palette,
     SlidersHorizontal,
+    User,
     ChevronLeft,
     ChevronRight,
   } from "lucide-svelte";
@@ -109,6 +110,11 @@
       href: "/settings/operation",
       icon: SlidersHorizontal,
       permission: PERMISSIONS.SETTINGS_READ,
+    },
+    {
+      labelKey: "nav.account",
+      href: "/settings/account",
+      icon: User,
     },
   ];
 

@@ -1,0 +1,16 @@
+{
+  "command": "regenerate_recovery_key",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": {
+    "new_recovery_key": "ER-REGEN-KEY-2026-0002"
+  },
+  "sample_errors": {
+    "AccountLocked": "Conta temporariamente bloqueada até 2026-11-21T12:00:00Z",
+    "Conflict": "Conflito de registro: Já existe um registro com os dados informados.",
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "InvalidCredentials": "Senha atual incorreta.",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada.",
+    "Validation": "Erro de validação: Dados de entrada inválidos para a operação."
+  }
+}

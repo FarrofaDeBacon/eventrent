@@ -353,7 +353,7 @@ impl CoreServices {
         let language = validate_optional_media_language(input.language.as_deref())?;
         let original_filename =
             normalize_media_filename(&input.original_filename, MediaMimeType::ApplicationPdf)?;
-        let pdf = validate_pdf_document(&input.mime_type, &input.bytes)?;
+        let pdf = validate_pdf_document(&input.mime_type, &input.bytes).await?;
 
         let _model = self
             .stores

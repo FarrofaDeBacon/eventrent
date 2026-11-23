@@ -14,6 +14,11 @@ export class MockBrandingRepository implements BrandingRepository {
   private isolatedBranding: TenantBranding | null = null;
 
   constructor(initialBranding?: Partial<TenantBranding>) {
+    if (!import.meta.env.DEV && import.meta.env.VITE_E2E !== "1") {
+      throw new Error(
+        "Mocks não podem ser carregados no ambiente de produção. Execute o aplicativo desktop EventRent.",
+      );
+    }
     if (initialBranding) {
       this.isolatedBranding = {
         id: "018f0000-0000-7000-8000-000000000002",

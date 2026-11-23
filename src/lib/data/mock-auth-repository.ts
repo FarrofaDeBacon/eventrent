@@ -9,6 +9,9 @@ import {
   type InitialSetupResult,
   type LoginInput,
   type RecoverPasswordInput,
+  type RecoverPasswordResult,
+  type RegenerateRecoveryKeyInput,
+  type RegenerateRecoveryKeyResult,
   type RoleWithPermissions,
   type SessionInfo,
   type TenantBranding,
@@ -230,6 +233,13 @@ function generateMockRecoveryKey(): string {
 }
 
 export class MockAuthRepository implements AuthRepository {
+  constructor() {
+    if (!import.meta.env.DEV && import.meta.env.VITE_E2E !== "1") {
+      throw new Error(
+        "Mocks não podem ser carregados no ambiente de produção. Execute o aplicativo desktop EventRent.",
+      );
+    }
+  }
   async getAppStatus(): Promise<AppStatus> {
     const state = getSharedMockState();
     return {
@@ -423,7 +433,9 @@ export class MockAuthRepository implements AuthRepository {
     return state.session ? { ...state.session } : null;
   }
 
-  async recoverPasswordWithKey(input: RecoverPasswordInput): Promise<void> {
+  async recoverPasswordWithKey(
+    input: RecoverPasswordInput,
+  ): Promise<RecoverPasswordResult> {
     const state = getSharedMockState();
     if (input.new_password.length < 8) {
       throw new Error("A nova senha deve ter pelo menos 8 caracteres.");
@@ -436,10 +448,44 @@ export class MockAuthRepository implements AuthRepository {
       throw new Error("E-mail ou chave de recuperação inválidos.");
     }
 
+    const randomSuffix = Math.random()
+      .toString(36)
+      .substring(2, 6)
+      .toUpperCase();
+    const newKey = `ER-RECV-${randomSuffix}-2026`;
+
     user.password = input.new_password;
+    user.recoveryKey = newKey;
     user.failed_attempts = 0;
     user.locked_until = null;
     user.updated_at = new Date().toISOString();
     saveSharedMockState(state);
+
+    return { new_recovery_key: newKey };
+  }
+
+  async regenerateRecoveryKey(
+    input: RegenerateRecoveryKeyInput,
+  ): Promise<RegenerateRecoveryKeyResult> {
+    const state = getSharedMockState();
+    if (!state.session) {
+      throw new Error("Sessão não autenticada.");
+    }
+    const user = state.users.find((u) => u.id === state.session!.user_id);
+    if (!user || user.password !== input.current_password) {
+      throw new Error("Senha atual incorreta.");
+    }
+
+    const randomSuffix = Math.random()
+      .toString(36)
+      .substring(2, 6)
+      .toUpperCase();
+    const newKey = `ER-REGEN-${randomSuffix}-2026`;
+
+    user.recoveryKey = newKey;
+    user.updated_at = new Date().toISOString();
+    saveSharedMockState(state);
+
+    return { new_recovery_key: newKey };
   }
 }

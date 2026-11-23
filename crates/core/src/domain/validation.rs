@@ -260,24 +260,55 @@ pub fn validate_user_name(name: &str) -> CoreResult<String> {
     Ok(trimmed.to_string())
 }
 
-/// Verifica se um caractere é de controle ou caractere invisível/formato/direção perigoso.
+/// Verifica se um caractere é de controle ou caractere invisível/formato/direção/tag perigoso.
 /// Bloqueia:
 /// - Caracteres de controle (`c.is_control()`)
-/// - Espaços invisíveis e de formatação: U+200B a U+200F (zero-width space/non-joiner/joiner/LRM/RLM)
-/// - Controles de direção de texto bidi: U+202A a U+202E (LRE, RLE, PDF, LRO, RLO)
-/// - Controles de isolamento bidi: U+2066 a U+2069 (LRI, RLI, FSI, PDI)
+/// - Soft hyphen: U+00AD
+/// - Combining grapheme joiner: U+034F
+/// - Controles de formato árabe/siríaco: U+0600 a U+0605, U+061C (ALM), U+06DD, U+070F
+/// - Fillers coreanos (Hangul fillers): U+115F, U+1160, U+3164, U+FFA0
+/// - Sinais de vogal invisíveis khmer: U+17B4, U+17B5
+/// - Mongol vowel separator: U+180E
+/// - Espaços invisíveis e de formatação: U+200B a U+200F (zero-width space/non-joiner/joiner/LRM/RLM). Nota: U+200D (ZWJ) permanece rejeitado.
 /// - Separadores de linha/parágrafo Unicode: U+2028 (LINE SEPARATOR), U+2029 (PARAGRAPH SEPARATOR)
+/// - Controles de direção de texto bidi: U+202A a U+202E (LRE, RLE, PDF, LRO, RLO)
+/// - Word joiner e formatações invisíveis: U+2060 a U+2064 (WJ, invisible math operators)
+/// - Controles de isolamento e formatos obsoletos bidi: U+2066 a U+206F (LRI, RLI, FSI, PDI, etc.)
+/// - Braille vazio (Braille pattern blank): U+2800
 /// - Byte Order Mark / zero-width no-break space: U+FEFF
+/// - Interlinear annotation characters: U+FFF9 a U+FFFB
+/// - Bloco de tags Unicode (usado em ataques de texto invisível): U+E0000 a U+E007F
+/// - Variation selectors suplementares: U+E0100 a U+E01EF
+///
+/// Nota: NÃO rejeita U+FE00 a U+FE0F (emoji variation selectors padrão, ex: U+FE0F para visualização de emoji).
 pub fn is_dangerous_or_invisible_control_char(c: char) -> bool {
     c.is_control()
         || matches!(
             c,
-            '\u{200B}'..='\u{200F}'
-                | '\u{202A}'..='\u{202E}'
-                | '\u{2066}'..='\u{2069}'
+            '\u{00AD}'
+                | '\u{034F}'
+                | '\u{0600}'..='\u{0605}'
+                | '\u{061C}'
+                | '\u{06DD}'
+                | '\u{070F}'
+                | '\u{115F}'
+                | '\u{1160}'
+                | '\u{17B4}'
+                | '\u{17B5}'
+                | '\u{180E}'
+                | '\u{200B}'..='\u{200F}'
                 | '\u{2028}'
                 | '\u{2029}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{206F}'
+                | '\u{2800}'
+                | '\u{3164}'
                 | '\u{FEFF}'
+                | '\u{FFA0}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{E0000}'..='\u{E007F}'
+                | '\u{E0100}'..='\u{E01EF}'
         )
 }
 

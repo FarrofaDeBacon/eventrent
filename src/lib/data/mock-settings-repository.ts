@@ -13,6 +13,13 @@ const DEFAULT_SETTINGS: AllocationSettings = {
 };
 
 export class MockSettingsRepository implements SettingsRepository {
+  constructor() {
+    if (!import.meta.env.DEV && import.meta.env.VITE_E2E !== "1") {
+      throw new Error(
+        "Mocks não podem ser carregados no ambiente de produção. Execute o aplicativo desktop EventRent.",
+      );
+    }
+  }
   private load(): AllocationSettings {
     if (typeof window === "undefined") {
       return { ...DEFAULT_SETTINGS };

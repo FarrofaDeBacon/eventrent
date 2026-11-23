@@ -102,3 +102,64 @@ Este documento estabelece as diretrizes arquiteturais, de qualidade de código, 
 - **Fechamento de Fase**:
   - Criação da tag de versão (ex.: `v0.0.1-fase0`).
   - Geração do relatório obrigatório em `docs/relatorios/fase-<N>.md`.
+
+---
+
+## 5. Definição de Pronto Permanente (DoD em 4 Níveis)
+
+Para que qualquer história, funcionalidade ou fase seja considerada concluída ("Pronto"), ela deve satisfazer rigorosamente os 4 níveis de garantia:
+
+### Nível 1: Banco de Dados & Armazenamento
+
+- [ ] **Migrações Imutáveis**: Migrações existentes congeladas. Novas migrações são puramente incrementais (`ALTER TABLE ADD COLUMN`, índices parciais) e reversíveis.
+- [ ] **Isolamento Multitenant Estrito**: Toda tabela possui `tenant_id` e toda query/filtro no SQLite/Postgres escopa por tenant.
+- [ ] **Chaves Compostas e Índices Parciais**: Unicidade lógica garantida via `UNIQUE (tenant_id, ...)` com `WHERE deleted_at IS NULL`.
+- [ ] **Transacionalidade & Rollback**: Operações atômicas com `run_transaction` e rollback garantido em caso de falha.
+- [ ] **Auditoria Completa**: Toda mutação sensível gera entrada atômica em `audit_log`, sem nunca persistir segredos, dados binários de mídia ou chaves brutas.
+
+### Nível 2: Domínio & Regras de Negócio (Core)
+
+- [ ] **Independência de Framework**: O crate `crates/core` permanece com zero dependência de Tauri e zero dependência de SQL direto (`sqlx`).
+- [ ] **Validações Canônicas & Sanitização**: Strings, códigos, documentos e valores validados na fronteira de domínio.
+- [ ] **RBAC Canônico**: Todas as permissões verificadas no Core contra `ALL_PERMISSIONS`. Nenhuma permissão fictícia ou descontinuada.
+- [ ] **Revalidação de Sessão Dinâmica**: Sessões validadas contra `auth_epoch` e permissões do banco a cada comando protegido.
+- [ ] **Testes de Contrato e Unidade**: Suíte `test_sqlite_store_contract_suite` e testes de domínio passando com 100% de sucesso.
+
+### Nível 3: IPC & Contratos Tauri / Transporte
+
+- [ ] **Registro e Guardas Universais**: Todo comando protegido registrado em `COMMAND_REGISTRY` e protegido por `require_session(&state).await?`.
+- [ ] **Paridade Estrita de Tipos & DTOs**: Nenhuma perda silenciosa de retornos (proibido `Promise<void>` em comandos com retorno). Fixtures JSON versionadas e validadas por `cargo test` e Vitest (`contracts.spec.ts`).
+- [ ] **Menor Privilégio de Capabilities**: Permissões do Tauri em `src-tauri/capabilities/default.json` reduzidas ao mínimo estrito (`core:default`), proibindo `opener`, `fs`, `http`, `dialog`.
+- [ ] **Segurança de Mídia & Arquivos**: Limpeza preventiva de arquivos temporários, nomes restritos saneados (proibindo device names do Windows `COM1..9`, `COM¹..³`), extensão fixa `.pdf` forçada pelo backend em documentos.
+- [ ] **CSP Estrita**: CSP sem scripts inline e sem `'unsafe-eval'` em `tauri.conf.json`.
+
+### Nível 4: Interface & Experiência do Usuário (Frontend)
+
+- [ ] **Isolamento de Mocks fora de Produção**: Repositórios mock (`mock-*.ts`) executam exclusivamente em ambiente de desenvolvimento (`import.meta.env.DEV`). Execução web em produção renderiza tela clara de requisito de aplicativo desktop.
+- [ ] **Banner de Demonstração Transparente**: Modo mock exibe tarja acessível "MODO DE DEMONSTRAÇÃO: Não use dados reais".
+- [ ] **Tokens Semânticos & White Label**: Zero cores hardcoded nos componentes (`check-no-hardcoded-colors.js` passando 100%).
+- [ ] **Acessibilidade & Internacionalização**: 100% dos textos via `svelte-i18n`, foco navegável por teclado e contraste WCAG AA.
+- [ ] **Testes E2E Automatizados**: Suíte Playwright executando em runners Ubuntu e Windows.
+
+---
+
+## 6. Checklist para Próximas Fases: Fase 2N — Kits e Composição
+
+Ao iniciar a **Fase 2N (Kits e Composição de Equipamentos)**, seguir estritamente o seguinte roteiro:
+
+1. **Modelagem de Dados (Nível 1)**:
+   - [ ] Migração `0011_equipment_kits.sql` (ou sequencial seguinte) criando `equipment_kit` e `equipment_kit_item`.
+   - [ ] FKs compostas referenciando `(tenant_id, parent_kit_id)` e `(tenant_id, component_model_id)`.
+   - [ ] Prevenção de ciclos recursivos e profundidade máxima na composição de kits.
+   - [ ] Quantidades e multiplicadores em inteiros positivos.
+2. **Domínio e Serviços (Nível 2)**:
+   - [ ] Trait `KitStore` no `core` e implementação correspondente no `store-sqlite`.
+   - [ ] Regras de expansão de kits para reservas e ordens de separação.
+   - [ ] Auditoria de montagem/desmontagem de kits.
+3. **IPC e Contratos (Nível 3)**:
+   - [ ] Novos comandos Tauri registrados em `COMMAND_REGISTRY` e `guards.rs`.
+   - [ ] Fixtures geradas e validadas via `EVENTRENT_UPDATE_CONTRACTS=1`.
+4. **Interface (Nível 4)**:
+   - [ ] Tela de composição de kits com busca visual de modelos.
+   - [ ] Validações dinâmicas de itens repetidos ou circulares.
+   - [ ] `pnpm verify` 100% verde antes de cada commit.

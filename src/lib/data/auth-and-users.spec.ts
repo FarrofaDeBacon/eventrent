@@ -89,18 +89,35 @@ describe("AuthRepository & UserRepository (Regras de Domínio e Guards)", () => 
       }),
     ).rejects.toThrow(/temporariamente bloqueada/i);
 
-    // Recuperação de senha com a Chave de Recuperação desbloqueia e redefine
-    await authRepo.recoverPasswordWithKey({
+    // Recuperação de senha com a Chave de Recuperação desbloqueia, redefine e devolve a nova chave (S1)
+    const recoveryResult = await authRepo.recoverPasswordWithKey({
       email: "roberto@audiopro.com.br",
       recovery_key: setup.recovery_key,
       new_password: "RobertoNovaSenha#2026",
     });
+    expect(recoveryResult.new_recovery_key).toBeDefined();
+    expect(recoveryResult.new_recovery_key).not.toBe(setup.recovery_key);
 
     const session = await authRepo.login({
       email: "roberto@audiopro.com.br",
       password: "RobertoNovaSenha#2026",
     });
     expect(session.email).toBe("roberto@audiopro.com.br");
+
+    // S1.3: Regeneração autenticada da chave de recuperação
+    await expect(
+      authRepo.regenerateRecoveryKey({
+        current_password: "SenhaErrada#9999",
+      }),
+    ).rejects.toThrow(/incorreta/i);
+
+    const regenResult = await authRepo.regenerateRecoveryKey({
+      current_password: "RobertoNovaSenha#2026",
+    });
+    expect(regenResult.new_recovery_key).toBeDefined();
+    expect(regenResult.new_recovery_key).not.toBe(
+      recoveryResult.new_recovery_key,
+    );
   });
 
   it("deve proteger o último Proprietário contra desativação/rebaixamento, impedir autodesativação e validar rotas por permissão", async () => {

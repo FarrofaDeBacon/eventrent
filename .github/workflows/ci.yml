@@ -35,6 +35,12 @@ jobs:
       - name: Prova estrutural do congelamento dinâmico de migrações
         run: node scripts/test-check-migrations.js
 
+      - name: Prova estrutural de snippets em relatórios
+        run: node scripts/test-check-report-snippets.js
+
+      - name: Verificação de snippets em relatórios
+        run: node scripts/check-report-snippets.js
+
       - name: Instalar Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -83,11 +89,18 @@ jobs:
       - name: Testes Unitários Frontend (Vitest)
         run: pnpm test:run
 
+      - name: Build Frontend de Produção (sem mocks)
+        run: pnpm build
+
+      - name: Verificação Estática de Ausência de Mocks no Pacote
+        run: node scripts/check-no-mocks-in-build.js
+
       - name: Cache dos Navegadores Playwright
-        if: runner.os == 'Linux'
         uses: actions/cache@v4
         with:
-          path: ~/.cache/ms-playwright
+          path: |
+            ~/.cache/ms-playwright
+            ~/AppData/Local/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-playwright-
@@ -96,8 +109,11 @@ jobs:
         if: runner.os == 'Linux'
         run: pnpm exec playwright install --with-deps chromium
 
+      - name: Instalar navegador Playwright (Windows)
+        if: runner.os == 'Windows'
+        run: pnpm exec playwright install chromium
+
       - name: Testes E2E (Playwright)
-        if: runner.os == 'Linux'
         run: pnpm test:e2e
 
       - name: Rustfmt Check
@@ -108,3 +124,45 @@ jobs:
 
       - name: Testes Unitários Rust
         run: cargo test --workspace
+
+  compilar-app:
+    name: Compilação Real do App Tauri (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout do Repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache do Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: windows-cargo-tauri-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            windows-cargo-tauri-build-
+
+      - name: Instalar pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.16.1
+          standalone: true
+
+      - name: Instalar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+
+      - name: Instalar dependências Frontend
+        run: pnpm install
+
+      - name: Compilar App Tauri Real (sem mocks, sem VITE_E2E)
+        run: pnpm tauri build --no-bundle

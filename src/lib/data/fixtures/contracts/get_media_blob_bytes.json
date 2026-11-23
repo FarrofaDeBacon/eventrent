@@ -1,0 +1,11 @@
+{
+  "command": "get_media_blob_bytes",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": [137, 80, 78, 71],
+  "sample_errors": {
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "NotFound": "Registro não encontrado: O identificador solicitado não existe.",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada."
+  }
+}
