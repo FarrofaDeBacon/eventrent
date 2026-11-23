@@ -28,7 +28,8 @@
       "finance:manage",
       "audit:read",
       "settings:read",
-      "settings:manage"
+      "settings:manage",
+      "backup:manage"
     ]
   },
   {

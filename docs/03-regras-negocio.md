@@ -78,12 +78,13 @@ As permissões são definidas como constantes imutáveis em `crates/core/src/dom
 | `PERM_AUDIT_READ`         | `audit:read`         | Consultar trilha de auditoria (`audit_log`)                 |
 | `PERM_SETTINGS_READ`      | `settings:read`      | Consultar parâmetros globais do sistema                     |
 | `PERM_SETTINGS_MANAGE`    | `settings:manage`    | Alterar parâmetros globais do sistema                       |
+| `PERM_BACKUP_MANAGE`      | `backup:manage`      | Gerenciar backups e restaurar estado do sistema             |
 
 ### 4.2. Perfis de Sistema Padrão
 
 Criados de forma idempotente por `ensure_system_roles` para cada tenant:
 
-1. **Proprietário (`owner`)**: Possui **todas as 25 permissões** do catálogo canônico (`ALL_PERMISSIONS`).
+1. **Proprietário (`owner`)**: Possui **todas as 26 permissões** do catálogo canônico (`ALL_PERMISSIONS`).
 2. **Comercial (`commercial`)**: `customer:read`, `customer:manage`, `supplier:read`, `venue:read`, `venue:manage`, `catalog:read`, `reservation:read`, `reservation:manage`, `quote:read`, `quote:manage`, `branding:read`.
 3. **Estoque (`warehouse`)**: `supplier:read`, `supplier:manage`, `venue:read`, `venue:manage`, `catalog:read`, `catalog:manage`, `reservation:read`, `warehouse:read`, `warehouse:operate`, `branding:read`.
 4. **Técnico (`technician`)**: `venue:read`, `catalog:read`, `reservation:read`, `warehouse:read`, `warehouse:operate`, `branding:read`.

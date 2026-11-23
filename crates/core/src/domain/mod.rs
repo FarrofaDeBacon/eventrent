@@ -1,4 +1,5 @@
 pub mod audit;
+pub mod backup;
 pub mod branding;
 pub mod catalog;
 pub mod config;
@@ -14,6 +15,7 @@ pub mod validation;
 pub mod venue;
 
 pub use audit::AuditLogEntry;
+pub use backup::*;
 pub use branding::{BrandingValidator, PublicBranding, TenantBranding, UpdateBrandingInput};
 pub use config::{AppConfig, InitialSetupInput, InitialSetupResult, OperationMode};
 pub use customer::{

@@ -904,6 +904,12 @@ impl CoreServices {
         session: &SessionInfo,
     ) -> Result<MediaGarbageCollectionResult> {
         self.check_session_and_permission(session, PERM_CATALOG_MANAGE)?;
+        if crate::domain::backup::is_backup_or_restore_active() {
+            return Err(CoreError::TransientConflict(
+                "Coleta de lixo de mídia suspensa: operação de backup ou restauração em andamento."
+                    .to_string(),
+            ));
+        }
         let session_clone = session.clone();
 
         // R7.4: Filtro created_at < now() - 10 minutos (blobs recém-criados nunca são coletados do banco)
