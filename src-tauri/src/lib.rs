@@ -148,6 +148,32 @@ impl AppState {
 
         Ok(revalidated)
     }
+
+    /// Sincroniza o auth_epoch da sessão em memória com o banco de dados.
+    /// Chamado após operações de segurança iniciadas pela própria sessão ativa
+    /// (como regenerate_recovery_key), garantindo que a sessão atual permaneça válida
+    /// enquanto todas as outras sessões concorrentes do mesmo usuário são invalidadas.
+    pub async fn sync_current_session_epoch(&self) -> Result<(), String> {
+        let session_snapshot = {
+            let guard = self.session.lock().unwrap_or_else(PoisonError::into_inner);
+            guard.clone()
+        };
+        if let Some(mut s) = session_snapshot {
+            if let Some(user) = self
+                .services
+                .stores
+                .users
+                .find_by_id(&s.tenant_id, &s.user_id)
+                .await
+                .map_err(crate::map_core_err)?
+            {
+                s.auth_epoch = user.auth_epoch;
+                let mut guard = self.session.lock().unwrap_or_else(PoisonError::into_inner);
+                *guard = Some(s);
+            }
+        }
+        Ok(())
+    }
 }
 
 pub fn map_core_err(err: eventrent_core::CoreError) -> String {

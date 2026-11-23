@@ -109,7 +109,11 @@ export const commandReturnSchemas: Record<string, z.ZodTypeAny> = {
 
   // Catalog - Media
   list_model_media: z.array(EquipmentModelMediaViewSchema),
-  get_media_blob_bytes: z.unknown(),
+  get_media_blob_bytes: z.union([
+    z.instanceof(Uint8Array),
+    z.instanceof(ArrayBuffer),
+    z.array(z.number()),
+  ]),
   attach_model_photo: EquipmentModelMediaViewSchema,
   attach_model_document: EquipmentModelMediaViewSchema,
   update_model_media_metadata: EquipmentModelMediaViewSchema,

@@ -72,7 +72,7 @@ Na implementação Tauri (`src/lib/data/tauri-auth-repository.ts`), o comando IP
 Na implementação de mock (`src/lib/data/mock-auth-repository.ts`), uma nova chave é gerada e retornada:
 
 <!-- prettier-ignore -->
-<!-- snippet: src/lib/data/mock-auth-repository.ts:435-460 -->
+<!-- snippet: src/lib/data/mock-auth-repository.ts:436-461 -->
 ```typescript
   async recoverPasswordWithKey(
     input: RecoverPasswordInput,

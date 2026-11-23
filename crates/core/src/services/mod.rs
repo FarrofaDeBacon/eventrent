@@ -1576,58 +1576,6 @@ impl CoreServices {
         .await
     }
 
-    pub async fn delete_user(&self, session: &SessionInfo, user_id: &str) -> Result<()> {
-        self.check_session_and_permission(session, PERM_USER_MANAGE)?;
-        let session = session.clone();
-        let user_id_str = user_id.to_string();
-
-        self.run_transaction(|stores| {
-            let session = session.clone();
-            let user_id = user_id_str.clone();
-
-            Box::pin(async move {
-                let target = stores
-                    .users()
-                    .find_with_role(&session.tenant_id, &user_id)
-                    .await?
-                    .ok_or_else(|| CoreError::NotFound("Usuário não encontrado.".to_string()))?;
-
-                if target.role_slug == "owner" {
-                    let active_owners = stores
-                        .users()
-                        .count_active_by_role_slug(&session.tenant_id, "owner")
-                        .await?;
-                    if active_owners <= 1 {
-                        return Err(CoreError::Validation(
-                            "Não é permitido excluir o único Proprietário ativo.".to_string(),
-                        ));
-                    }
-                }
-
-                let now = Utc::now().to_rfc3339();
-                stores
-                    .users()
-                    .soft_delete(&session.tenant_id, &user_id, &now)
-                    .await?;
-
-                stores
-                    .audit()
-                    .append(&build_audit_entry(
-                        &session.tenant_id,
-                        Some(&session.user_id),
-                        "user.deleted",
-                        "user",
-                        &user_id,
-                        &format!("Usuário excluído: {}", target.email),
-                    ))
-                    .await?;
-
-                Ok(())
-            })
-        })
-        .await
-    }
-
     pub async fn list_roles(&self, session: &SessionInfo) -> Result<Vec<RoleWithPermissions>> {
         self.verify_session_active(session)?;
         if !session.has_permission(PERM_ROLE_READ) && !session.has_permission(PERM_USER_READ) {

@@ -379,10 +379,13 @@ async fn test_appstate_deleting_user_invalidates_session() {
     app_state.set_session(Some(session));
     assert!(app_state.require_session().await.is_ok());
 
-    // 3. Proprietário exclui o usuário (soft delete)
+    // 3. Usuário sofre soft_delete no banco (exclusão lógica)
+    let now = chrono::Utc::now().to_rfc3339();
     app_state
         .services
-        .delete_user(&owner_session, &user.id)
+        .stores
+        .users
+        .soft_delete(&tenant_id, &user.id, &now)
         .await
         .unwrap();
 
@@ -476,7 +479,16 @@ async fn test_appstate_regenerating_recovery_key_invalidates_other_sessions() {
 
     assert!(!regen_res.new_recovery_key.is_empty());
 
-    // 4. O Dispositivo 2 (que possui auth_epoch antigo) tenta executar um comando protegido
+    // O AppState sincroniza a sessão atual para que ela não seja derrubada pela própria operação
+    app_state1.sync_current_session_epoch().await.unwrap();
+
+    // 4. A sessão ATUAL (Dispositivo 1) CONTINUA VÁLIDA
+    assert!(
+        app_state1.require_session().await.is_ok(),
+        "Sessão atual no Dispositivo 1 DEVE continuar válida após regenerar a chave"
+    );
+
+    // 5. O Dispositivo 2 (que possui auth_epoch antigo) tenta executar um comando protegido
     let dev2_result = app_state2.require_session().await;
     assert!(
         dev2_result.is_err(),
@@ -660,9 +672,12 @@ async fn test_appstate_auth_epoch_increments_only_on_specified_five_security_eve
     );
 
     // G) Evento de Segurança 5: Exclusão lógica (soft delete)
+    let now = chrono::Utc::now().to_rfc3339();
     app_state
         .services
-        .delete_user(&owner_session, &user.id)
+        .stores
+        .users
+        .soft_delete(&tenant_id, &user.id, &now)
         .await
         .unwrap();
     assert_eq!(
