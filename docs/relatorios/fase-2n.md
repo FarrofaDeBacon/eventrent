@@ -43,96 +43,162 @@ A **Fase 2N** implementou a arquitetura completa de cópias de segurança (backu
 
 ---
 
-## 2. Rastreabilidade Estrutural de Código (Snippets Verificados)
+## 2. Rastreabilidade Estrutural de Código (Evidências de Segurança — R3)
 
 Todos os trechos de código abaixo foram extraídos dinamicamente pelo script `scripts/report-snippet.js` e verificados pelo script `scripts/check-report-snippets.js`.
 
-### 2.1. Trava RAII Anti-Concorrência (`BackupOperationGuard`)
+### 2.1. Extração e Validação dos Nomes das Entradas contra Zip-Slip (R3-a)
 
-Em `crates/core/src/domain/backup.rs`, a trava de processo impede backups simultâneos ou concorrência com o coletor de lixo:
+Em `crates/core/src/domain/backup.rs`, a função `validate_zip_entry_name` valida estritamente cada entrada de arquivo contra ataques de Zip-Slip, rejeitando caracteres de controle ASCII, caminhos contendo `:`, caminhos absolutos no formato Unix ou Windows e quaisquer segmentos com `..`:
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/core/src/domain/backup.rs:26-53 -->
+<!-- snippet: crates/core/src/domain/backup.rs:392-430 -->
 ```rust
-pub struct BackupOperationGuard;
+pub fn validate_zip_entry_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        return Err(CoreError::Validation(
+            "Nome de arquivo no backup está vazio.".to_string(),
+        ));
+    }
 
-impl BackupOperationGuard {
-    pub fn try_acquire() -> Result<Self> {
-        if BACKUP_OR_RESTORE_ACTIVE
-            .compare_exchange(
-                false,
-                true,
-                std::sync::atomic::Ordering::SeqCst,
-                std::sync::atomic::Ordering::SeqCst,
-            )
-            .is_err()
-        {
-            Err(CoreError::TransientConflict(
-                "Operação de backup ou restauração já está em andamento.".to_string(),
-            ))
-        } else {
-            Ok(Self)
+    // Rejeita caracteres de controle ASCII (< 32)
+    if name.chars().any(|c| (c as u32) < 32) {
+        return Err(CoreError::Validation(format!(
+            "Possível ataque de Zip-Slip: caracteres de controle detectados na entrada '{name}'"
+        )));
+    }
+
+    // Rejeita caminhos contendo ':' (evita C:\, letras de unidade Windows e NTFS alternate data streams)
+    if name.contains(':') {
+        return Err(CoreError::Validation(format!(
+            "Possível ataque de Zip-Slip: caractere ':' não é permitido na entrada '{name}'"
+        )));
+    }
+
+    // Rejeita caminhos absolutos Unix ou Windows
+    if name.starts_with('/') || name.starts_with('\\') {
+        return Err(CoreError::Validation(format!(
+            "Possível ataque de Zip-Slip: caminho absoluto não é permitido '{name}'"
+        )));
+    }
+
+    // Valida cada segmento do caminho normalizado
+    for segment in name.split(['/', '\\']) {
+        if segment == ".." {
+            return Err(CoreError::Validation(format!(
+                "Possível ataque de Zip-Slip: segmento '..' detectado na entrada '{name}'"
+            )));
         }
     }
-}
 
-impl Drop for BackupOperationGuard {
-    fn drop(&mut self) {
-        BACKUP_OR_RESTORE_ACTIVE.store(false, std::sync::atomic::Ordering::SeqCst);
-    }
+    Ok(())
 }
-
 ```
 
-### 2.2. Geração Atômica do Snapshot SQLite via `VACUUM INTO`
+### 2.2. Limites de Tamanho Total Descompactado e Razão de Compressão Anti Zip-Bomb (R3-b)
 
-Em `crates/backup-fs/src/lib.rs`, o snapshot consistente do banco SQLite é gerado sem leituras sujas de WAL:
+Em `crates/backup-fs/src/lib.rs`, o método `verify_backup_file` inspeciona o cabeçalho e todas as entradas do arquivo ZIP antes da extração, impondo tetos rígidos (`MAX_SINGLE_FILE_UNCOMPRESSED_BYTES` de 2 GiB, `MAX_TOTAL_UNCOMPRESSED_BYTES` de 5 GiB) e abortando imediatamente caso a razão de compressão exceda o limite de 100:1 para arquivos acima de 1 MiB:
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/backup-fs/src/lib.rs:52-85 -->
+<!-- snippet: crates/backup-fs/src/lib.rs:517-559 -->
 ```rust
-    pub async fn run_backup(
-        &self,
-        destination_folder: &Path,
-        db_pool: &SqlitePool,
-        app_version: &str,
-    ) -> Result<(BackupManifest, PathBuf)> {
-        let _guard = BackupOperationGuard::try_acquire()?;
+            let uncompressed_size = zf.size();
+            let compressed_size = zf.compressed_size();
 
-        validate_destination_folder(destination_folder, &self.app_data_dir)?;
+            if uncompressed_size > MAX_SINGLE_FILE_UNCOMPRESSED_BYTES {
+                return Ok(VerifyBackupResult {
+                    valid: false,
+                    manifest: None,
+                    error_message: Some(format!(
+                        "Possível Zip Bomb: o arquivo '{name}' excede o tamanho máximo descompactado permitido ({} bytes)",
+                        MAX_SINGLE_FILE_UNCOMPRESSED_BYTES
+                    )),
+                    is_compatible: false,
+                });
+            }
 
-        fs::create_dir_all(destination_folder).map_err(|e| {
+            total_uncompressed_bytes = total_uncompressed_bytes.saturating_add(uncompressed_size);
+            if total_uncompressed_bytes > MAX_TOTAL_UNCOMPRESSED_BYTES {
+                return Ok(VerifyBackupResult {
+                    valid: false,
+                    manifest: None,
+                    error_message: Some(format!(
+                        "Possível Zip Bomb: o total descompactado do pacote excede o teto permitido ({} bytes)",
+                        MAX_TOTAL_UNCOMPRESSED_BYTES
+                    )),
+                    is_compatible: false,
+                });
+            }
+
+            // Ratio check para arquivos > 1 MiB
+            if compressed_size > 0 && uncompressed_size > 1024 * 1024 {
+                let ratio = uncompressed_size / compressed_size;
+                if ratio > MAX_COMPRESSION_RATIO {
+                    return Ok(VerifyBackupResult {
+                        valid: false,
+                        manifest: None,
+                        error_message: Some(format!(
+                            "Possível Zip Bomb: razão de compressão anômala ({ratio}:1) para o arquivo '{name}'",
+                        )),
+                        is_compatible: false,
+                    });
+                }
+            }
+        }
+```
+
+### 2.3. Gravação Atômica do Marcador `restore_pending` e Restauração a Frio no Boot (R3-c)
+
+Em `crates/backup-fs/src/lib.rs`:
+
+1. No método `schedule_restore`, o marcador `restore_pending.json` é gravado atomicamente através de arquivo temporário com UUID v7, chamada explícita de `f.sync_all()` e substituição atômica via `fs::rename`:
+
+<!-- prettier-ignore -->
+<!-- snippet: crates/backup-fs/src/lib.rs:749-785 -->
+```rust
+        })?;
+
+        // Gravação atômica com sync_all e rename
+        let tmp_marker_path = self.app_data_dir.join(format!(
+            "{RESTORE_PENDING_FILE}.tmp.{}",
+            uuid::Uuid::now_v7()
+        ));
+        {
+            let mut f = File::create(&tmp_marker_path).map_err(|e| {
+                CoreError::Internal(format!(
+                    "Falha ao criar marcador temporário de restauração: {e}"
+                ))
+            })?;
+            f.write_all(serialized.as_bytes()).map_err(|e| {
+                let _ = fs::remove_file(&tmp_marker_path);
+                CoreError::Internal(format!(
+                    "Falha ao gravar marcador temporário de restauração: {e}"
+                ))
+            })?;
+            f.sync_all().map_err(|e| {
+                let _ = fs::remove_file(&tmp_marker_path);
+                CoreError::Internal(format!(
+                    "Falha ao sincronizar marcador temporário com o disco: {e}"
+                ))
+            })?;
+        }
+
+        fs::rename(&tmp_marker_path, &marker_path).map_err(|e| {
+            let _ = fs::remove_file(&tmp_marker_path);
             CoreError::Internal(format!(
-                "Falha ao acessar pasta de destino de backup ({}): {e}",
-                destination_folder.display()
+                "Falha ao gravar marcador de restauração pendente ({}): {e}",
+                marker_path.display()
             ))
         })?;
 
-        let now = Utc::now();
-        let ts = now.format("%Y-%m-%d-%H%M%S").to_string();
-        let vacuum_unique = uuid::Uuid::now_v7();
-        let temp_vacuum_db = self
-            .app_data_dir
-            .join(format!("vacuum_backup_{vacuum_unique}.tmp.db"));
-
-        // 1. Cópia consistente do banco SQLite via VACUUM INTO
-        let vacuum_sql = format!(
-            "VACUUM INTO '{}'",
-            temp_vacuum_db.to_string_lossy().replace('\'', "''")
-        );
-
-        sqlx::query(&vacuum_sql)
-            .execute(db_pool)
-            .await
-            .map_err(|e| {
+        Ok(marker)
+    }
 ```
 
-### 2.3. Execução da Restauração a Frio na Inicialização do App
-
-Em `crates/backup-fs/src/lib.rs`, a detecção de marcador e a substituição física do banco ocorrem antes da abertura do pool:
+2. No método `execute_pending_restore_at_startup`, a inicialização do aplicativo detecta o marcador antes da abertura do banco SQLite, cria uma cópia de salvaguarda `eventrent.db.pre-restore.bak` e garante rollback atômico em caso de falha:
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/backup-fs/src/lib.rs:667-705 -->
+<!-- snippet: crates/backup-fs/src/lib.rs:789-825 -->
 ```rust
     pub fn execute_pending_restore_at_startup(
         &self,
@@ -171,58 +237,202 @@ Em `crates/backup-fs/src/lib.rs`, a detecção de marcador e a substituição f�
             let _ = fs::rename(
                 &marker_path,
                 self.app_data_dir.join("restore_corrupted.json"),
-            );
-            return Err(CoreError::Validation(format!(
 ```
 
-### 2.4. Comando Tauri IPC Protegido (`run_backup_now`)
+### 2.4. Snapshot Consistente do SQLite via `VACUUM INTO` (R3-d)
 
-Em `src-tauri/src/commands/backup.rs`, o comando valida a sessão e grava o resultado na auditoria operacional:
+Em `crates/backup-fs/src/lib.rs`, o snapshot consistente do banco SQLite é gerado por meio do comando DDL `VACUUM INTO`. O caminho temporário é gerado internamente pelo sistema (`app_data_dir` + UUID v7) e sanitizado com escape de aspas simples:
 
 <!-- prettier-ignore -->
-<!-- snippet: src-tauri/src/commands/backup.rs:75-110 -->
+<!-- snippet: crates/backup-fs/src/lib.rs:77-98 -->
 ```rust
-pub async fn run_backup_now(state: State<'_, AppState>) -> Result<BackupMetadataView, String> {
-    let session = require_session(&state).await?;
+        let ts = now.format("%Y-%m-%d-%H%M%S").to_string();
+        let vacuum_unique = uuid::Uuid::now_v7();
+        let temp_vacuum_db = self
+            .app_data_dir
+            .join(format!("vacuum_backup_{vacuum_unique}.tmp.db"));
 
-    let status = state
-        .services
-        .get_backup_status(&session)
-        .await
-        .map_err(crate::map_core_err)?;
+        // 1. Cópia consistente do banco SQLite via VACUUM INTO
+        let vacuum_sql = format!(
+            "VACUUM INTO '{}'",
+            temp_vacuum_db.to_string_lossy().replace('\'', "''")
+        );
 
-    let dest = status.settings.destination_folder.trim().to_string();
-    if dest.is_empty() {
-        return Err("Nenhuma pasta de destino de backup configurada. Selecione uma pasta antes de prosseguir.".to_string());
-    }
+        sqlx::query(&vacuum_sql)
+            .execute(db_pool)
+            .await
+            .map_err(|e| {
+                let _ = fs::remove_file(&temp_vacuum_db);
+                CoreError::Internal(format!(
+                    "Falha ao executar VACUUM INTO para backup consistente do SQLite: {e}"
+                ))
+            })?;
 
-    let dest_path = PathBuf::from(&dest);
-
-    let (manifest, backup_file) = match state
-        .backup_service
-        .run_backup(&dest_path, &state.db_pool, &state.app_version)
-        .await
-    {
-        Ok(res) => res,
-        Err(e) => {
-            let err_str = e.to_string();
-            let _ = state
-                .services
-                .record_backup_outcome(
-                    &session.tenant_id,
-                    Some(&session.user_id),
-                    "failed",
-                    Some(&err_str),
-                    None,
-                )
-                .await;
-            return Err(crate::map_core_err(e));
-        }
 ```
 
-### 2.5. Modal Bloqueante de Confirmação de Restauração no Frontend
+### 2.5. Validação Robusta dos Caminhos Escolhidos nos Diálogos Nativos (R3-e)
 
-Em `src/routes/settings/backup/+page.svelte`, o botão de confirmação permanece desabilitado até a digitação literal de `RESTAURAR`:
+Em `src-tauri/src/commands/backup.rs`, os comandos `choose_backup_folder` e `choose_backup_file` validam imediatamente o caminho retornado pelo diálogo nativo usando `validate_destination_folder` e `validate_backup_file_for_restore`, impedindo que raízes de sistema, pastas proibidas ou arquivos não canônicos sejam selecionados ou sobrescritos:
+
+<!-- prettier-ignore -->
+<!-- snippet: src-tauri/src/commands/backup.rs:216-274 -->
+```rust
+pub async fn choose_backup_folder(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let _session = require_session(&state).await?;
+    let app_clone = app.clone();
+
+    let picked =
+        tokio::task::spawn_blocking(move || app_clone.dialog().file().blocking_pick_folder())
+            .await
+            .map_err(|e| format!("Falha ao aguardar diálogo de seleção de pasta: {e}"))?;
+
+    let Some(folder) = picked else {
+        return Ok(None);
+    };
+
+    let folder_path = folder
+        .into_path()
+        .map_err(|e| format!("Caminho inválido: {e}"))?;
+
+    validate_destination_folder(&folder_path, &state.backup_service.app_data_dir)
+        .map_err(crate::map_core_err)?;
+
+    Ok(Some(folder_path.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
+pub async fn choose_backup_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let _session = require_session(&state).await?;
+    let app_clone = app.clone();
+
+    let picked = tokio::task::spawn_blocking(move || {
+        app_clone
+            .dialog()
+            .file()
+            .add_filter(
+                "Arquivo de Backup EventRent (*.eventrent-backup)",
+                &["eventrent-backup"],
+            )
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| format!("Falha ao aguardar diálogo de seleção de arquivo: {e}"))?;
+
+    let Some(file) = picked else {
+        return Ok(None);
+    };
+
+    let file_path = file
+        .into_path()
+        .map_err(|e| format!("Caminho inválido: {e}"))?;
+
+    validate_backup_file_for_restore(&file_path).map_err(crate::map_core_err)?;
+
+    Ok(Some(file_path.to_string_lossy().to_string()))
+}
+```
+
+### 2.6. Agendamento do Backup Automático e Cálculo de Obsolecência (`is_stale`) (R3-f)
+
+Em `crates/core/src/domain/backup.rs`, as funções puras de domínio determinam o agendamento (`is_backup_due`, a cada 24 horas) e a condição de alerta de backup desatualizado (`is_backup_stale`, mais de 7 dias sem backup ou nenhum backup já efetuado):
+
+<!-- prettier-ignore -->
+<!-- snippet: crates/core/src/domain/backup.rs:164-191 -->
+```rust
+pub fn is_backup_due(
+    last_backup_at: Option<&str>,
+    now: DateTime<Utc>,
+    schedule_enabled: bool,
+) -> bool {
+    if !schedule_enabled {
+        return false;
+    }
+    match last_backup_at {
+        None => true,
+        Some(s) => match DateTime::parse_from_rfc3339(s) {
+            Ok(dt) => (now - dt.with_timezone(&Utc)).num_hours() >= 24,
+            Err(_) => true,
+        },
+    }
+}
+
+/// Determina se o status de backup está "estéril" (> 7 dias sem backup ou nenhum backup já realizado).
+/// Aciona alerta fixo e destacado na interface de usuário.
+pub fn is_backup_stale(last_backup_at: Option<&str>, now: DateTime<Utc>) -> bool {
+    match last_backup_at {
+        None => true,
+        Some(s) => match DateTime::parse_from_rfc3339(s) {
+            Ok(dt) => (now - dt.with_timezone(&Utc)).num_days() >= 7,
+            Err(_) => true,
+        },
+    }
+}
+```
+
+### 2.7. Snapshot Atômico Pré-Atualização Disparado na Inicialização (R3-g)
+
+Em `src-tauri/src/lib.rs`, na rotina de boot do aplicativo desktop, o snapshot de salvaguarda pré-atualização é executado exatamente antes de inicializar o banco de dados e aplicar as migrações:
+
+<!-- prettier-ignore -->
+<!-- snippet: src-tauri/src/lib.rs:390-405 -->
+```rust
+    // Snapshot atômico de segurança pré-atualização antes de aplicar migrações ou abrir o banco
+    if let Err(err) = backup_service.create_pre_update_snapshot_if_needed(&db_path) {
+        tracing::warn!("Aviso: falha ao gerar snapshot pré-atualização: {err}");
+    }
+
+    tracing::info!(
+        "Inicializando banco SQLite em: {}",
+        db_path.to_string_lossy()
+    );
+
+    let pool = init_db(&db_path).await.map_err(|e| {
+        tracing::error!("Erro crítico ao inicializar banco SQLite: {}", e);
+        (
+            format!("Falha ao inicializar ou migrar o banco de dados local: {e}"),
+            log_dir_display.clone(),
+        )
+```
+
+### 2.8. Trava RAII Anti-Concorrência (`BackupOperationGuard`)
+
+Em `crates/core/src/domain/backup.rs`, a trava atômica de processo impede backups simultâneos ou concorrência com o coletor de lixo de mídia:
+
+<!-- prettier-ignore -->
+<!-- snippet: crates/core/src/domain/backup.rs:26-46 -->
+```rust
+pub struct BackupOperationGuard;
+
+impl BackupOperationGuard {
+    pub fn try_acquire() -> Result<Self> {
+        if BACKUP_OR_RESTORE_ACTIVE
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_err()
+        {
+            Err(CoreError::TransientConflict(
+                "Operação de backup ou restauração já está em andamento.".to_string(),
+            ))
+        } else {
+            Ok(Self)
+        }
+    }
+}
+```
+
+### 2.9. Modal Bloqueante de Confirmação de Restauração no Frontend
+
+Em `src/routes/settings/backup/+page.svelte`, o botão de confirmação permanece desabilitado até a digitação literal da palavra `RESTAURAR`:
 
 <!-- prettier-ignore -->
 <!-- snippet: src/routes/settings/backup/+page.svelte:728-763 -->
@@ -265,7 +475,7 @@ Em `src/routes/settings/backup/+page.svelte`, o botão de confirmação permanec
       </div>
 ```
 
-### 2.6. Teste E2E Playwright de Backup e Confirmação de Restauração
+### 2.10. Teste E2E Playwright de Backup e Confirmação de Restauração
 
 Em `e2e/backup.spec.ts`, o fluxo de ponta a ponta exercita a interface e a trava de confirmação:
 
@@ -307,7 +517,41 @@ Em `e2e/backup.spec.ts`, o fluxo de ponta a ponta exercita a interface e a trava
 
 ---
 
-## 3. Matriz de Comandos IPC e Cobertura de Contratos
+## 3. Testes Obrigatórios de Integridade e Segurança (R4)
+
+Todos os 8 cenários de segurança e robustez exigidos foram implementados e aprovados com 100% de sucesso na suíte de testes de `crates/backup-fs`:
+
+1. **`test_zip_slip_rejection_dot_dot`**: Cria pacote malicioso contendo `media/../../outside.txt` e comprova rejeição por violação de Zip-Slip.
+2. **`test_zip_slip_rejection_absolute_path_and_drive_colon`**: Valida rejeição de caminhos absolutos Unix (`/etc/passwd`) e unidades Windows (`C:/escaped.txt`).
+3. **`test_zip_bomb_rejection_exceeds_size_limit`**: Forja arquivo com entrada declarando tamanho descompactado superior a 2 GiB (`MAX_SINGLE_FILE_UNCOMPRESSED_BYTES`) e comprova recusa por Zip Bomb.
+4. **`test_tamper_detection_db_byte_altered`**: Adultera 1 byte físico no arquivo SQLite empacotado e comprova recusa imediata por divergência de hash SHA-256 no banco.
+5. **`test_tamper_detection_manifest_sha_mismatch`**: Adultera hashes registrados no `manifest.json` e comprova detecção e rejeição do pacote.
+6. **`test_newer_schema_backup_rejected`**: Simula backup gerado em versão futura com `last_applied_migration = 999 > 10` e comprova que tanto a verificação (`is_compatible = false`) quanto o agendamento de restauração são categoricamente recusados.
+7. **`test_simulated_crash_during_restore_reverts_state`**: Simula corrupção/aborto durante o processo de restauração e comprova que o banco original é preservado intacto via rollback de salvaguarda.
+8. **`test_concurrent_backup_with_db_writes_remains_consistent`**: Executa escritas concorrentes contínuas em task assíncrona paralela enquanto `run_backup` executa o snapshot via `VACUUM INTO`, comprovando que o banco gerado é 100% íntegro e passa em `PRAGMA integrity_check = ok`.
+
+Saída dos testes no `cargo test -p eventrent-backup-fs`:
+```text
+running 12 tests
+test tests::test_backup_create_and_verify_roundtrip ... ok
+test tests::test_tamper_detection_manifest_sha_mismatch ... ok
+test tests::test_retention_plan_execution ... ok
+test tests::test_zip_bomb_rejection_exceeds_size_limit ... ok
+test tests::test_zip_slip_rejection_dot_dot ... ok
+test tests::test_newer_schema_backup_rejected ... ok
+test tests::test_zip_slip_rejection_absolute_path_and_drive_colon ... ok
+test tests::test_concurrent_backup_with_db_writes_remains_consistent ... ok
+test tests::test_simulated_crash_during_restore_reverts_state ... ok
+test tests::test_tamper_detection_db_byte_altered ... ok
+test tests::test_schedule_and_execute_cold_restore ... ok
+test tests::test_backup_tamper_detection ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+```
+
+---
+
+## 4. Matriz de Comandos IPC e Cobertura de Contratos
 
 Com a incorporação dos 8 comandos da Fase 2N, o catálogo do **EventRent** conta agora com **70 comandos Tauri IPC**, todos validados por fixtures JSON e cobertos por testes unitários e de contrato no Vitest:
 
@@ -324,7 +568,7 @@ Com a incorporação dos 8 comandos da Fase 2N, o catálogo do **EventRent** con
 
 ---
 
-## 4. Portão de Qualidade
+## 5. Portão de Qualidade
 
 A suíte completa de validação (`pnpm verify`) foi executada com 100% de sucesso nos 14 passos:
 - **Passo 1**: SvelteKit Check & Typecheck (0 erros, 0 warnings);
@@ -335,9 +579,9 @@ A suíte completa de validação (`pnpm verify`) foi executada com 100% de suces
 - **Passo 6**: Integridade de Migrações (todos os 6 cenários de congelamento aprovados);
 - **Passo 7**: Prova Estrutural de Trechos de Código em Relatórios (4 cenários aprovados);
 - **Passo 8**: Verificação Estrutural de Snippets em Relatórios (todos os marcadores aprovados);
-- **Passo 9**: Testes Rust (`cargo test --workspace`) (58 testes unitários e de integração aprovados em todas as crates);
-- **Passo 10**: Linter Rust (`cargo clippy --workspace --all-targets -- -D warnings`) (zero advertências);
-- **Passo 11**: Auditoria de Dependências Rust (`cargo audit`);
-- **Passo 12**: Contratos IPC Tauri (`cargo test -p eventrent-app --test contracts_spec`);
-- **Passo 13**: Ciclo de Vida de Sessão (`cargo test -p eventrent-app --test session_lifecycle_tests`);
-- **Passo 14**: Testes E2E com Playwright (todas as suítes aprovadas).
+- **Passo 9**: Rustfmt Check;
+- **Passo 10**: Clippy Linter Workspace (0 advertências);
+- **Passo 11**: Clippy Linter `eventrent-core` (0 advertências);
+- **Passo 12**: Clippy Linter `eventrent-store-sqlite` (0 advertências);
+- **Passo 13**: Clippy Linter `eventrent-app` (0 advertências);
+- **Passo 14**: Testes Unitários Rust Workspace (90 testes aprovados em 5 crates).
