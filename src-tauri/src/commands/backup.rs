@@ -1,5 +1,8 @@
 use crate::guards::require_session;
 use crate::AppState;
+use eventrent_core::domain::backup::{
+    validate_backup_file_for_restore, validate_destination_folder,
+};
 use eventrent_core::{
     BackupMetadataView, BackupSettings, BackupStatus, RestorePendingMarker, VerifyBackupResult,
 };
@@ -230,6 +233,9 @@ pub async fn choose_backup_folder(
         .into_path()
         .map_err(|e| format!("Caminho inválido: {e}"))?;
 
+    validate_destination_folder(&folder_path, &state.backup_service.app_data_dir)
+        .map_err(crate::map_core_err)?;
+
     Ok(Some(folder_path.to_string_lossy().to_string()))
 }
 
@@ -261,6 +267,8 @@ pub async fn choose_backup_file(
     let file_path = file
         .into_path()
         .map_err(|e| format!("Caminho inválido: {e}"))?;
+
+    validate_backup_file_for_restore(&file_path).map_err(crate::map_core_err)?;
 
     Ok(Some(file_path.to_string_lossy().to_string()))
 }

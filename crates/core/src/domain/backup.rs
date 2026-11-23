@@ -276,7 +276,8 @@ pub fn calculate_retention_plan(
     }
 }
 
-/// Valida o diretório de destino do backup contra Path Traversal e colisão com a pasta de dados do app.
+/// Valida o diretório de destino do backup contra Path Traversal, colisão com a pasta de dados do app,
+/// pastas raízes do sistema operacional e diretórios de sistema protegidos.
 pub fn validate_destination_folder(dest: &Path, app_data_dir: &Path) -> Result<()> {
     if dest.as_os_str().is_empty() {
         return Err(CoreError::Validation(
@@ -301,6 +302,36 @@ pub fn validate_destination_folder(dest: &Path, app_data_dir: &Path) -> Result<(
         )));
     }
 
+    // 1. Rejeita raiz de unidade ou sistema (ex: C:\, \, /)
+    if canonical_dest.parent().is_none() || canonical_dest.components().count() <= 1 {
+        return Err(CoreError::Validation(format!(
+            "A pasta de destino de backup não pode ser a raiz de uma unidade ({}) por segurança.",
+            dest.display()
+        )));
+    }
+
+    // 2. Rejeita pastas de sistema conhecidas
+    let dest_lower = canonical_dest.to_string_lossy().to_lowercase();
+    let forbidden_system_substrings = [
+        "\\windows",
+        "/windows",
+        "\\program files",
+        "/program files",
+        "\\system32",
+        "/system32",
+        "/etc",
+        "/bin",
+        "/usr",
+    ];
+    for forbidden in forbidden_system_substrings {
+        if dest_lower.contains(forbidden) {
+            return Err(CoreError::Validation(format!(
+                "A pasta de destino de backup não pode estar em diretórios protegidos do sistema ({forbidden})."
+            )));
+        }
+    }
+
+    // 3. Impede colisão ou recursão dentro da pasta interna app_data_dir
     if let Ok(canonical_app) = app_data_dir.canonicalize() {
         if canonical_dest == canonical_app || canonical_dest.starts_with(&canonical_app) {
             return Err(CoreError::Validation(
@@ -312,10 +343,96 @@ pub fn validate_destination_folder(dest: &Path, app_data_dir: &Path) -> Result<(
     Ok(())
 }
 
+/// Valida um arquivo de backup para restauração antes de qualquer descompactação.
+pub fn validate_backup_file_for_restore(file_path: &Path) -> Result<()> {
+    if !file_path.exists() {
+        return Err(CoreError::Validation(format!(
+            "O arquivo de backup não foi encontrado: {}",
+            file_path.display()
+        )));
+    }
+
+    if !file_path.is_file() {
+        return Err(CoreError::Validation(format!(
+            "O caminho informado não é um arquivo: {}",
+            file_path.display()
+        )));
+    }
+
+    let lower = file_path.to_string_lossy().to_lowercase();
+    if !lower.ends_with(".eventrent-backup") && !lower.ends_with(".zip") {
+        return Err(CoreError::Validation(format!(
+            "Extensão de arquivo inválida ({}). Esperado .eventrent-backup ou .zip.",
+            file_path.display()
+        )));
+    }
+
+    // Valida magic bytes mínimos de um cabeçalho ZIP (PK\x03\x04 ou PK\x05\x06)
+    let mut header = [0u8; 4];
+    let mut f = std::fs::File::open(file_path)
+        .map_err(|e| CoreError::Internal(format!("Falha ao abrir arquivo para validação: {e}")))?;
+    use std::io::Read;
+    f.read_exact(&mut header).map_err(|e| {
+        CoreError::Validation(format!(
+            "Arquivo de backup vazio ou truncado (cabeçalho ZIP ausente): {e}"
+        ))
+    })?;
+
+    if header != [0x50, 0x4B, 0x03, 0x04] && header != [0x50, 0x4B, 0x05, 0x06] {
+        return Err(CoreError::Validation(format!(
+            "O arquivo '{}' não possui assinatura válida de pacote ZIP.",
+            file_path.display()
+        )));
+    }
+
+    Ok(())
+}
+
+/// Valida o nome de uma entrada dentro do arquivo ZIP contra vulnerabilidades de Zip-Slip (Path Traversal).
+pub fn validate_zip_entry_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        return Err(CoreError::Validation(
+            "Nome de arquivo no backup está vazio.".to_string(),
+        ));
+    }
+
+    // Rejeita caracteres de controle ASCII (< 32)
+    if name.chars().any(|c| (c as u32) < 32) {
+        return Err(CoreError::Validation(format!(
+            "Possível ataque de Zip-Slip: caracteres de controle detectados na entrada '{name}'"
+        )));
+    }
+
+    // Rejeita caminhos contendo ':' (evita C:\, letras de unidade Windows e NTFS alternate data streams)
+    if name.contains(':') {
+        return Err(CoreError::Validation(format!(
+            "Possível ataque de Zip-Slip: caractere ':' não é permitido na entrada '{name}'"
+        )));
+    }
+
+    // Rejeita caminhos absolutos Unix ou Windows
+    if name.starts_with('/') || name.starts_with('\\') {
+        return Err(CoreError::Validation(format!(
+            "Possível ataque de Zip-Slip: caminho absoluto não é permitido '{name}'"
+        )));
+    }
+
+    // Valida cada segmento do caminho normalizado
+    for segment in name.split(['/', '\\']) {
+        if segment == ".." {
+            return Err(CoreError::Validation(format!(
+                "Possível ataque de Zip-Slip: segmento '..' detectado na entrada '{name}'"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 /// Valida se um arquivo de backup possui nome e extensão canônicos.
 pub fn is_valid_backup_filename(filename: &str) -> bool {
     let lower = filename.to_lowercase();
-    lower.ends_with(".eventrent-backup") && !lower.starts_with(".tmp.")
+    (lower.ends_with(".eventrent-backup") || lower.ends_with(".zip")) && !lower.starts_with(".tmp.")
 }
 
 #[cfg(test)]

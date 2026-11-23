@@ -387,6 +387,11 @@ async fn initialize_app(app_handle: &AppHandle) -> Result<(AppState, PathBuf), (
         }
     }
 
+    // Snapshot atômico de segurança pré-atualização antes de aplicar migrações ou abrir o banco
+    if let Err(err) = backup_service.create_pre_update_snapshot_if_needed(&db_path) {
+        tracing::warn!("Aviso: falha ao gerar snapshot pré-atualização: {err}");
+    }
+
     tracing::info!(
         "Inicializando banco SQLite em: {}",
         db_path.to_string_lossy()

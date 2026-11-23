@@ -1,14 +1,14 @@
+mod backup;
 mod catalog;
 mod media;
 
 use crate::domain::{
     build_customer_search_text, build_name_sort, build_venue_name_sort, build_venue_search_text,
-    days_since_last_backup, is_backup_due, is_backup_stale, mask_email_for_audit,
-    mask_individual_name_for_audit, normalize_for_search, parse_document_with_type,
-    validate_addresses, validate_contacts, validate_customer_common_fields, validate_email,
-    validate_roles_and_categories, validate_user_name, validate_venue_contacts,
-    validate_venue_fields, validate_venue_spaces, AllocationSettings, AuditLogEntry,
-    BackupSettings, BackupStatus, BrandingValidator, CreateCustomerInput, CreateUserInput,
+    mask_email_for_audit, mask_individual_name_for_audit, normalize_for_search,
+    parse_document_with_type, validate_addresses, validate_contacts,
+    validate_customer_common_fields, validate_email, validate_roles_and_categories,
+    validate_user_name, validate_venue_contacts, validate_venue_fields, validate_venue_spaces,
+    AllocationSettings, AuditLogEntry, BrandingValidator, CreateCustomerInput, CreateUserInput,
     CreateVenueInput, Customer, CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter,
     CustomerPage, CustomerRole, CustomerRoleFilter, CustomerWithDetails, DocumentType,
     InitialSetupInput, InitialSetupResult, LoginInput, LoginPolicy, OperationMode, PersonType,
@@ -17,12 +17,12 @@ use crate::domain::{
     TenantSetting, UpdateAllocationSettingsInput, UpdateBrandingInput, UpdateCustomerInput,
     UpdateUserInput, UpdateVenueInput, UserRecord, UserWithRole, Venue, VenueContact, VenueCursor,
     VenueFilter, VenuePage, VenueSpace, VenueWithDetails, MAX_CHANGEOVER_MINUTES,
-    MAX_EXTERNAL_TRANSFER_MINUTES, MAX_INTERNAL_TRANSFER_SETTING_MINUTES, PERM_BACKUP_MANAGE,
-    PERM_BRANDING_MANAGE, PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ,
-    PERM_ROLE_READ, PERM_SETTINGS_MANAGE, PERM_SETTINGS_READ, PERM_SUPPLIER_MANAGE,
-    PERM_SUPPLIER_READ, PERM_USER_MANAGE, PERM_USER_READ, PERM_VENUE_MANAGE, PERM_VENUE_READ,
-    ROLE_SLUG_OWNER, SETTING_BACKUP_SETTINGS, SETTING_CHANGEOVER_MINUTES,
-    SETTING_EXTERNAL_TRANSFER_MINUTES, SETTING_INTERNAL_TRANSFER_MINUTES, SYSTEM_ROLES,
+    MAX_EXTERNAL_TRANSFER_MINUTES, MAX_INTERNAL_TRANSFER_SETTING_MINUTES, PERM_BRANDING_MANAGE,
+    PERM_BRANDING_READ, PERM_CUSTOMER_MANAGE, PERM_CUSTOMER_READ, PERM_ROLE_READ,
+    PERM_SETTINGS_MANAGE, PERM_SETTINGS_READ, PERM_SUPPLIER_MANAGE, PERM_SUPPLIER_READ,
+    PERM_USER_MANAGE, PERM_USER_READ, PERM_VENUE_MANAGE, PERM_VENUE_READ, ROLE_SLUG_OWNER,
+    SETTING_CHANGEOVER_MINUTES, SETTING_EXTERNAL_TRANSFER_MINUTES,
+    SETTING_INTERNAL_TRANSFER_MINUTES, SYSTEM_ROLES,
 };
 use crate::error::{CoreError, Result};
 use crate::store::{
@@ -3317,196 +3317,6 @@ impl CoreServices {
                     internal_transfer_minutes: input.internal_transfer_minutes,
                     external_transfer_minutes: input.external_transfer_minutes,
                 })
-            })
-        })
-        .await
-    }
-
-    pub async fn get_backup_status(&self, session: &SessionInfo) -> Result<BackupStatus> {
-        self.check_session_and_permission(session, PERM_BACKUP_MANAGE)?;
-        self.get_backup_status_for_tenant(&session.tenant_id).await
-    }
-
-    pub async fn get_backup_status_for_tenant(&self, tenant_id: &str) -> Result<BackupStatus> {
-        let settings = self.get_backup_settings_for_tenant(tenant_id).await?;
-        let now = Utc::now();
-        let last_at = settings.last_backup_at.as_deref();
-        let due = is_backup_due(last_at, now, settings.schedule_enabled);
-        let stale = is_backup_stale(last_at, now);
-        let days = days_since_last_backup(last_at, now);
-
-        Ok(BackupStatus {
-            settings,
-            is_backup_due: due,
-            days_since_last_backup: days,
-            is_stale: stale,
-        })
-    }
-
-    pub async fn get_backup_settings_for_tenant(&self, tenant_id: &str) -> Result<BackupSettings> {
-        let rows = self
-            .stores
-            .settings
-            .get_many(tenant_id, &[SETTING_BACKUP_SETTINGS])
-            .await?;
-
-        if let Some(row) = rows.into_iter().next() {
-            if let Ok(settings) = serde_json::from_str::<BackupSettings>(&row.setting_value) {
-                return Ok(settings);
-            }
-        }
-
-        Ok(BackupSettings::default())
-    }
-
-    pub async fn set_backup_settings(
-        &self,
-        session: &SessionInfo,
-        settings: &BackupSettings,
-    ) -> Result<BackupStatus> {
-        self.check_session_and_permission(session, PERM_BACKUP_MANAGE)?;
-
-        if !settings.destination_folder.trim().is_empty() {
-            let dest_path = std::path::Path::new(&settings.destination_folder);
-            if !dest_path.exists() {
-                return Err(CoreError::Validation(format!(
-                    "A pasta de destino informada não existe: {}",
-                    settings.destination_folder
-                )));
-            }
-            if !dest_path.is_dir() {
-                return Err(CoreError::Validation(format!(
-                    "O caminho informado não é um diretório: {}",
-                    settings.destination_folder
-                )));
-            }
-        }
-
-        let serialized = serde_json::to_string(settings).map_err(|e| {
-            CoreError::Validation(format!("Falha ao serializar configurações de backup: {e}"))
-        })?;
-
-        let session_clone = session.clone();
-        let serialized_clone = serialized.clone();
-        let dest_clone = settings.destination_folder.clone();
-        let settings_clone = settings.clone();
-
-        self.run_transaction(|stores| {
-            let session = session_clone.clone();
-            let serialized = serialized_clone.clone();
-            let dest = dest_clone.clone();
-            let settings = settings_clone.clone();
-
-            Box::pin(async move {
-                let now = Utc::now().to_rfc3339();
-                stores
-                    .settings()
-                    .upsert(&TenantSetting {
-                        id: uuid::Uuid::now_v7().to_string(),
-                        tenant_id: session.tenant_id.clone(),
-                        setting_key: SETTING_BACKUP_SETTINGS.to_string(),
-                        setting_value: serialized,
-                        updated_at: now,
-                        updated_by: Some(session.user_id.clone()),
-                    })
-                    .await?;
-
-                let detail = format!(
-                    "Configurações de backup atualizadas: pasta='{}', agendamento={}, retenção diária={}, semanal={}, mensal={}",
-                    dest,
-                    settings.schedule_enabled,
-                    settings.retention_daily,
-                    settings.retention_weekly,
-                    settings.retention_monthly
-                );
-                stores
-                    .audit()
-                    .append(&build_audit_entry(
-                        &session.tenant_id,
-                        Some(&session.user_id),
-                        "backup.settings_updated",
-                        "tenant_setting",
-                        SETTING_BACKUP_SETTINGS,
-                        &detail,
-                    ))
-                    .await?;
-
-                Ok(())
-            })
-        })
-        .await?;
-
-        self.get_backup_status_for_tenant(&session.tenant_id).await
-    }
-
-    pub async fn record_backup_outcome(
-        &self,
-        tenant_id: &str,
-        user_id: Option<&str>,
-        status: &str,
-        error: Option<&str>,
-        backup_path: Option<&str>,
-    ) -> Result<()> {
-        let mut settings = self.get_backup_settings_for_tenant(tenant_id).await?;
-        let now = Utc::now().to_rfc3339();
-        settings.last_backup_at = Some(now.clone());
-        settings.last_backup_status = Some(status.to_string());
-        settings.last_backup_error = error.map(|s| s.to_string());
-
-        let serialized = serde_json::to_string(&settings).map_err(|e| {
-            CoreError::Validation(format!("Falha ao serializar configurações de backup: {e}"))
-        })?;
-
-        let tenant_id_str = tenant_id.to_string();
-        let user_id_opt = user_id.map(|s| s.to_string());
-        let status_str = status.to_string();
-        let detail = match (status, backup_path, error) {
-            ("success", Some(p), _) => format!("Backup concluído com sucesso em '{p}'."),
-            ("success", None, _) => "Backup concluído com sucesso.".to_string(),
-            ("failed", _, Some(err)) => format!("Falha na execução de backup: {err}"),
-            _ => format!("Execução de backup finalizada com status '{status}'."),
-        };
-
-        self.run_transaction(|stores| {
-            let tenant_id = tenant_id_str.clone();
-            let serialized = serialized.clone();
-            let user_id = user_id_opt.clone();
-            let status = status_str.clone();
-            let detail = detail.clone();
-
-            Box::pin(async move {
-                let now_str = Utc::now().to_rfc3339();
-                stores
-                    .settings()
-                    .upsert(&TenantSetting {
-                        id: uuid::Uuid::now_v7().to_string(),
-                        tenant_id: tenant_id.clone(),
-                        setting_key: SETTING_BACKUP_SETTINGS.to_string(),
-                        setting_value: serialized,
-                        updated_at: now_str,
-                        updated_by: user_id.clone(),
-                    })
-                    .await?;
-
-                let action = if status == "success" {
-                    "backup.completed"
-                } else {
-                    "backup.failed"
-                };
-
-                stores
-                    .audit()
-                    .append(&build_audit_entry(
-                        &tenant_id,
-                        user_id.as_deref(),
-                        action,
-                        "backup",
-                        &tenant_id,
-                        &detail,
-                    ))
-                    .await?;
-
-                Ok(())
             })
         })
         .await
