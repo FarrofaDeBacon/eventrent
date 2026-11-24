@@ -1,3 +1,4 @@
+pub mod backup_scheduler;
 pub mod commands;
 pub mod contracts;
 pub mod guards;
@@ -503,6 +504,7 @@ pub fn run() {
                 match initialize_app(&app_handle).await {
                     Ok((state, _log_dir)) => {
                         app_handle.manage(state);
+                        backup_scheduler::start_backup_scheduler(app_handle.clone());
                         Ok(())
                     }
                     Err((err_msg, log_path_display)) => {

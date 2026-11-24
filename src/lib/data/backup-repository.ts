@@ -19,4 +19,5 @@ export interface BackupRepository {
   ): Promise<RestorePendingMarker>;
   chooseFolder(): Promise<string | null>;
   chooseFile(): Promise<string | null>;
+  onStatusChanged?(callback: () => void): () => void;
 }

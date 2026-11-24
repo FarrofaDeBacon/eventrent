@@ -102,6 +102,32 @@ Em `crates/backup-fs/src/lib.rs`, o método `verify_backup_file` inspeciona o ca
 <!-- prettier-ignore -->
 <!-- snippet: crates/backup-fs/src/lib.rs:517-559 -->
 ```rust
+                        "Falha ao executar auto-verificação prévia no backup gerado: {e}"
+                    )));
+                }
+            }
+
+            // 3.6. Renomeação atômica do arquivo temporário para o arquivo final
+            fs::rename(&temp_zip_path, &final_zip_path).map_err(|e| {
+                let _ = fs::remove_file(&temp_zip_path);
+                CoreError::Internal(format!(
+                    "Falha ao renomear arquivo de backup final ({} -> {}): {e}",
+                    temp_zip_path.display(),
+                    final_zip_path.display()
+                ))
+            })?;
+
+            Ok((manifest, final_zip_path))
+        })
+        .await
+        .map_err(|e| {
+            CoreError::Internal(format!("Falha na tarefa de compactação de backup: {e}"))
+        })?;
+
+        manifest
+    }
+
+    /// Lista todos os backups válidos presentes em uma pasta informada.
     pub fn list_backups_in_folder(
         &self,
         folder: &Path,
@@ -119,32 +145,6 @@ Em `crates/backup-fs/src/lib.rs`, o método `verify_backup_file` inspeciona o ca
             ))
         })?;
 
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-
-            let fname = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default();
-            if !is_valid_backup_filename(fname) {
-                continue;
-            }
-
-            if let Ok(meta) = fs::metadata(&path) {
-                if let Ok(f) = File::open(&path) {
-                    if let Ok(mut archive) = ZipArchive::new(f) {
-                        if let Ok(mut mf) = archive.by_name("manifest.json") {
-                            let mut buf = String::new();
-                            if mf.read_to_string(&mut buf).is_ok() {
-                                if let Ok(manifest) = serde_json::from_str::<BackupManifest>(&buf) {
-                                    let is_compat =
-                                        manifest.last_applied_migration <= current_max_migration;
-                                    list.push(BackupMetadataView {
-                                        file_name: fname.to_string(),
-                                        file_path: path.to_string_lossy().to_string(),
 ```
 
 ### 2.3. Gravação Atômica do Marcador `restore_pending` e Restauração a Frio no Boot (R3-c)
@@ -156,6 +156,32 @@ Em `crates/backup-fs/src/lib.rs`:
 <!-- prettier-ignore -->
 <!-- snippet: crates/backup-fs/src/lib.rs:749-785 -->
 ```rust
+
+        let is_compatible = manifest.last_applied_migration <= current_max_migration;
+
+        // Valida SHA-256 e byte_size de cada entrada listada no manifesto
+        for entry in &manifest.files {
+            if let Err(e) = validate_zip_entry_name(&entry.path) {
+                return Ok(VerifyBackupResult {
+                    valid: false,
+                    manifest: Some(manifest.clone()),
+                    error_message: Some(e.to_string()),
+                    is_compatible,
+                });
+            }
+
+            let zf = match archive.by_name(&entry.path) {
+                Ok(f) => f,
+                Err(_) => {
+                    return Ok(VerifyBackupResult {
+                        valid: false,
+                        manifest: Some(manifest.clone()),
+                        error_message: Some(format!(
+                            "Arquivo declarado no manifesto não encontrado no pacote: {}",
+                            entry.path
+                        )),
+                        is_compatible,
+                    });
                 }
             };
 
@@ -167,9 +193,13 @@ Em `crates/backup-fs/src/lib.rs`:
             loop {
                 match limited.read(&mut buffer) {
                     Ok(0) => break,
-                    Ok(n) => {
-                        hasher.update(&buffer[..n]);
-                        actual_bytes = actual_bytes.saturating_add(n as u64);
+```
+
+2. No método `execute_pending_restore_at_startup`, a inicialização do aplicativo detecta o marcador antes da abertura do banco SQLite, cria uma cópia de salvaguarda `eventrent.db.pre-restore.bak` e garante rollback atômico em caso de falha:
+
+<!-- prettier-ignore -->
+<!-- snippet: crates/backup-fs/src/lib.rs:789-825 -->
+```rust
                         if actual_bytes > entry.byte_size {
                             return Ok(VerifyBackupResult {
                                 valid: false,
@@ -193,13 +223,9 @@ Em `crates/backup-fs/src/lib.rs`:
                             is_compatible,
                         });
                     }
-```
+                }
+            }
 
-2. No método `execute_pending_restore_at_startup`, a inicialização do aplicativo detecta o marcador antes da abertura do banco SQLite, cria uma cópia de salvaguarda `eventrent.db.pre-restore.bak` e garante rollback atômico em caso de falha:
-
-<!-- prettier-ignore -->
-<!-- snippet: crates/backup-fs/src/lib.rs:789-825 -->
-```rust
             if actual_bytes != entry.byte_size {
                 return Ok(VerifyBackupResult {
                     valid: false,
@@ -211,32 +237,6 @@ Em `crates/backup-fs/src/lib.rs`:
                     is_compatible,
                 });
             }
-
-            let actual_hash = format!("{:x}", hasher.finalize());
-            if actual_hash != entry.sha256 {
-                return Ok(VerifyBackupResult {
-                    valid: false,
-                    manifest: Some(manifest.clone()),
-                    error_message: Some(format!(
-                        "Soma de verificação SHA-256 divergente para '{}': arquivo adulterado ou corrompido",
-                        entry.path
-                    )),
-                    is_compatible,
-                });
-            }
-        }
-
-        Ok(VerifyBackupResult {
-            valid: true,
-            manifest: Some(manifest),
-            error_message: None,
-            is_compatible,
-        })
-    }
-
-    /// Agenda a restauração a frio do backup para a próxima inicialização do aplicativo.
-    pub fn schedule_restore(
-        &self,
 ```
 
 ### 2.4. Snapshot Consistente do SQLite via `VACUUM INTO` (R3-d)
@@ -246,28 +246,28 @@ Em `crates/backup-fs/src/lib.rs`, o snapshot consistente do banco SQLite é gera
 <!-- prettier-ignore -->
 <!-- snippet: crates/backup-fs/src/lib.rs:77-98 -->
 ```rust
-        let ts = now.format("%Y-%m-%d-%H%M%S").to_string();
-        let vacuum_unique = uuid::Uuid::now_v7();
-        let temp_vacuum_db = self
-            .app_data_dir
-            .join(format!("vacuum_backup_{vacuum_unique}.tmp.db"));
+            app_data_dir,
+            db_path,
+            media_dir,
+            config_path,
+        }
+    }
 
-        // 1. Cópia consistente do banco SQLite via VACUUM INTO
-        let vacuum_sql = format!(
-            "VACUUM INTO '{}'",
-            temp_vacuum_db.to_string_lossy().replace('\'', "''")
-        );
+    /// Executa um backup consistente completo do sistema para a pasta de destino informada.
+    pub async fn run_backup(
+        &self,
+        destination_folder: &Path,
+        db_pool: &SqlitePool,
+        app_version: &str,
+    ) -> Result<(BackupManifest, PathBuf)> {
+        let _guard = BackupOperationGuard::try_acquire()?;
 
-        sqlx::query(&vacuum_sql)
-            .execute(db_pool)
-            .await
-            .map_err(|e| {
-                let _ = fs::remove_file(&temp_vacuum_db);
-                CoreError::Internal(format!(
-                    "Falha ao executar VACUUM INTO para backup consistente do SQLite: {e}"
-                ))
-            })?;
+        validate_destination_folder(destination_folder, &self.app_data_dir)?;
 
+        fs::create_dir_all(destination_folder).map_err(|e| {
+            CoreError::Internal(format!(
+                "Falha ao acessar pasta de destino de backup ({}): {e}",
+                destination_folder.display()
 ```
 
 ### 2.5. Validação Robusta dos Caminhos Escolhidos nos Diálogos Nativos (R3-e)
@@ -277,10 +277,15 @@ Em `src-tauri/src/commands/backup.rs`, os comandos `choose_backup_folder` e `cho
 <!-- prettier-ignore -->
 <!-- snippet: src-tauri/src/commands/backup.rs:216-274 -->
 ```rust
+) -> Result<RestorePendingMarker, String> {
     let session = require_session(&state).await?;
+    let policy = eventrent_core::LoginPolicy {
+        reveal_account_locked: true,
+    };
     state
         .services
-        .authorize_backup_operation(&session)
+        .authorize_restore_operation(&session, &input.password, &policy)
+        .await
         .map_err(crate::map_core_err)?;
 
     let path = PathBuf::from(input.file_path.trim());
@@ -331,11 +336,6 @@ pub async fn choose_backup_file(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
-    let session = require_session(&state).await?;
-    state
-        .services
-        .authorize_backup_operation(&session)
-        .map_err(crate::map_core_err)?;
 ```
 
 ### 2.6. Agendamento do Backup Automático e Cálculo de Obsolecência (`is_stale`) (R3-f)
@@ -382,6 +382,7 @@ Em `src-tauri/src/lib.rs`, na rotina de boot do aplicativo desktop, o snapshot d
 <!-- prettier-ignore -->
 <!-- snippet: src-tauri/src/lib.rs:390-405 -->
 ```rust
+
     // Snapshot atômico de segurança pré-atualização antes de aplicar migrações ou abrir o banco
     if let Err(err) = backup_service
         .create_pre_update_snapshot_if_needed(
@@ -397,7 +398,6 @@ Em `src-tauri/src/lib.rs`, na rotina de boot do aplicativo desktop, o snapshot d
         "Inicializando banco SQLite em: {}",
         db_path.to_string_lossy()
     );
-
 ```
 
 ### 2.8. Trava RAII Anti-Concorrência (`BackupOperationGuard`)
@@ -437,42 +437,42 @@ Em `src/routes/settings/backup/+page.svelte`, o botão de confirmação permanec
 <!-- prettier-ignore -->
 <!-- snippet: src/routes/settings/backup/+page.svelte:728-763 -->
 ```svelte
+          v{backupToRestore.app_version} (schema #{backupToRestore.last_applied_migration})
+        </div>
+      </div>
+
+      <div
+        class="rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-warning space-y-1"
+      >
+        <div class="font-semibold flex items-center gap-1.5">
+          <AlertTriangle class="h-4 w-4 shrink-0" />
+          Atenção com as credenciais restauradas
+        </div>
+        <p class="text-muted-foreground">
+          A restauração substituirá todos os cadastros do banco de dados,
+          incluindo usuários e senhas. Ao concluir a restauração, suas
+          credenciais de acesso voltarão a ser as que existiam no momento em que
+          o backup foi gerado.
+        </p>
+      </div>
+
+      <div class="space-y-2">
+        <label
+          for="restore-password-input"
           class="text-xs font-medium text-foreground block"
         >
-          Para prosseguir, digite exatamente <span
-            class="font-bold text-destructive">RESTAURAR</span
-          > no campo abaixo:
+          Confirme sua senha de acesso atual:
         </label>
         <Input
-          id="restore-confirm-input"
-          type="text"
-          placeholder="RESTAURAR"
-          bind:value={restoreConfirmationInput}
-          class="font-mono text-center tracking-widest uppercase font-bold"
+          id="restore-password-input"
+          type="password"
+          placeholder="Digite sua senha de acesso atual"
+          bind:value={restorePasswordInput}
         />
       </div>
 
-      <div class="flex justify-end gap-3 pt-2">
-        <Button
-          variant="outline"
-          onclick={closeRestoreModal}
-          disabled={isSchedulingRestore}
-        >
-          Cancelar
-        </Button>
-        <Button
-          variant="destructive"
-          onclick={handleConfirmRestore}
-          disabled={!isRestoreConfirmed || isSchedulingRestore}
-          class="flex items-center gap-2"
-        >
-          {#if isSchedulingRestore}
-            Agendando...
-          {:else}
-            Confirmar e Agendar Restauração
-          {/if}
-        </Button>
-      </div>
+      <div class="space-y-2">
+        <label
 ```
 
 ### 2.10. Teste E2E Playwright de Backup e Confirmação de Restauração
@@ -506,12 +506,12 @@ Em `e2e/backup.spec.ts`, o fluxo de ponta a ponta exercita a interface e a trava
     });
     await expect(confirmButton).toBeDisabled();
 
+    const passwordInput = page.locator("#restore-password-input");
+    await passwordInput.fill("SenhaForte#123");
+
     const confirmInput = page.locator("#restore-confirm-input");
     await confirmInput.fill("restaurar");
     await expect(confirmButton).toBeDisabled();
-
-    await confirmInput.fill("RESTAURAR");
-    await expect(confirmButton).toBeEnabled();
 
 ```
 

@@ -53,4 +53,27 @@ export class TauriBackupRepository implements BackupRepository {
   async chooseFile(): Promise<string | null> {
     return invoke<string | null>("choose_backup_file");
   }
+
+  onStatusChanged(callback: () => void): () => void {
+    let unlistenFn: (() => void) | undefined;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) => {
+        return listen("backup:status-changed", () => {
+          callback();
+        });
+      })
+      .then((un) => {
+        unlistenFn = un;
+      })
+      .catch((err) => {
+        console.warn(
+          "Falha ao registrar listener de backup:status-changed:",
+          err,
+        );
+      });
+
+    return () => {
+      unlistenFn?.();
+    };
+  }
 }

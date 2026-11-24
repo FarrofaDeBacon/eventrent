@@ -1,6 +1,6 @@
 use crate::domain::{
-    days_since_last_backup, is_backup_due, is_backup_stale, BackupSettings, BackupStatus,
-    TenantSetting, PERM_BACKUP_MANAGE, SETTING_BACKUP_SETTINGS,
+    days_since_last_backup, is_backup_due_with_status, is_backup_stale, BackupSettings,
+    BackupStatus, TenantSetting, PERM_BACKUP_MANAGE, SETTING_BACKUP_SETTINGS,
 };
 use crate::error::{CoreError, Result};
 use crate::services::{build_audit_entry, CoreServices};
@@ -41,7 +41,8 @@ impl CoreServices {
         let settings = self.get_backup_settings_for_tenant(tenant_id).await?;
         let now = Utc::now();
         let last_at = settings.last_backup_at.as_deref();
-        let due = is_backup_due(last_at, now, settings.schedule_enabled);
+        let last_status = settings.last_backup_status.as_deref();
+        let due = is_backup_due_with_status(last_at, last_status, now, settings.schedule_enabled);
         let stale = is_backup_stale(last_at, now);
         let days = days_since_last_backup(last_at, now);
 

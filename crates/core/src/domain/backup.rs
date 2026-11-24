@@ -178,6 +178,30 @@ pub fn is_backup_due(
     }
 }
 
+/// Determina se um backup agendado está devido levando em consideração o status da última execução.
+/// Se a última execução falhou, o backup permanece devido assim que a janela de retry de 1 hora expirar.
+pub fn is_backup_due_with_status(
+    last_backup_at: Option<&str>,
+    last_backup_status: Option<&str>,
+    now: DateTime<Utc>,
+    schedule_enabled: bool,
+) -> bool {
+    if !schedule_enabled {
+        return false;
+    }
+    if last_backup_status == Some("failed") {
+        match last_backup_at {
+            None => true,
+            Some(s) => match DateTime::parse_from_rfc3339(s) {
+                Ok(dt) => (now - dt.with_timezone(&Utc)).num_hours() >= 1,
+                Err(_) => true,
+            },
+        }
+    } else {
+        is_backup_due(last_backup_at, now, schedule_enabled)
+    }
+}
+
 /// Determina se o status de backup está "estéril" (> 7 dias sem backup ou nenhum backup já realizado).
 /// Aciona alerta fixo e destacado na interface de usuário.
 pub fn is_backup_stale(last_backup_at: Option<&str>, now: DateTime<Utc>) -> bool {

@@ -253,6 +253,12 @@
 
   onMount(() => {
     void loadData();
+    const unsubscribe = getBackupRepository().onStatusChanged?.(() => {
+      void loadData();
+    });
+    return () => {
+      unsubscribe?.();
+    };
   });
 </script>
 

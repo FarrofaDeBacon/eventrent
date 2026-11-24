@@ -9,7 +9,14 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use uuid::Uuid;
 
-struct TempDirGuard(PathBuf);
+pub(crate) struct TempDirGuard(pub(crate) PathBuf);
+
+impl TempDirGuard {
+    #[allow(dead_code)]
+    pub(crate) fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
 
 impl Drop for TempDirGuard {
     fn drop(&mut self) {
@@ -17,7 +24,7 @@ impl Drop for TempDirGuard {
     }
 }
 
-async fn setup_real_app_state() -> (
+pub(crate) async fn setup_real_app_state() -> (
     AppState,
     TempDirGuard,
     String,
@@ -55,8 +62,11 @@ async fn setup_real_app_state() -> (
         .expect("Falha no setup inicial");
 
     let config_path = temp_dir.join("config.json");
+    let _ = std::fs::write(&config_path, "{}");
+    let media_dir = temp_dir.join("media");
+    std::fs::create_dir_all(&media_dir).expect("Falha ao criar pasta de mídia");
     let temp_media_dir = temp_dir.join("temp-media");
-    std::fs::create_dir_all(&temp_media_dir).expect("Falha ao criar pasta de mídia");
+    std::fs::create_dir_all(&temp_media_dir).expect("Falha ao criar pasta de mídia temporária");
 
     let backup_service = eventrent_backup_fs::BackupFsService::new(
         temp_dir.clone(),

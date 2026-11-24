@@ -161,4 +161,9 @@ export class MockBackupRepository implements BackupRepository {
   async chooseFile(): Promise<string | null> {
     return "C:\\EventRent\\Backups\\eventrent-backup-sample.eventrent-backup";
   }
+
+  onStatusChanged(callback: () => void): () => void {
+    void callback;
+    return () => {};
+  }
 }
