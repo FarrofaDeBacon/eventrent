@@ -182,12 +182,19 @@ impl BackupFsService {
         // 3. Compactação híbrida do arquivo ZIP em segundo plano (spawn_blocking)
         let temp_vacuum_db_clone = temp_vacuum_db.clone();
         let destination_folder_buf = destination_folder.to_path_buf();
+        let app_data_dir_buf = self.app_data_dir.clone();
+        let db_path_buf = self.db_path.clone();
         let media_dir_buf = self.media_dir.clone();
+        let media_dir_buf_clone = self.media_dir.clone();
         let config_path_buf = self.config_path.clone();
+        let config_path_buf_clone = self.config_path.clone();
         let app_version_string = app_version.to_string();
 
         let manifest = tokio::task::spawn_blocking(move || {
-            let temp_zip_filename = format!(".tmp.eventrent-backup-{}.tmp", uuid::Uuid::now_v7());
+            let temp_zip_filename = format!(
+                ".tmp.eventrent-backup-{}.eventrent-backup",
+                uuid::Uuid::now_v7()
+            );
             let temp_zip_path = destination_folder_buf.join(&temp_zip_filename);
             let final_zip_filename = format!("eventrent-backup-{ts}.eventrent-backup");
             let final_zip_path = destination_folder_buf.join(&final_zip_filename);
@@ -267,18 +274,159 @@ impl BackupFsService {
             // Remove o banco temporário de vacuum imediatamente após escrita no zip
             let _ = fs::remove_file(&temp_vacuum_db_clone);
 
-            // 3.2. Adiciona config.json (se existir)
-            if config_path_buf.exists() {
-                if let Ok(mut cfg_f) = File::open(&config_path_buf) {
-                    if zip.start_file("config.json", deflate_opts).is_ok() {
-                        let mut hasher = Sha256::new();
-                        let mut buf = Vec::new();
-                        if cfg_f.read_to_end(&mut buf).is_ok() {
-                            hasher.update(&buf);
-                            let _ = zip.write_all(&buf);
+            // 3.2. Adiciona config.json (obrigatório: se ausente ou com erro, aborta imediatamente sem gravar backup)
+            if !config_path_buf.exists() {
+                let _ = fs::remove_file(&temp_zip_path);
+                return Err(CoreError::Validation(format!(
+                    "Arquivo de configuração obrigatório ausente: {}",
+                    config_path_buf.display()
+                )));
+            }
+
+            let mut cfg_f = File::open(&config_path_buf).map_err(|e| {
+                let _ = fs::remove_file(&temp_zip_path);
+                CoreError::Internal(format!(
+                    "Falha ao abrir arquivo de configuração ({}): {e}",
+                    config_path_buf.display()
+                ))
+            })?;
+
+            zip.start_file("config.json", deflate_opts).map_err(|e| {
+                let _ = fs::remove_file(&temp_zip_path);
+                CoreError::Internal(format!("Falha ao iniciar config.json no zip: {e}"))
+            })?;
+
+            let mut cfg_hasher = Sha256::new();
+            let mut cfg_buffer = [0u8; 64 * 1024];
+            let mut cfg_total_bytes = 0u64;
+            loop {
+                let read = cfg_f.read(&mut cfg_buffer).map_err(|e| {
+                    let _ = fs::remove_file(&temp_zip_path);
+                    CoreError::Internal(format!(
+                        "Falha ao ler arquivo de configuração ({}): {e}",
+                        config_path_buf.display()
+                    ))
+                })?;
+                if read == 0 {
+                    break;
+                }
+                cfg_hasher.update(&cfg_buffer[..read]);
+                cfg_total_bytes += read as u64;
+                zip.write_all(&cfg_buffer[..read]).map_err(|e| {
+                    let _ = fs::remove_file(&temp_zip_path);
+                    CoreError::Internal(format!(
+                        "Falha ao gravar config.json no zip ({}): {e}",
+                        config_path_buf.display()
+                    ))
+                })?;
+            }
+
+            file_entries.push(BackupFileEntry {
+                path: "config.json".to_string(),
+                byte_size: cfg_total_bytes,
+                sha256: format!("{:x}", cfg_hasher.finalize()),
+            });
+
+            // 3.3. Adiciona arquivos de mídia (modo Stored / sem recompressão)
+            if media_dir_buf.exists() {
+                if !media_dir_buf.is_dir() {
+                    let _ = fs::remove_file(&temp_zip_path);
+                    return Err(CoreError::Validation(format!(
+                        "Diretório de mídia informado não é uma pasta válida: {}",
+                        media_dir_buf.display()
+                    )));
+                }
+
+                let mut stack = vec![media_dir_buf.clone()];
+                while let Some(dir) = stack.pop() {
+                    let entries = fs::read_dir(&dir).map_err(|e| {
+                        let _ = fs::remove_file(&temp_zip_path);
+                        CoreError::Internal(format!(
+                            "Falha ao listar diretório de mídia ({}): {e}",
+                            dir.display()
+                        ))
+                    })?;
+
+                    for entry_res in entries {
+                        let entry = entry_res.map_err(|e| {
+                            let _ = fs::remove_file(&temp_zip_path);
+                            CoreError::Internal(format!(
+                                "Falha ao ler entrada no diretório de mídia ({}): {e}",
+                                dir.display()
+                            ))
+                        })?;
+
+                        let path = entry.path();
+                        if path.is_dir() {
+                            stack.push(path);
+                        } else if path.is_file() {
+                            let file_name = path
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or_default();
+                            if file_name.starts_with(".tmp.") || file_name.contains(".tmp.") {
+                                continue;
+                            }
+
+                            let rel = path.strip_prefix(&media_dir_buf).map_err(|e| {
+                                let _ = fs::remove_file(&temp_zip_path);
+                                CoreError::Internal(format!(
+                                    "Falha ao calcular caminho relativo de mídia ({}): {e}",
+                                    path.display()
+                                ))
+                            })?;
+
+                            let rel_slash = rel.to_string_lossy().replace('\\', "/");
+                            let zip_entry_name = format!("media/{rel_slash}");
+                            validate_zip_entry_name(&zip_entry_name).inspect_err(|_| {
+                                let _ = fs::remove_file(&temp_zip_path);
+                            })?;
+
+                            let mut mf = File::open(&path).map_err(|e| {
+                                let _ = fs::remove_file(&temp_zip_path);
+                                CoreError::Internal(format!(
+                                    "Falha ao abrir arquivo de mídia para backup ({}): {e}",
+                                    path.display()
+                                ))
+                            })?;
+
+                            zip.start_file(&zip_entry_name, stored_opts).map_err(|e| {
+                                let _ = fs::remove_file(&temp_zip_path);
+                                CoreError::Internal(format!(
+                                    "Falha ao iniciar entrada de mídia no zip ({}): {e}",
+                                    zip_entry_name
+                                ))
+                            })?;
+
+                            let mut hasher = Sha256::new();
+                            let mut buffer = [0u8; 64 * 1024];
+                            let mut total_bytes = 0u64;
+
+                            loop {
+                                let n = mf.read(&mut buffer).map_err(|e| {
+                                    let _ = fs::remove_file(&temp_zip_path);
+                                    CoreError::Internal(format!(
+                                        "Falha ao ler arquivo de mídia ({}): {e}",
+                                        path.display()
+                                    ))
+                                })?;
+                                if n == 0 {
+                                    break;
+                                }
+                                hasher.update(&buffer[..n]);
+                                total_bytes += n as u64;
+                                zip.write_all(&buffer[..n]).map_err(|e| {
+                                    let _ = fs::remove_file(&temp_zip_path);
+                                    CoreError::Internal(format!(
+                                        "Falha ao gravar arquivo de mídia no zip ({}): {e}",
+                                        path.display()
+                                    ))
+                                })?;
+                            }
+
                             file_entries.push(BackupFileEntry {
-                                path: "config.json".to_string(),
-                                byte_size: buf.len() as u64,
+                                path: zip_entry_name,
+                                byte_size: total_bytes,
                                 sha256: format!("{:x}", hasher.finalize()),
                             });
                         }
@@ -286,58 +434,7 @@ impl BackupFsService {
                 }
             }
 
-            // 3.3. Adiciona arquivos de mídia (modo Stored / sem recompressão)
-            if media_dir_buf.exists() && media_dir_buf.is_dir() {
-                let mut stack = vec![media_dir_buf.clone()];
-                while let Some(dir) = stack.pop() {
-                    if let Ok(entries) = fs::read_dir(&dir) {
-                        for entry in entries.flatten() {
-                            let path = entry.path();
-                            if path.is_dir() {
-                                stack.push(path);
-                            } else if path.is_file() {
-                                let file_name = path
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or_default();
-                                if file_name.starts_with(".tmp.") || file_name.contains(".tmp.") {
-                                    continue;
-                                }
-
-                                if let Ok(rel) = path.strip_prefix(&media_dir_buf) {
-                                    let rel_slash = rel.to_string_lossy().replace('\\', "/");
-                                    let zip_entry_name = format!("media/{rel_slash}");
-
-                                    if let Ok(mut mf) = File::open(&path) {
-                                        if zip.start_file(&zip_entry_name, stored_opts).is_ok() {
-                                            let mut hasher = Sha256::new();
-                                            let mut buffer = [0u8; 64 * 1024];
-                                            let mut total_bytes = 0u64;
-
-                                            while let Ok(n) = mf.read(&mut buffer) {
-                                                if n == 0 {
-                                                    break;
-                                                }
-                                                hasher.update(&buffer[..n]);
-                                                total_bytes += n as u64;
-                                                let _ = zip.write_all(&buffer[..n]);
-                                            }
-
-                                            file_entries.push(BackupFileEntry {
-                                                path: zip_entry_name,
-                                                byte_size: total_bytes,
-                                                sha256: format!("{:x}", hasher.finalize()),
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 3.4. Monta e grava manifest.json na raiz do zip
+            // 3.4. Monta e grava manifest.json na raiz do zip (após todos os arquivos gravados e conferidos)
             let manifest = BackupManifest {
                 manifest_version: 1,
                 app_version: app_version_string,
@@ -369,7 +466,34 @@ impl BackupFsService {
                 CoreError::Internal(format!("Falha ao finalizar arquivo de backup ZIP: {e}"))
             })?;
 
-            // 3.5. Renomeação atômica do arquivo temporário para o arquivo final
+            // 3.5. Verificação profunda e revalidação do arquivo temporário ANTES do rename
+            let test_service = BackupFsService::new(
+                app_data_dir_buf,
+                db_path_buf,
+                media_dir_buf_clone,
+                config_path_buf_clone,
+            );
+            let verify_res = test_service.verify_backup_file(&temp_zip_path, i64::MAX);
+            match verify_res {
+                Ok(v) if v.valid => {
+                    // Validado com sucesso
+                }
+                Ok(v) => {
+                    let _ = fs::remove_file(&temp_zip_path);
+                    return Err(CoreError::Validation(format!(
+                        "Backup gerado falhou na auto-verificação de integridade prévia: {}",
+                        v.error_message.unwrap_or_default()
+                    )));
+                }
+                Err(e) => {
+                    let _ = fs::remove_file(&temp_zip_path);
+                    return Err(CoreError::Internal(format!(
+                        "Falha ao executar auto-verificação prévia no backup gerado: {e}"
+                    )));
+                }
+            }
+
+            // 3.6. Renomeação atômica do arquivo temporário para o arquivo final
             fs::rename(&temp_zip_path, &final_zip_path).map_err(|e| {
                 let _ = fs::remove_file(&temp_zip_path);
                 CoreError::Internal(format!(
@@ -1697,5 +1821,131 @@ mod tests {
         );
         assert!(verify.is_compatible);
         assert!(manifest.database_integrity_checked);
+    }
+
+    #[tokio::test]
+    async fn test_backup_fails_when_config_json_missing() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        // Remove config.json
+        let _ = fs::remove_file(&env.config_path);
+
+        let conn_str = format!("sqlite://{}?mode=ro", env.db_path.display());
+        let pool = SqlitePoolOptions::new().connect(&conn_str).await.unwrap();
+
+        let res = service
+            .run_backup(&env.backup_dest, &pool, "0.10.0-fase2n")
+            .await;
+        assert!(
+            res.is_err(),
+            "Backup deve falhar quando config.json está ausente"
+        );
+        let err_str = res.err().unwrap().to_string();
+        assert!(
+            err_str.contains("config.json") || err_str.contains("configuração"),
+            "Mensagem de erro deve identificar config.json: {err_str}"
+        );
+
+        // Garante que nenhum arquivo de backup final foi criado na pasta de destino
+        let files = fs::read_dir(&env.backup_dest).unwrap().count();
+        assert_eq!(
+            files, 0,
+            "Nenhum arquivo final deve restar na pasta de destino após falha"
+        );
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_backup_fails_when_media_file_unreadable() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        let sample_media = env.media_dir.join("locked_file.png");
+        fs::write(&sample_media, b"fake png data").unwrap();
+
+        // Trava o arquivo com compartilhamento exclusivo
+        #[cfg(windows)]
+        use std::os::windows::fs::OpenOptionsExt;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.read(true).write(true);
+        #[cfg(windows)]
+        opts.share_mode(0); // Bloqueia qualquer leitura concorrente
+        let _exclusive_file = opts.open(&sample_media).unwrap();
+
+        let conn_str = format!("sqlite://{}?mode=ro", env.db_path.display());
+        let pool = SqlitePoolOptions::new().connect(&conn_str).await.unwrap();
+
+        let res = service
+            .run_backup(&env.backup_dest, &pool, "0.10.0-fase2n")
+            .await;
+        assert!(
+            res.is_err(),
+            "Backup deve falhar se arquivo de mídia estiver ilegível"
+        );
+
+        let count = fs::read_dir(&env.backup_dest).unwrap().count();
+        assert_eq!(
+            count, 0,
+            "Nenhum arquivo final deve ser criado em caso de erro de leitura de mídia"
+        );
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_backup_fails_when_media_dir_unreadable() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+
+        // Aponta media_dir para um arquivo comum (não diretório), forçando erro de listagem
+        let file_as_dir = env.root.join("fake_dir_file");
+        fs::write(&file_as_dir, b"not a dir").unwrap();
+
+        let service = BackupFsService::new(
+            env.app_data_dir.clone(),
+            env.db_path.clone(),
+            file_as_dir,
+            env.config_path.clone(),
+        );
+
+        let conn_str = format!("sqlite://{}?mode=ro", env.db_path.display());
+        let pool = SqlitePoolOptions::new().connect(&conn_str).await.unwrap();
+
+        let res = service
+            .run_backup(&env.backup_dest, &pool, "0.10.0-fase2n")
+            .await;
+        assert!(
+            res.is_err(),
+            "Backup deve falhar quando diretório de mídia for inválido/ilegível"
+        );
+
+        let count = fs::read_dir(&env.backup_dest).unwrap().count();
+        assert_eq!(count, 0);
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_backup_fails_when_destination_unwritable() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        // Aponta a pasta de destino para um arquivo existente
+        let file_as_dest = env.root.join("dest_file_blocking");
+        fs::write(&file_as_dest, b"blocker").unwrap();
+
+        let conn_str = format!("sqlite://{}?mode=ro", env.db_path.display());
+        let pool = SqlitePoolOptions::new().connect(&conn_str).await.unwrap();
+
+        let res = service
+            .run_backup(&file_as_dest, &pool, "0.10.0-fase2n")
+            .await;
+        assert!(
+            res.is_err(),
+            "Backup deve falhar quando destino for inacessível ou inválido"
+        );
+        pool.close().await;
     }
 }

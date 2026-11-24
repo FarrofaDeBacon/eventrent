@@ -277,11 +277,34 @@ Em `src-tauri/src/commands/backup.rs`, os comandos `choose_backup_folder` e `cho
 <!-- prettier-ignore -->
 <!-- snippet: src-tauri/src/commands/backup.rs:216-274 -->
 ```rust
+    let session = require_session(&state).await?;
+    state
+        .services
+        .authorize_backup_operation(&session)
+        .map_err(crate::map_core_err)?;
+
+    let path = PathBuf::from(input.file_path.trim());
+    state
+        .backup_service
+        .schedule_restore(
+            &path,
+            &session.user_id,
+            eventrent_store_sqlite::CURRENT_MAX_MIGRATION,
+        )
+        .map_err(crate::map_core_err)
+}
+
+#[tauri::command]
 pub async fn choose_backup_folder(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
-    let _session = require_session(&state).await?;
+    let session = require_session(&state).await?;
+    state
+        .services
+        .authorize_backup_operation(&session)
+        .map_err(crate::map_core_err)?;
+
     let app_clone = app.clone();
 
     let picked =
@@ -308,34 +331,11 @@ pub async fn choose_backup_file(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
-    let _session = require_session(&state).await?;
-    let app_clone = app.clone();
-
-    let picked = tokio::task::spawn_blocking(move || {
-        app_clone
-            .dialog()
-            .file()
-            .add_filter(
-                "Arquivo de Backup EventRent (*.eventrent-backup)",
-                &["eventrent-backup"],
-            )
-            .blocking_pick_file()
-    })
-    .await
-    .map_err(|e| format!("Falha ao aguardar diálogo de seleção de arquivo: {e}"))?;
-
-    let Some(file) = picked else {
-        return Ok(None);
-    };
-
-    let file_path = file
-        .into_path()
-        .map_err(|e| format!("Caminho inválido: {e}"))?;
-
-    validate_backup_file_for_restore(&file_path).map_err(crate::map_core_err)?;
-
-    Ok(Some(file_path.to_string_lossy().to_string()))
-}
+    let session = require_session(&state).await?;
+    state
+        .services
+        .authorize_backup_operation(&session)
+        .map_err(crate::map_core_err)?;
 ```
 
 ### 2.6. Agendamento do Backup Automático e Cálculo de Obsolecência (`is_stale`) (R3-f)
