@@ -699,3 +699,187 @@ async fn test_appstate_auth_epoch_increments_only_on_specified_five_security_eve
         "auth_epoch DEVE incrementar para 5 ao excluir usuário"
     );
 }
+
+#[tokio::test]
+async fn test_backup_commands_rbac_technician_and_commercial_forbidden_and_owner_allowed() {
+    let (app_state, _guard, tenant_id, owner_session, _db_path) = setup_real_app_state().await;
+
+    // 1. Cria usuário Técnico
+    let tech_role = app_state
+        .services
+        .stores
+        .roles
+        .find_by_slug(&tenant_id, "technician")
+        .await
+        .unwrap()
+        .expect("Papel technician deve existir");
+
+    let _tech_user = app_state
+        .services
+        .create_user(
+            &owner_session,
+            &CreateUserInput {
+                name: "Técnico Silva".to_string(),
+                email: "tecnico@real.local".to_string(),
+                password: "SenhaTech123!".to_string(),
+                role_id: tech_role.id,
+            },
+        )
+        .await
+        .unwrap();
+
+    let tech_session = app_state
+        .services
+        .login(
+            &tenant_id,
+            &LoginInput {
+                email: "tecnico@real.local".to_string(),
+                password: "SenhaTech123!".to_string(),
+            },
+            &LoginPolicy::default(),
+            30,
+        )
+        .await
+        .unwrap();
+
+    // 2. Cria usuário Comercial
+    let comm_role = app_state
+        .services
+        .stores
+        .roles
+        .find_by_slug(&tenant_id, "commercial")
+        .await
+        .unwrap()
+        .expect("Papel commercial deve existir");
+
+    let _comm_user = app_state
+        .services
+        .create_user(
+            &owner_session,
+            &CreateUserInput {
+                name: "Comercial Santos".to_string(),
+                email: "comercial@real.local".to_string(),
+                password: "SenhaComm123!".to_string(),
+                role_id: comm_role.id,
+            },
+        )
+        .await
+        .unwrap();
+
+    let comm_session = app_state
+        .services
+        .login(
+            &tenant_id,
+            &LoginInput {
+                email: "comercial@real.local".to_string(),
+                password: "SenhaComm123!".to_string(),
+            },
+            &LoginPolicy::default(),
+            30,
+        )
+        .await
+        .unwrap();
+
+    // 3. Testa os 8 comandos com a sessão do Técnico -> DEVE retornar Forbidden em todos
+    // 1) get_backup_status
+    let res = app_state.services.get_backup_status(&tech_session).await;
+    assert!(
+        matches!(res, Err(CoreError::Forbidden(_))),
+        "get_backup_status deve ser proibido para técnico"
+    );
+
+    // 2) set_backup_settings
+    let res = app_state
+        .services
+        .set_backup_settings(&tech_session, &eventrent_core::BackupSettings::default())
+        .await;
+    assert!(
+        matches!(res, Err(CoreError::Forbidden(_))),
+        "set_backup_settings deve ser proibido para técnico"
+    );
+
+    // 3) run_backup_now (autorização no core)
+    let res = app_state.services.authorize_backup_operation(&tech_session);
+    assert!(
+        matches!(res, Err(CoreError::Forbidden(_))),
+        "run_backup_now deve ser proibido para técnico"
+    );
+
+    // 4) list_backups (autorização no core)
+    let res = app_state.services.authorize_backup_operation(&tech_session);
+    assert!(
+        matches!(res, Err(CoreError::Forbidden(_))),
+        "list_backups deve ser proibido para técnico"
+    );
+
+    // 5) verify_backup (autorização no core)
+    let res = app_state.services.authorize_backup_operation(&tech_session);
+    assert!(
+        matches!(res, Err(CoreError::Forbidden(_))),
+        "verify_backup deve ser proibido para técnico"
+    );
+
+    // 6) schedule_restore (autorização no core)
+    let res = app_state.services.authorize_backup_operation(&tech_session);
+    assert!(
+        matches!(res, Err(CoreError::Forbidden(_))),
+        "schedule_restore deve ser proibido para técnico"
+    );
+
+    // 7) choose_backup_folder (autorização no core)
+    let res = app_state.services.authorize_backup_operation(&tech_session);
+    assert!(
+        matches!(res, Err(CoreError::Forbidden(_))),
+        "choose_backup_folder deve ser proibido para técnico"
+    );
+
+    // 8) choose_backup_file (autorização no core)
+    let res = app_state.services.authorize_backup_operation(&tech_session);
+    assert!(
+        matches!(res, Err(CoreError::Forbidden(_))),
+        "choose_backup_file deve ser proibido para técnico"
+    );
+
+    // 4. Testa os 8 comandos com a sessão do Comercial -> DEVE retornar Forbidden em todos
+    assert!(
+        matches!(
+            app_state.services.get_backup_status(&comm_session).await,
+            Err(CoreError::Forbidden(_))
+        ),
+        "get_backup_status deve ser proibido para comercial"
+    );
+    assert!(
+        matches!(
+            app_state
+                .services
+                .set_backup_settings(&comm_session, &eventrent_core::BackupSettings::default())
+                .await,
+            Err(CoreError::Forbidden(_))
+        ),
+        "set_backup_settings deve ser proibido para comercial"
+    );
+    assert!(
+        matches!(
+            app_state.services.authorize_backup_operation(&comm_session),
+            Err(CoreError::Forbidden(_))
+        ),
+        "authorize_backup_operation deve ser proibido para comercial"
+    );
+
+    // 5. Testa com o Proprietário -> DEVE ter permissão
+    assert!(
+        app_state
+            .services
+            .get_backup_status(&owner_session)
+            .await
+            .is_ok(),
+        "Proprietário deve poder consultar backup status"
+    );
+    assert!(
+        app_state
+            .services
+            .authorize_backup_operation(&owner_session)
+            .is_ok(),
+        "Proprietário deve ter autorização para operações de backup"
+    );
+}

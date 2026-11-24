@@ -8,10 +8,16 @@ use crate::SessionInfo;
 use chrono::Utc;
 
 impl CoreServices {
+    /// Autoriza uma operação de backup no nível do núcleo de negócio.
+    /// Valida que a sessão está ativa e possui a permissão canônica `backup:manage`.
+    pub fn authorize_backup_operation(&self, session: &SessionInfo) -> Result<()> {
+        self.check_session_and_permission(session, PERM_BACKUP_MANAGE)
+    }
+
     /// Consulta o status consolidado de backup do tenant atual.
     /// Exige sessão válida e permissão `backup:manage`.
     pub async fn get_backup_status(&self, session: &SessionInfo) -> Result<BackupStatus> {
-        self.check_session_and_permission(session, PERM_BACKUP_MANAGE)?;
+        self.authorize_backup_operation(session)?;
         self.get_backup_status_for_tenant(&session.tenant_id).await
     }
 
@@ -56,7 +62,7 @@ impl CoreServices {
         session: &SessionInfo,
         settings: &BackupSettings,
     ) -> Result<BackupStatus> {
-        self.check_session_and_permission(session, PERM_BACKUP_MANAGE)?;
+        self.authorize_backup_operation(session)?;
 
         if !settings.destination_folder.trim().is_empty() {
             let dest_path = std::path::Path::new(&settings.destination_folder);

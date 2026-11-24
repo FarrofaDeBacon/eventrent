@@ -77,6 +77,10 @@ pub async fn set_backup_settings(
 #[tauri::command]
 pub async fn run_backup_now(state: State<'_, AppState>) -> Result<BackupMetadataView, String> {
     let session = require_session(&state).await?;
+    state
+        .services
+        .authorize_backup_operation(&session)
+        .map_err(crate::map_core_err)?;
 
     let status = state
         .services
@@ -159,6 +163,10 @@ pub async fn list_backups(
     input: ListBackupsInput,
 ) -> Result<Vec<BackupMetadataView>, String> {
     let session = require_session(&state).await?;
+    state
+        .services
+        .authorize_backup_operation(&session)
+        .map_err(crate::map_core_err)?;
 
     let folder_str = if let Some(f) = input.folder.filter(|f| !f.trim().is_empty()) {
         f
@@ -187,7 +195,12 @@ pub async fn verify_backup(
     state: State<'_, AppState>,
     input: VerifyBackupInput,
 ) -> Result<VerifyBackupResult, String> {
-    let _session = require_session(&state).await?;
+    let session = require_session(&state).await?;
+    state
+        .services
+        .authorize_backup_operation(&session)
+        .map_err(crate::map_core_err)?;
+
     let path = PathBuf::from(input.file_path.trim());
     state
         .backup_service
@@ -201,6 +214,11 @@ pub async fn schedule_restore(
     input: ScheduleRestoreInput,
 ) -> Result<RestorePendingMarker, String> {
     let session = require_session(&state).await?;
+    state
+        .services
+        .authorize_backup_operation(&session)
+        .map_err(crate::map_core_err)?;
+
     let path = PathBuf::from(input.file_path.trim());
     state
         .backup_service
@@ -217,7 +235,12 @@ pub async fn choose_backup_folder(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
-    let _session = require_session(&state).await?;
+    let session = require_session(&state).await?;
+    state
+        .services
+        .authorize_backup_operation(&session)
+        .map_err(crate::map_core_err)?;
+
     let app_clone = app.clone();
 
     let picked =
@@ -244,7 +267,12 @@ pub async fn choose_backup_file(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
-    let _session = require_session(&state).await?;
+    let session = require_session(&state).await?;
+    state
+        .services
+        .authorize_backup_operation(&session)
+        .map_err(crate::map_core_err)?;
+
     let app_clone = app.clone();
 
     let picked = tokio::task::spawn_blocking(move || {
