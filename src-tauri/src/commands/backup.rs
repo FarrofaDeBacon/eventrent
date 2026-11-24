@@ -130,12 +130,17 @@ pub async fn run_backup_now(state: State<'_, AppState>) -> Result<BackupMetadata
         .await;
 
     // Executa rotação e retenção na pasta de destino
-    let _ = state.backup_service.execute_retention(
+    if let Err(retention_err) = state.backup_service.execute_retention(
         &dest_path,
         status.settings.retention_daily,
         status.settings.retention_weekly,
         status.settings.retention_monthly,
-    );
+    ) {
+        tracing::warn!(
+            error = %retention_err,
+            "Aviso: backup criado com sucesso, mas a política de retenção falhou ao rotacionar arquivos antigos"
+        );
+    }
 
     let meta = std::fs::metadata(&backup_file).ok();
     let file_size = meta.as_ref().map(|m| m.len()).unwrap_or(0);

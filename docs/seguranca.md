@@ -215,3 +215,13 @@ O mecanismo de segurança para cópias de salvaguarda e restauração offline fo
 6. **Conformidade com a LGPD e Proteção de Dados**:
    - O pacote de backup contém a totalidade dos dados operacionais e cadastrais da empresa (clientes, documentos, telefones, endereços e fornecedores).
    - A aplicação exibe avisos proeminentes de privacidade, instruindo os operadores sobre a necessidade de armazenar backups em mídias criptografadas com controle estrito de acesso físico e digital.
+
+7. **Autenticação Reforçada e Confirmação Tipográfica para Restauração**:
+   - Apenas operadores com permissão `backup:manage` (Proprietário) podem agendar restaurações.
+   - O agendamento exige a validação da senha do usuário em sessão (com contagem de lockout progressivo contra força bruta) e confirmação tipográfica explícita da palavra literal `RESTAURAR`.
+   - O hash SHA-256 do arquivo ZIP é registrado no marcador atômico `restore_pending.json` e revalidado a frio no momento da extração. Se o arquivo sofrer qualquer modificação entre o agendamento e o reinício, a restauração é abortada com reversão segura.
+
+8. **Agendamento em Background e Retenção Automatizada**:
+   - Backup automático diário gerenciado em background a cada 15 minutos e na inicialização após 24 horas sem cópias de segurança.
+   - Em caso de falha transitória na criação automática, o agendador impõe uma janela de espera mínima de 1 hora antes de nova tentativa para evitar sobrecarga.
+   - Retenção determinística por dias, semanas e meses com rotação segura na pasta configurada pelo usuário.

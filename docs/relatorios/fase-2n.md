@@ -54,6 +54,30 @@ Em `crates/core/src/domain/backup.rs`, a função `validate_zip_entry_name` vali
 <!-- prettier-ignore -->
 <!-- snippet: crates/core/src/domain/backup.rs:392-430 -->
 ```rust
+    }
+
+    // Valida magic bytes mínimos de um cabeçalho ZIP (PK\x03\x04 ou PK\x05\x06)
+    let mut header = [0u8; 4];
+    let mut f = std::fs::File::open(file_path)
+        .map_err(|e| CoreError::Internal(format!("Falha ao abrir arquivo para validação: {e}")))?;
+    use std::io::Read;
+    f.read_exact(&mut header).map_err(|e| {
+        CoreError::Validation(format!(
+            "Arquivo de backup vazio ou truncado (cabeçalho ZIP ausente): {e}"
+        ))
+    })?;
+
+    if header != [0x50, 0x4B, 0x03, 0x04] && header != [0x50, 0x4B, 0x05, 0x06] {
+        return Err(CoreError::Validation(format!(
+            "O arquivo '{}' não possui assinatura válida de pacote ZIP.",
+            file_path.display()
+        )));
+    }
+
+    Ok(())
+}
+
+/// Valida o nome de uma entrada dentro do arquivo ZIP contra vulnerabilidades de Zip-Slip (Path Traversal).
 pub fn validate_zip_entry_name(name: &str) -> Result<()> {
     if name.is_empty() {
         return Err(CoreError::Validation(
@@ -69,30 +93,6 @@ pub fn validate_zip_entry_name(name: &str) -> Result<()> {
     }
 
     // Rejeita caminhos contendo ':' (evita C:\, letras de unidade Windows e NTFS alternate data streams)
-    if name.contains(':') {
-        return Err(CoreError::Validation(format!(
-            "Possível ataque de Zip-Slip: caractere ':' não é permitido na entrada '{name}'"
-        )));
-    }
-
-    // Rejeita caminhos absolutos Unix ou Windows
-    if name.starts_with('/') || name.starts_with('\\') {
-        return Err(CoreError::Validation(format!(
-            "Possível ataque de Zip-Slip: caminho absoluto não é permitido '{name}'"
-        )));
-    }
-
-    // Valida cada segmento do caminho normalizado
-    for segment in name.split(['/', '\\']) {
-        if segment == ".." {
-            return Err(CoreError::Validation(format!(
-                "Possível ataque de Zip-Slip: segmento '..' detectado na entrada '{name}'"
-            )));
-        }
-    }
-
-    Ok(())
-}
 ```
 
 ### 2.2. Limites de Tamanho Total Descompactado e Razão de Compressão Anti Zip-Bomb (R3-b)
@@ -362,17 +362,17 @@ pub fn is_backup_due(
     }
 }
 
-/// Determina se o status de backup está "estéril" (> 7 dias sem backup ou nenhum backup já realizado).
-/// Aciona alerta fixo e destacado na interface de usuário.
-pub fn is_backup_stale(last_backup_at: Option<&str>, now: DateTime<Utc>) -> bool {
-    match last_backup_at {
-        None => true,
-        Some(s) => match DateTime::parse_from_rfc3339(s) {
-            Ok(dt) => (now - dt.with_timezone(&Utc)).num_days() >= 7,
-            Err(_) => true,
-        },
+/// Determina se um backup agendado está devido levando em consideração o status da última execução.
+/// Se a última execução falhou, o backup permanece devido assim que a janela de retry de 1 hora expirar.
+pub fn is_backup_due_with_status(
+    last_backup_at: Option<&str>,
+    last_backup_status: Option<&str>,
+    now: DateTime<Utc>,
+    schedule_enabled: bool,
+) -> bool {
+    if !schedule_enabled {
+        return false;
     }
-}
 ```
 
 ### 2.7. Snapshot Atômico Pré-Atualização Disparado na Inicialização (R3-g)
@@ -382,6 +382,7 @@ Em `src-tauri/src/lib.rs`, na rotina de boot do aplicativo desktop, o snapshot d
 <!-- prettier-ignore -->
 <!-- snippet: src-tauri/src/lib.rs:390-405 -->
 ```rust
+    }
 
     // Snapshot atômico de segurança pré-atualização antes de aplicar migrações ou abrir o banco
     if let Err(err) = backup_service
@@ -397,7 +398,6 @@ Em `src-tauri/src/lib.rs`, na rotina de boot do aplicativo desktop, o snapshot d
     tracing::info!(
         "Inicializando banco SQLite em: {}",
         db_path.to_string_lossy()
-    );
 ```
 
 ### 2.8. Trava RAII Anti-Concorrência (`BackupOperationGuard`)
@@ -437,6 +437,12 @@ Em `src/routes/settings/backup/+page.svelte`, o botão de confirmação permanec
 <!-- prettier-ignore -->
 <!-- snippet: src/routes/settings/backup/+page.svelte:728-763 -->
 ```svelte
+        <div>
+          <span class="font-medium text-foreground">Tamanho:</span>
+          {formatBytes(backupToRestore.byte_size)}
+        </div>
+        <div>
+          <span class="font-medium text-foreground">Versão:</span>
           v{backupToRestore.app_version} (schema #{backupToRestore.last_applied_migration})
         </div>
       </div>
@@ -467,12 +473,6 @@ Em `src/routes/settings/backup/+page.svelte`, o botão de confirmação permanec
           id="restore-password-input"
           type="password"
           placeholder="Digite sua senha de acesso atual"
-          bind:value={restorePasswordInput}
-        />
-      </div>
-
-      <div class="space-y-2">
-        <label
 ```
 
 ### 2.10. Teste E2E Playwright de Backup e Confirmação de Restauração

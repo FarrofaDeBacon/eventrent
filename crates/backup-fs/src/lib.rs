@@ -589,7 +589,9 @@ impl BackupFsService {
                                         last_applied_migration: manifest.last_applied_migration,
                                         is_compatible: is_compat,
                                         file_count: manifest.files.len(),
-                                        verified: manifest.database_integrity_checked,
+                                        // A listagem lê apenas o manifesto; a verificação profunda com conferência
+                                        // criptográfica de SHA-256 de todas as entradas ocorre sob demanda via verify_backup.
+                                        verified: false,
                                     });
                                 }
                             }

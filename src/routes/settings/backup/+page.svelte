@@ -13,6 +13,7 @@
     HardDrive,
     Lock,
     FileArchive,
+    ShieldCheck,
   } from "lucide-svelte";
   import {
     appSession,
@@ -212,6 +213,37 @@
       await loadData();
     } finally {
       isRunningBackup = false;
+    }
+  }
+
+  let verifyingFiles = $state<Record<string, boolean>>({});
+  let verifiedFiles = $state<Record<string, boolean>>({});
+
+  async function handleVerifyBackup(backup: BackupMetadataView) {
+    if (!canManage) return;
+    verifyingFiles[backup.file_name] = true;
+    try {
+      const res = await getBackupRepository().verifyBackup(backup.file_path);
+      if (res.valid) {
+        verifiedFiles[backup.file_name] = true;
+        toast.success(
+          `Integridade física de ${backup.file_name} verificada com sucesso!`,
+        );
+      } else {
+        verifiedFiles[backup.file_name] = false;
+        toast.error(
+          `Backup inválido: ${res.error_message || "Falha na verificação de integridade"}`,
+        );
+      }
+    } catch (err) {
+      verifiedFiles[backup.file_name] = false;
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "Erro ao verificar integridade do backup.",
+      );
+    } finally {
+      verifyingFiles[backup.file_name] = false;
     }
   }
 
@@ -605,6 +637,7 @@
                   <th class="py-3 px-4">Data de Criação</th>
                   <th class="py-3 px-4">Versão App / Schema</th>
                   <th class="py-3 px-4">Compatibilidade</th>
+                  <th class="py-3 px-4">Integridade</th>
                   <th class="py-3 px-4 text-right">Ação</th>
                 </tr>
               </thead>
@@ -643,6 +676,46 @@
                           <XCircle class="h-3 w-3" />
                           Incompatível
                         </Badge>
+                      {/if}
+                    </td>
+                    <td class="py-3 px-4 text-xs">
+                      {#if verifyingFiles[backup.file_name]}
+                        <Badge
+                          variant="outline"
+                          class="flex items-center gap-1 w-fit text-muted-foreground animate-pulse"
+                        >
+                          <RefreshCw class="h-3 w-3 animate-spin" />
+                          Verificando...
+                        </Badge>
+                      {:else if verifiedFiles[backup.file_name] === true || backup.verified}
+                        <Badge
+                          variant="outline"
+                          class="text-primary border-primary/30 flex items-center gap-1 w-fit"
+                          title="Integridade física e SHA-256 conferidos"
+                        >
+                          <CheckCircle2 class="h-3 w-3 text-primary" />
+                          Íntegro
+                        </Badge>
+                      {:else if verifiedFiles[backup.file_name] === false}
+                        <Badge
+                          variant="destructive"
+                          class="flex items-center gap-1 w-fit"
+                          title="Falha na integridade física do arquivo"
+                        >
+                          <AlertTriangle class="h-3 w-3" />
+                          Inválido
+                        </Badge>
+                      {:else}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          class="h-7 px-2 text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                          onclick={() => handleVerifyBackup(backup)}
+                          disabled={!canManage || isSchedulingRestore}
+                        >
+                          <ShieldCheck class="h-3.5 w-3.5 text-primary" />
+                          Verificar
+                        </Button>
                       {/if}
                     </td>
                     <td class="py-3 px-4 text-right">
