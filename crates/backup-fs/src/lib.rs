@@ -2493,14 +2493,22 @@ mod tests {
         let sample_media = env.media_dir.join("locked_file.png");
         fs::write(&sample_media, b"fake png data").unwrap();
 
-        // Trava o arquivo com compartilhamento exclusivo
+        // Trava o arquivo para leitura
         #[cfg(windows)]
         use std::os::windows::fs::OpenOptionsExt;
         let mut opts = std::fs::OpenOptions::new();
         opts.read(true).write(true);
         #[cfg(windows)]
-        opts.share_mode(0); // Bloqueia qualquer leitura concorrente
+        opts.share_mode(0); // Bloqueia qualquer leitura concorrente no Windows
         let _exclusive_file = opts.open(&sample_media).unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&sample_media).unwrap().permissions();
+            perms.set_mode(0o000); // Remove todas as permissões no Unix/Linux
+            fs::set_permissions(&sample_media, perms).unwrap();
+        }
 
         let conn_str = format!("sqlite://{}?mode=ro", env.db_path.display());
         let pool = SqlitePoolOptions::new().connect(&conn_str).await.unwrap();
@@ -2518,6 +2526,13 @@ mod tests {
             count, 0,
             "Nenhum arquivo final deve ser criado em caso de erro de leitura de mídia"
         );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&sample_media).unwrap().permissions();
+            perms.set_mode(0o644);
+            let _ = fs::set_permissions(&sample_media, perms);
+        }
         pool.close().await;
     }
 
