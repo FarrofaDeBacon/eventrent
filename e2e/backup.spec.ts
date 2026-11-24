@@ -86,6 +86,9 @@ test.describe("Fluxo E2E — Configuração, Execução e Agendamento de Restaur
     });
     await expect(confirmButton).toBeDisabled();
 
+    const passwordInput = page.locator("#restore-password-input");
+    await passwordInput.fill("SenhaForte#123");
+
     const confirmInput = page.locator("#restore-confirm-input");
     await confirmInput.fill("restaurar");
     await expect(confirmButton).toBeDisabled();

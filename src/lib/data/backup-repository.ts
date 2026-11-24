@@ -13,7 +13,10 @@ export interface BackupRepository {
   runBackupNow(): Promise<BackupMetadataView>;
   listBackups(folder?: string): Promise<BackupMetadataView[]>;
   verifyBackup(filePath: string): Promise<VerifyBackupResult>;
-  scheduleRestore(filePath: string): Promise<RestorePendingMarker>;
+  scheduleRestore(
+    filePath: string,
+    password: string,
+  ): Promise<RestorePendingMarker>;
   chooseFolder(): Promise<string | null>;
   chooseFile(): Promise<string | null>;
 }

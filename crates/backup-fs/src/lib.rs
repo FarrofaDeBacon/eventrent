@@ -40,6 +40,32 @@ pub struct RestoreReport {
     pub files_restored_count: usize,
 }
 
+/// Valida que o caminho relativo de mídia segue rigorosamente a estrutura canônica
+/// `media/<tenant_id>/<2_primeiros_hex>/<sha256_64_hex>`.
+pub fn validate_canonical_media_path(rel: &str) -> Result<()> {
+    validate_zip_entry_name(rel)?;
+    let parts: Vec<&str> = rel.split('/').collect();
+    if parts.len() != 3 {
+        return Err(CoreError::Validation(format!(
+            "Caminho de mídia deve seguir rigorosamente a estrutura canônica media/<tenant>/<prefix2>/<hash64>. Encontrado: media/{rel}"
+        )));
+    }
+    let tenant = parts[0];
+    let prefix2 = parts[1];
+    let hash64 = parts[2];
+    if tenant.is_empty() || prefix2.len() != 2 || hash64.len() != 64 {
+        return Err(CoreError::Validation(format!(
+            "Segmentos de mídia inválidos no caminho: media/{rel}"
+        )));
+    }
+    if !hash64.starts_with(prefix2) || !hash64.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(CoreError::Validation(format!(
+            "Nome do arquivo de mídia deve ser o hash SHA-256 canônico em hexadecimal de 64 caracteres: {hash64}"
+        )));
+    }
+    Ok(())
+}
+
 impl BackupFsService {
     pub fn new(
         app_data_dir: PathBuf,
@@ -909,8 +935,8 @@ impl BackupFsService {
     }
 
     /// Executa a restauração a frio no boot caso exista um marcador `restore_pending.json`.
-    /// NUNCA abre conexões do banco de dados antes deste procedimento.
-    pub fn execute_pending_restore_at_startup(
+    /// NUNCA abre conexões do banco de dados principal antes deste procedimento.
+    pub async fn execute_pending_restore_at_startup(
         &self,
         current_max_migration: i64,
     ) -> Result<Option<RestoreReport>> {
@@ -941,7 +967,7 @@ impl BackupFsService {
             )));
         }
 
-        // Validação profunda
+        // Validação profunda de integridade do arquivo
         let verify = self.verify_backup_file(&backup_file_path, current_max_migration)?;
         if !verify.valid {
             let _ = fs::rename(
@@ -965,91 +991,575 @@ impl BackupFsService {
             ));
         }
 
-        // Cria automaticamente um snapshot de salvaguarda prévia (pre-restore) do estado atual
+        // Validação de correspondência de hash do arquivo agendado
+        let mut f_chk = File::open(&backup_file_path).map_err(|e| {
+            CoreError::Internal(format!(
+                "Falha ao abrir backup para conferência de hash: {e}"
+            ))
+        })?;
+        let mut hasher = Sha256::new();
+        let mut chk_buf = [0u8; 64 * 1024];
+        loop {
+            let n = f_chk.read(&mut chk_buf).map_err(|e| {
+                CoreError::Internal(format!("Erro ao ler backup para verificação de hash: {e}"))
+            })?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&chk_buf[..n]);
+        }
+        let current_sha = format!("{:x}", hasher.finalize());
+        if current_sha != marker.backup_sha256 {
+            let _ = fs::rename(
+                &marker_path,
+                self.app_data_dir.join("restore_tampered.json"),
+            );
+            return Err(CoreError::Validation(format!(
+                "Restauração abortada: o hash do arquivo de backup divergiu desde o agendamento (esperado: {}, atual: {})",
+                marker.backup_sha256, current_sha
+            )));
+        }
+
+        // Abre arquivo ZIP e lê manifesto
+        let f = File::open(&backup_file_path).map_err(|e| {
+            let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+            CoreError::Internal(format!(
+                "Falha ao abrir arquivo de backup para restauração: {e}"
+            ))
+        })?;
+
+        let mut archive = ZipArchive::new(f).map_err(|e| {
+            let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+            CoreError::Internal(format!("Falha ao abrir arquivo ZIP de backup: {e}"))
+        })?;
+
+        let manifest = match verify.manifest {
+            Some(m) => m,
+            None => {
+                let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                return Err(CoreError::Validation(
+                    "Manifesto ausente no backup".to_string(),
+                ));
+            }
+        };
+
+        // Validação de limites declarados no manifesto
+        let mut total_declared_bytes: u64 = 0;
+        let mut manifest_map: HashMap<String, BackupFileEntry> = HashMap::new();
+        for entry in &manifest.files {
+            if entry.byte_size > MAX_SINGLE_FILE_UNCOMPRESSED_BYTES {
+                let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                return Err(CoreError::Validation(format!(
+                    "Entrada '{}' excede o limite máximo de tamanho de arquivo único (2 GiB)",
+                    entry.path
+                )));
+            }
+            total_declared_bytes += entry.byte_size;
+            manifest_map.insert(entry.path.clone(), entry.clone());
+        }
+
+        if total_declared_bytes > MAX_TOTAL_UNCOMPRESSED_BYTES {
+            let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+            return Err(CoreError::Validation(format!(
+                "Tamanho total descompactado declarado ({total_declared_bytes} bytes) excede o limite máximo permitido (5 GiB)"
+            )));
+        }
+
+        // Validação estrita de entradas no ZIP: NENHUMA entrada fora do manifesto é permitida
+        for i in 0..archive.len() {
+            let zf = archive.by_index(i).map_err(|e| {
+                let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                CoreError::Internal(format!("Falha ao ler entrada de índice {i} no zip: {e}"))
+            })?;
+            let name = zf.name().to_string();
+            if name == "manifest.json" {
+                continue;
+            }
+            if !manifest_map.contains_key(&name) {
+                let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                return Err(CoreError::Validation(format!(
+                    "Entrada não declarada no manifesto detectada no arquivo de backup: {name}"
+                )));
+            }
+            if let Some(rel) = name.strip_prefix("media/") {
+                validate_canonical_media_path(rel).inspect_err(|_| {
+                    let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                })?;
+            }
+        }
+
+        // Garante presença obrigatória do banco de dados no manifesto
+        if !manifest_map.contains_key("database/eventrent.db") {
+            let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+            return Err(CoreError::Validation(
+                "database/eventrent.db ausente no manifesto do backup".to_string(),
+            ));
+        }
+
+        // Cria snapshot de salvaguarda prévia (pre-restore) cobrindo banco e mídia com propagação estrita de erros
         let mut pre_restore_path_str = None;
         let db_backup_original = self.app_data_dir.join("eventrent.db.pre-restore.bak");
+        let _ = fs::remove_file(&db_backup_original);
+
         if self.db_path.exists() {
             let pre_restore_dir = self.app_data_dir.join("snapshots");
-            let _ = fs::create_dir_all(&pre_restore_dir);
+            fs::create_dir_all(&pre_restore_dir).map_err(|e| {
+                let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                CoreError::Internal(format!(
+                    "Falha ao criar diretório snapshots para pré-restauração: {e}"
+                ))
+            })?;
+
             let ts = Utc::now().format("%Y-%m-%d-%H%M%S").to_string();
             let pre_restore_file =
                 pre_restore_dir.join(format!("pre-restore_{ts}.eventrent-backup"));
+            let pre_restore_tmp =
+                pre_restore_dir.join(format!("pre-restore_{ts}.tmp.eventrent-backup"));
+            let _ = fs::remove_file(&pre_restore_tmp);
 
-            // Compacta db e mídia atuais para preservação integral
-            if let Ok(f) = File::create(&pre_restore_file) {
-                let mut zip = ZipWriter::new(f);
-                let opt =
-                    SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-                if let Ok(mut db_in) = File::open(&self.db_path) {
-                    if zip.start_file("database/eventrent.db", opt).is_ok() {
-                        let _ = std::io::copy(&mut db_in, &mut zip);
+            let f_pre = File::create(&pre_restore_tmp).map_err(|e| {
+                let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                CoreError::Internal(format!("Falha ao criar arquivo de pre-restore: {e}"))
+            })?;
+            let mut zip_pre = ZipWriter::new(f_pre);
+            let opt = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+            // Grava banco no pre-restore
+            zip_pre
+                .start_file("database/eventrent.db", opt)
+                .map_err(|e| {
+                    let _ = fs::remove_file(&pre_restore_tmp);
+                    let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                    CoreError::Internal(format!("Falha ao iniciar db no pre-restore: {e}"))
+                })?;
+            let mut db_in = File::open(&self.db_path).map_err(|e| {
+                let _ = fs::remove_file(&pre_restore_tmp);
+                let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                CoreError::Internal(format!("Falha ao ler db para pre-restore: {e}"))
+            })?;
+            std::io::copy(&mut db_in, &mut zip_pre).map_err(|e| {
+                let _ = fs::remove_file(&pre_restore_tmp);
+                let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                CoreError::Internal(format!("Falha ao gravar db no pre-restore: {e}"))
+            })?;
+
+            // Grava config.json se existir
+            if self.config_path.exists() {
+                zip_pre.start_file("config.json", opt).map_err(|e| {
+                    let _ = fs::remove_file(&pre_restore_tmp);
+                    let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                    CoreError::Internal(format!("Falha ao iniciar config no pre-restore: {e}"))
+                })?;
+                let mut cfg_in = File::open(&self.config_path).map_err(|e| {
+                    let _ = fs::remove_file(&pre_restore_tmp);
+                    let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                    CoreError::Internal(format!("Falha ao ler config para pre-restore: {e}"))
+                })?;
+                std::io::copy(&mut cfg_in, &mut zip_pre).map_err(|e| {
+                    let _ = fs::remove_file(&pre_restore_tmp);
+                    let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                    CoreError::Internal(format!("Falha ao gravar config no pre-restore: {e}"))
+                })?;
+            }
+
+            // Grava diretório media/ no pre-restore
+            if self.media_dir.exists() && self.media_dir.is_dir() {
+                let mut stack = vec![self.media_dir.clone()];
+                while let Some(current_dir) = stack.pop() {
+                    let rd = fs::read_dir(&current_dir).map_err(|e| {
+                        let _ = fs::remove_file(&pre_restore_tmp);
+                        let _ =
+                            fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                        CoreError::Internal(format!("Falha ao listar media para pre-restore: {e}"))
+                    })?;
+                    for entry in rd {
+                        let entry = entry.map_err(|e| {
+                            let _ = fs::remove_file(&pre_restore_tmp);
+                            let _ = fs::rename(
+                                &marker_path,
+                                self.app_data_dir.join("restore_failed.json"),
+                            );
+                            CoreError::Internal(format!("Falha ao ler entrada de media: {e}"))
+                        })?;
+                        let p = entry.path();
+                        if p.is_dir() {
+                            stack.push(p);
+                        } else if p.is_file() {
+                            let rel = p.strip_prefix(&self.media_dir).map_err(|e| {
+                                let _ = fs::remove_file(&pre_restore_tmp);
+                                let _ = fs::rename(
+                                    &marker_path,
+                                    self.app_data_dir.join("restore_failed.json"),
+                                );
+                                CoreError::Internal(format!(
+                                    "Falha ao calcular relativo de media: {e}"
+                                ))
+                            })?;
+                            let rel_str = rel.to_string_lossy().replace('\\', "/");
+                            let stored_opts = SimpleFileOptions::default()
+                                .compression_method(CompressionMethod::Stored);
+                            zip_pre
+                                .start_file(format!("media/{rel_str}"), stored_opts)
+                                .map_err(|e| {
+                                    let _ = fs::remove_file(&pre_restore_tmp);
+                                    let _ = fs::rename(
+                                        &marker_path,
+                                        self.app_data_dir.join("restore_failed.json"),
+                                    );
+                                    CoreError::Internal(format!(
+                                        "Falha ao iniciar media/{rel_str} no pre-restore: {e}"
+                                    ))
+                                })?;
+                            let mut mf = File::open(&p).map_err(|e| {
+                                let _ = fs::remove_file(&pre_restore_tmp);
+                                let _ = fs::rename(
+                                    &marker_path,
+                                    self.app_data_dir.join("restore_failed.json"),
+                                );
+                                CoreError::Internal(format!("Falha ao ler {}: {e}", p.display()))
+                            })?;
+                            std::io::copy(&mut mf, &mut zip_pre).map_err(|e| {
+                                let _ = fs::remove_file(&pre_restore_tmp);
+                                let _ = fs::rename(
+                                    &marker_path,
+                                    self.app_data_dir.join("restore_failed.json"),
+                                );
+                                CoreError::Internal(format!("Falha ao gravar {}: {e}", p.display()))
+                            })?;
+                        }
                     }
                 }
-                let _ = zip.finish();
-                pre_restore_path_str = Some(pre_restore_file.to_string_lossy().to_string());
             }
 
-            // Cria salvaguarda direta do arquivo .db para rollback imediato caso a substituição falhe
-            let _ = fs::copy(&self.db_path, &db_backup_original);
+            zip_pre.finish().map_err(|e| {
+                let _ = fs::remove_file(&pre_restore_tmp);
+                let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                CoreError::Internal(format!("Falha ao finalizar pacote zip de pre-restore: {e}"))
+            })?;
+
+            fs::rename(&pre_restore_tmp, &pre_restore_file).map_err(|e| {
+                let _ = fs::remove_file(&pre_restore_tmp);
+                let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                CoreError::Internal(format!("Falha ao renomear arquivo de pre-restore: {e}"))
+            })?;
+
+            // Cópia direta do .db para salvaguarda de rollback
+            fs::copy(&self.db_path, &db_backup_original).map_err(|e| {
+                let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                CoreError::Internal(format!(
+                    "Falha ao criar salvaguarda direta do banco .db: {e}"
+                ))
+            })?;
+
+            pre_restore_path_str = Some(pre_restore_file.to_string_lossy().to_string());
         }
 
-        // Descompacta e substitui atomicamente banco e mídia
-        let f = match File::open(&backup_file_path) {
-            Ok(file) => file,
-            Err(e) => {
-                let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
-                return Err(CoreError::Internal(format!(
-                    "Falha ao abrir arquivo de backup para restauração: {e}"
-                )));
-            }
-        };
-
-        let mut archive = match ZipArchive::new(f) {
-            Ok(a) => a,
-            Err(e) => {
-                let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
-                return Err(CoreError::Internal(format!(
-                    "Falha ao abrir arquivo ZIP de backup: {e}"
-                )));
-            }
-        };
-
-        // 1. Extrai banco de dados para arquivo temporário
+        // Rastreamento de arquivos criados para garantia de rollback integral
+        let mut extracted_media_paths: Vec<PathBuf> = Vec::new();
         let restored_db_tmp = self.app_data_dir.join("eventrent.restored.tmp.db");
+        let restored_cfg_tmp = self.app_data_dir.join("config.restored.tmp.json");
+        let _ = fs::remove_file(&restored_db_tmp);
+        let _ = fs::remove_file(&restored_cfg_tmp);
+
+        let rollback = |extracted: &[PathBuf]| {
+            let _ = fs::remove_file(&restored_db_tmp);
+            let _ = fs::remove_file(&restored_cfg_tmp);
+            for p in extracted {
+                let _ = fs::remove_file(p);
+            }
+            if db_backup_original.exists() {
+                let _ = fs::copy(&db_backup_original, &self.db_path);
+            }
+            let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+        };
+
+        // 1. Extrai e valida o banco de dados
         {
-            let db_zip_file = match archive.by_name("database/eventrent.db") {
+            let db_entry_meta = manifest_map.get("database/eventrent.db").unwrap();
+            let mut db_zip_file = match archive.by_name("database/eventrent.db") {
                 Ok(zf) => zf,
                 Err(e) => {
-                    let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                    rollback(&extracted_media_paths);
                     return Err(CoreError::Internal(format!(
-                        "database/eventrent.db ausente no backup: {e}"
+                        "database/eventrent.db ausente no zip: {e}"
                     )));
                 }
             };
 
-            let mut out_f = match File::create(&restored_db_tmp) {
-                Ok(file) => file,
+            let mut out_db = match File::create(&restored_db_tmp) {
+                Ok(f) => f,
                 Err(e) => {
-                    let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                    rollback(&extracted_media_paths);
                     return Err(CoreError::Internal(format!(
-                        "Falha ao criar arquivo temporário do banco restaurado: {e}"
+                        "Falha ao criar temporário do db restaurado: {e}"
                     )));
                 }
             };
 
-            if let Err(e) = std::io::copy(
-                &mut db_zip_file.take(MAX_SINGLE_FILE_UNCOMPRESSED_BYTES),
-                &mut out_f,
-            ) {
-                let _ = fs::remove_file(&restored_db_tmp);
-                let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
-                return Err(CoreError::Internal(format!(
-                    "Falha ao descompactar banco de dados: {e}"
+            let mut db_hasher = Sha256::new();
+            let mut db_total_bytes = 0u64;
+            let mut buf = [0u8; 64 * 1024];
+            loop {
+                let n = match db_zip_file.read(&mut buf) {
+                    Ok(read) => read,
+                    Err(e) => {
+                        rollback(&extracted_media_paths);
+                        return Err(CoreError::Internal(format!(
+                            "Erro ao descompactar banco de dados: {e}"
+                        )));
+                    }
+                };
+                if n == 0 {
+                    break;
+                }
+                db_total_bytes += n as u64;
+                if db_total_bytes > MAX_SINGLE_FILE_UNCOMPRESSED_BYTES {
+                    rollback(&extracted_media_paths);
+                    return Err(CoreError::Validation(
+                        "database/eventrent.db excede limite de 2 GiB".to_string(),
+                    ));
+                }
+                db_hasher.update(&buf[..n]);
+                if let Err(e) = out_db.write_all(&buf[..n]) {
+                    rollback(&extracted_media_paths);
+                    return Err(CoreError::Internal(format!(
+                        "Falha ao gravar banco descompactado: {e}"
+                    )));
+                }
+            }
+
+            if db_total_bytes != db_entry_meta.byte_size {
+                rollback(&extracted_media_paths);
+                return Err(CoreError::Validation(format!(
+                    "Tamanho do banco divergente do manifesto: esperado {}, obtido {}",
+                    db_entry_meta.byte_size, db_total_bytes
+                )));
+            }
+
+            let computed_db_sha = format!("{:x}", db_hasher.finalize());
+            if computed_db_sha != db_entry_meta.sha256 {
+                rollback(&extracted_media_paths);
+                return Err(CoreError::Validation(format!(
+                    "Hash SHA-256 do banco divergente do manifesto: esperado {}, obtido {}",
+                    db_entry_meta.sha256, computed_db_sha
                 )));
             }
         }
 
-        // 2. Substitui o banco de dados oficial com garantia de rollback
+        // 2. Validação física de integridade no banco restaurado via PRAGMA integrity_check
+        {
+            let check_conn = format!("sqlite://{}?mode=ro", restored_db_tmp.display());
+            let check_pool = match sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect(&check_conn)
+                .await
+            {
+                Ok(p) => p,
+                Err(e) => {
+                    rollback(&extracted_media_paths);
+                    return Err(CoreError::Internal(format!(
+                        "Falha ao conectar no banco restaurado para integrity_check: {e}"
+                    )));
+                }
+            };
+
+            let integrity_res: std::result::Result<String, sqlx::Error> =
+                sqlx::query_scalar("PRAGMA integrity_check")
+                    .fetch_one(&check_pool)
+                    .await;
+            check_pool.close().await;
+
+            match integrity_res {
+                Ok(ref integrity) if integrity == "ok" => {}
+                Ok(integrity) => {
+                    rollback(&extracted_media_paths);
+                    return Err(CoreError::Validation(format!(
+                        "Restauração abortada: PRAGMA integrity_check reprovou o banco: {integrity}"
+                    )));
+                }
+                Err(e) => {
+                    rollback(&extracted_media_paths);
+                    return Err(CoreError::Internal(format!(
+                        "Falha ao executar PRAGMA integrity_check no banco restaurado: {e}"
+                    )));
+                }
+            }
+        }
+
+        // 3. Extrai config.json se presente
+        let has_config = manifest_map.contains_key("config.json");
+        if has_config {
+            let cfg_meta = manifest_map.get("config.json").unwrap();
+            let mut cfg_zip = match archive.by_name("config.json") {
+                Ok(zf) => zf,
+                Err(e) => {
+                    rollback(&extracted_media_paths);
+                    return Err(CoreError::Internal(format!(
+                        "config.json declarado mas ausente no zip: {e}"
+                    )));
+                }
+            };
+            let mut out_cfg = match File::create(&restored_cfg_tmp) {
+                Ok(f) => f,
+                Err(e) => {
+                    rollback(&extracted_media_paths);
+                    return Err(CoreError::Internal(format!(
+                        "Falha ao criar temporário de config.json: {e}"
+                    )));
+                }
+            };
+            let mut cfg_hasher = Sha256::new();
+            let mut cfg_total_bytes = 0u64;
+            let mut buf = [0u8; 64 * 1024];
+            loop {
+                let n = match cfg_zip.read(&mut buf) {
+                    Ok(read) => read,
+                    Err(e) => {
+                        rollback(&extracted_media_paths);
+                        return Err(CoreError::Internal(format!(
+                            "Erro ao ler config.json no zip: {e}"
+                        )));
+                    }
+                };
+                if n == 0 {
+                    break;
+                }
+                cfg_total_bytes += n as u64;
+                cfg_hasher.update(&buf[..n]);
+                if let Err(e) = out_cfg.write_all(&buf[..n]) {
+                    rollback(&extracted_media_paths);
+                    return Err(CoreError::Internal(format!(
+                        "Falha ao gravar config.json temporário: {e}"
+                    )));
+                }
+            }
+            if cfg_total_bytes != cfg_meta.byte_size
+                || format!("{:x}", cfg_hasher.finalize()) != cfg_meta.sha256
+            {
+                rollback(&extracted_media_paths);
+                return Err(CoreError::Validation(
+                    "config.json adulterado ou com hash divergente do manifesto".to_string(),
+                ));
+            }
+        }
+
+        // 4. Extrai mídia com validação SHA individual e verificação canônica
+        let mut files_restored_count = 1; // database contado
+        for i in 0..archive.len() {
+            let mut zf = match archive.by_index(i) {
+                Ok(file) => file,
+                Err(e) => {
+                    rollback(&extracted_media_paths);
+                    return Err(CoreError::Internal(format!(
+                        "Falha ao acessar entrada de mídia {i}: {e}"
+                    )));
+                }
+            };
+            let name = zf.name().to_string();
+            if let Some(rel) = name.strip_prefix("media/") {
+                if rel.is_empty() {
+                    continue;
+                }
+                let meta = match manifest_map.get(&name) {
+                    Some(m) => m,
+                    None => {
+                        rollback(&extracted_media_paths);
+                        return Err(CoreError::Validation(format!(
+                            "Arquivo de mídia não declarado: {name}"
+                        )));
+                    }
+                };
+
+                let target_path = self.media_dir.join(rel);
+                if !target_path.starts_with(&self.media_dir) {
+                    rollback(&extracted_media_paths);
+                    return Err(CoreError::Validation(format!(
+                        "Tentativa de Zip-Slip interceptada: {name}"
+                    )));
+                }
+
+                if let Some(parent) = target_path.parent() {
+                    if let Err(e) = fs::create_dir_all(parent) {
+                        rollback(&extracted_media_paths);
+                        return Err(CoreError::Internal(format!(
+                            "Falha ao criar diretório para {name}: {e}"
+                        )));
+                    }
+                }
+
+                let target_tmp = target_path.with_extension("restore_tmp");
+                let mut out_m = match File::create(&target_tmp) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        rollback(&extracted_media_paths);
+                        return Err(CoreError::Internal(format!(
+                            "Falha ao criar arquivo de mídia temporário: {e}"
+                        )));
+                    }
+                };
+
+                let mut m_hasher = Sha256::new();
+                let mut m_total_bytes = 0u64;
+                let mut buf = [0u8; 64 * 1024];
+                loop {
+                    let n = match zf.read(&mut buf) {
+                        Ok(read) => read,
+                        Err(e) => {
+                            let _ = fs::remove_file(&target_tmp);
+                            rollback(&extracted_media_paths);
+                            return Err(CoreError::Internal(format!("Erro ao ler {name}: {e}")));
+                        }
+                    };
+                    if n == 0 {
+                        break;
+                    }
+                    m_total_bytes += n as u64;
+                    if m_total_bytes > MAX_SINGLE_FILE_UNCOMPRESSED_BYTES {
+                        let _ = fs::remove_file(&target_tmp);
+                        rollback(&extracted_media_paths);
+                        return Err(CoreError::Validation(format!(
+                            "{name} excede o limite de 2 GiB"
+                        )));
+                    }
+                    m_hasher.update(&buf[..n]);
+                    if let Err(e) = out_m.write_all(&buf[..n]) {
+                        let _ = fs::remove_file(&target_tmp);
+                        rollback(&extracted_media_paths);
+                        return Err(CoreError::Internal(format!(
+                            "Falha ao gravar mídia {name}: {e}"
+                        )));
+                    }
+                }
+
+                let computed_m_sha = format!("{:x}", m_hasher.finalize());
+                let parts: Vec<&str> = rel.split('/').collect();
+                let expected_filename_hash = parts.last().copied().unwrap_or_default();
+
+                if m_total_bytes != meta.byte_size
+                    || computed_m_sha != meta.sha256
+                    || computed_m_sha != expected_filename_hash
+                {
+                    let _ = fs::remove_file(&target_tmp);
+                    rollback(&extracted_media_paths);
+                    return Err(CoreError::Validation(format!(
+                        "Hash ou tamanho divergente no arquivo de mídia {name} (calculado: {computed_m_sha}, manifesto: {})",
+                        meta.sha256
+                    )));
+                }
+
+                if let Err(e) = fs::rename(&target_tmp, &target_path) {
+                    let _ = fs::remove_file(&target_tmp);
+                    rollback(&extracted_media_paths);
+                    return Err(CoreError::Internal(format!(
+                        "Falha ao mover mídia restaurada {name}: {e}"
+                    )));
+                }
+                extracted_media_paths.push(target_path);
+                files_restored_count += 1;
+            }
+        }
+
+        // 5. Substituição atômica final do banco e config
         let replace_result = if fs::rename(&restored_db_tmp, &self.db_path).is_err() {
             fs::copy(&restored_db_tmp, &self.db_path)
                 .map(|_| ())
@@ -1061,11 +1571,7 @@ impl BackupFsService {
         let _ = fs::remove_file(&restored_db_tmp);
 
         if let Err(replace_err) = replace_result {
-            // Rollback para estado pré-restauração
-            if db_backup_original.exists() {
-                let _ = fs::copy(&db_backup_original, &self.db_path);
-            }
-            let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+            rollback(&extracted_media_paths);
             return Err(CoreError::Internal(format!(
                 "Falha ao substituir banco de dados. Estado original restaurado: {replace_err}"
             )));
@@ -1076,73 +1582,18 @@ impl BackupFsService {
         let _ = fs::remove_file(wal_path);
         let _ = fs::remove_file(shm_path);
 
-        // 3. Extrai config.json se presente
-        if let Ok(cfg_zip) = archive.by_name("config.json") {
-            let tmp_cfg = self.app_data_dir.join("config.restored.tmp.json");
-            if let Ok(mut out) = File::create(&tmp_cfg) {
-                if std::io::copy(
-                    &mut cfg_zip.take(MAX_SINGLE_FILE_UNCOMPRESSED_BYTES),
-                    &mut out,
-                )
-                .is_ok()
-                {
-                    let _ = fs::rename(&tmp_cfg, &self.config_path);
-                }
-            }
-            let _ = fs::remove_file(tmp_cfg);
+        if has_config && restored_cfg_tmp.exists() {
+            let _ = fs::rename(&restored_cfg_tmp, &self.config_path);
         }
+        let _ = fs::remove_file(&restored_cfg_tmp);
 
-        // 4. Extrai mídia com validação estrita anti Zip-Slip
-        let mut files_restored_count = 1;
-        for i in 0..archive.len() {
-            if let Ok(file) = archive.by_index(i) {
-                let name = file.name().to_string();
-                if let Some(rel) = name.strip_prefix("media/") {
-                    if !rel.is_empty() {
-                        // Valida nome da entrada contra Zip-Slip
-                        if let Err(e) = validate_zip_entry_name(rel) {
-                            tracing::warn!(
-                                file = %name,
-                                "Entrada de mídia ignorada por falha na validação de caminho seguro: {e}"
-                            );
-                            continue;
-                        }
-
-                        // Garante que o target_path está estritamente contido em media_dir
-                        let target_path = self.media_dir.join(rel);
-                        if !target_path.starts_with(&self.media_dir) {
-                            tracing::warn!(
-                                file = %name,
-                                "Possível ataque de Zip-Slip interceptado: entrada tenta escapar do diretório de mídia."
-                            );
-                            continue;
-                        }
-
-                        if let Some(parent) = target_path.parent() {
-                            let _ = fs::create_dir_all(parent);
-                        }
-                        if let Ok(mut out) = File::create(&target_path) {
-                            if std::io::copy(
-                                &mut file.take(MAX_SINGLE_FILE_UNCOMPRESSED_BYTES),
-                                &mut out,
-                            )
-                            .is_ok()
-                            {
-                                files_restored_count += 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Remove o marcador de restauração concluída e a salvaguarda local
+        // Remove o marcador de restauração pendente e o backup original de rollback
         let _ = fs::remove_file(&marker_path);
         let _ = fs::remove_file(&db_backup_original);
 
         tracing::info!(
             files_restored_count,
-            "Restauração a frio concluída com absoluto sucesso."
+            "Restauração a frio concluída com absoluto sucesso e integridade total comprovada."
         );
 
         Ok(Some(RestoreReport {
@@ -1424,10 +1875,15 @@ mod tests {
             // Grava config.json
             fs::write(&config_path, r#"{"theme": "dark"}"#).unwrap();
 
-            // Grava arquivo de mídia de teste
-            let sample_media = media_dir.join("images").join("logo.png");
-            fs::create_dir_all(sample_media.parent().unwrap()).unwrap();
-            fs::write(&sample_media, b"\x89PNG\r\n\x1a\nfake_image_bytes").unwrap();
+            // Grava arquivo de mídia de teste no padrão canônico media/<tenant>/<prefix2>/<sha256>
+            let img_bytes = b"\x89PNG\r\n\x1a\nfake_image_bytes";
+            let mut hasher = Sha256::new();
+            hasher.update(img_bytes);
+            let sha = format!("{:x}", hasher.finalize());
+            let sample_dir = media_dir.join("default").join(&sha[..2]);
+            fs::create_dir_all(&sample_dir).unwrap();
+            let sample_media = sample_dir.join(&sha);
+            fs::write(&sample_media, img_bytes).unwrap();
 
             // Inicializa banco SQLite com tabela de teste
             let conn_str = format!("sqlite://{}?mode=rwc", db_path.display());
@@ -1583,6 +2039,7 @@ mod tests {
         // Executa restauração a frio no boot
         let report = service
             .execute_pending_restore_at_startup(10)
+            .await
             .expect("Restauração a frio executada com sucesso")
             .expect("Relatório deve estar presente");
 
@@ -1922,7 +2379,7 @@ mod tests {
         )
         .unwrap();
 
-        let res = service.execute_pending_restore_at_startup(10);
+        let res = service.execute_pending_restore_at_startup(10).await;
         assert!(
             res.is_err(),
             "Restauração de arquivo corrompido deve falhar"
@@ -2231,5 +2688,192 @@ mod tests {
         assert!(!s1.exists(), "Snapshot antigo (s1) deve ser removido");
         assert!(!s2.exists(), "Snapshot antigo (s2) deve ser removido");
         assert!(!tmp.exists(), "Arquivo temporário órfão deve ser removido");
+    }
+
+    #[tokio::test]
+    async fn test_restore_fails_when_zip_contains_undeclared_entry() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        let conn_str = format!("sqlite://{}?mode=ro", env.db_path.display());
+        let pool = SqlitePoolOptions::new().connect(&conn_str).await.unwrap();
+        let (_manifest, backup_path) = service
+            .run_backup(&env.backup_dest, &pool, "0.10.0-fase2n")
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let modified_zip = env.backup_dest.join("undeclared_entry.eventrent-backup");
+        {
+            let src = File::open(&backup_path).unwrap();
+            let mut archive = ZipArchive::new(src).unwrap();
+            let dst = File::create(&modified_zip).unwrap();
+            let mut writer = ZipWriter::new(dst);
+            let opt = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+            for i in 0..archive.len() {
+                let mut e = archive.by_index(i).unwrap();
+                let name = e.name().to_string();
+                let mut d = Vec::new();
+                e.read_to_end(&mut d).unwrap();
+                writer.start_file(name, opt).unwrap();
+                writer.write_all(&d).unwrap();
+            }
+            // Injeta arquivo não declarado
+            writer.start_file("secret_payload.txt", opt).unwrap();
+            writer.write_all(b"malicious injected entry").unwrap();
+            writer.finish().unwrap();
+        }
+
+        let schedule_res = service.schedule_restore(&modified_zip, "usr_admin", 10);
+        // O schedule pode passar ou falhar dependendo da auto-verificação; se passar, execute_pending_restore_at_startup DEVE falhar
+        if schedule_res.is_ok() {
+            let res = service.execute_pending_restore_at_startup(10).await;
+            assert!(
+                res.is_err(),
+                "Restauração deve falhar categoricamente quando há entrada não declarada"
+            );
+            let err_str = res.err().unwrap().to_string();
+            assert!(
+                err_str.contains("não declarada no manifesto") || err_str.contains("inválido"),
+                "Mensagem deve apontar entrada não declarada: {err_str}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_restore_fails_when_media_path_not_canonical() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        let conn_str = format!("sqlite://{}?mode=ro", env.db_path.display());
+        let pool = SqlitePoolOptions::new().connect(&conn_str).await.unwrap();
+        let (_manifest, backup_path) = service
+            .run_backup(&env.backup_dest, &pool, "0.10.0-fase2n")
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let non_canonical_zip = env.backup_dest.join("non_canonical.eventrent-backup");
+        {
+            let src = File::open(&backup_path).unwrap();
+            let mut archive = ZipArchive::new(src).unwrap();
+            let dst = File::create(&non_canonical_zip).unwrap();
+            let mut writer = ZipWriter::new(dst);
+            let opt = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+            let bad_media_name = "media/not_canonical_file.png";
+            let mut manifest: Option<BackupManifest> = None;
+
+            for i in 0..archive.len() {
+                let mut e = archive.by_index(i).unwrap();
+                let name = e.name().to_string();
+                let mut d = Vec::new();
+                e.read_to_end(&mut d).unwrap();
+                if name == "manifest.json" {
+                    let mut mf: BackupManifest = serde_json::from_slice(&d).unwrap();
+                    mf.files.push(BackupFileEntry {
+                        path: bad_media_name.to_string(),
+                        byte_size: 10,
+                        sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+                            .to_string(),
+                    });
+                    manifest = Some(mf);
+                } else {
+                    writer.start_file(name, opt).unwrap();
+                    writer.write_all(&d).unwrap();
+                }
+            }
+            if let Some(mf) = manifest {
+                let data = serde_json::to_vec_pretty(&mf).unwrap();
+                writer.start_file("manifest.json", opt).unwrap();
+                writer.write_all(&data).unwrap();
+            }
+            writer.start_file(bad_media_name, opt).unwrap();
+            writer.write_all(b"1234567890").unwrap();
+            writer.finish().unwrap();
+        }
+
+        let schedule_res = service.schedule_restore(&non_canonical_zip, "usr_admin", 10);
+        if schedule_res.is_ok() {
+            let res = service.execute_pending_restore_at_startup(10).await;
+            assert!(
+                res.is_err(),
+                "Restauração deve falhar com caminho de mídia não canônico"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_restore_fails_and_rolls_back_when_file_sha_mismatch() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        let initial_db_bytes = fs::read(&env.db_path).unwrap();
+
+        let conn_str = format!("sqlite://{}?mode=ro", env.db_path.display());
+        let pool = SqlitePoolOptions::new().connect(&conn_str).await.unwrap();
+        let (_manifest, backup_path) = service
+            .run_backup(&env.backup_dest, &pool, "0.10.0-fase2n")
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let sha_mismatch_zip = env.backup_dest.join("sha_mismatch.eventrent-backup");
+        {
+            let src = File::open(&backup_path).unwrap();
+            let mut archive = ZipArchive::new(src).unwrap();
+            let dst = File::create(&sha_mismatch_zip).unwrap();
+            let mut writer = ZipWriter::new(dst);
+            let opt = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+            for i in 0..archive.len() {
+                let mut e = archive.by_index(i).unwrap();
+                let name = e.name().to_string();
+                let mut d = Vec::new();
+                e.read_to_end(&mut d).unwrap();
+                if name.starts_with("media/") {
+                    // Adultera os bytes de mídia para forçar mismatch de SHA
+                    if let Some(first) = d.first_mut() {
+                        *first ^= 0xFF;
+                    }
+                }
+                writer.start_file(name, opt).unwrap();
+                writer.write_all(&d).unwrap();
+            }
+            writer.finish().unwrap();
+        }
+
+        // Agenda marcador
+        let mut hasher = Sha256::new();
+        let bytes = fs::read(&sha_mismatch_zip).unwrap();
+        hasher.update(&bytes);
+        let marker = RestorePendingMarker {
+            backup_file_path: sha_mismatch_zip.to_string_lossy().to_string(),
+            backup_sha256: format!("{:x}", hasher.finalize()),
+            scheduled_at: Utc::now().to_rfc3339(),
+            scheduled_by_user_id: "usr_admin".to_string(),
+        };
+        fs::write(
+            env.app_data_dir.join(RESTORE_PENDING_FILE),
+            serde_json::to_string(&marker).unwrap(),
+        )
+        .unwrap();
+
+        let res = service.execute_pending_restore_at_startup(10).await;
+        assert!(
+            res.is_err(),
+            "Restauração deve falhar quando SHA-256 for divergente"
+        );
+
+        // Banco original deve ser preservado intacto pelo rollback
+        let current_db_bytes = fs::read(&env.db_path).unwrap();
+        assert_eq!(
+            current_db_bytes, initial_db_bytes,
+            "Rollback deve garantir que banco de dados continue intacto"
+        );
     }
 }

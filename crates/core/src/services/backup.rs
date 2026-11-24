@@ -14,6 +14,21 @@ impl CoreServices {
         self.check_session_and_permission(session, PERM_BACKUP_MANAGE)
     }
 
+    /// Autoriza uma operação de agendamento de restauração:
+    /// 1. Exige sessão ativa e permissão `backup:manage`.
+    /// 2. Valida a senha atual do usuário ativo na sessão com proteção de lockout progressivo.
+    pub async fn authorize_restore_operation(
+        &self,
+        session: &SessionInfo,
+        current_password: &str,
+        policy: &crate::domain::LoginPolicy,
+    ) -> Result<()> {
+        self.authorize_backup_operation(session)?;
+        self.verify_user_password_with_lockout(session, current_password, policy, "restore")
+            .await?;
+        Ok(())
+    }
+
     /// Consulta o status consolidado de backup do tenant atual.
     /// Exige sessão válida e permissão `backup:manage`.
     pub async fn get_backup_status(&self, session: &SessionInfo) -> Result<BackupStatus> {

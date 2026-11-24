@@ -383,7 +383,13 @@ Em `src-tauri/src/lib.rs`, na rotina de boot do aplicativo desktop, o snapshot d
 <!-- snippet: src-tauri/src/lib.rs:390-405 -->
 ```rust
     // Snapshot atômico de segurança pré-atualização antes de aplicar migrações ou abrir o banco
-    if let Err(err) = backup_service.create_pre_update_snapshot_if_needed(&db_path) {
+    if let Err(err) = backup_service
+        .create_pre_update_snapshot_if_needed(
+            &db_path,
+            eventrent_store_sqlite::CURRENT_MAX_MIGRATION,
+        )
+        .await
+    {
         tracing::warn!("Aviso: falha ao gerar snapshot pré-atualização: {err}");
     }
 
@@ -392,12 +398,6 @@ Em `src-tauri/src/lib.rs`, na rotina de boot do aplicativo desktop, o snapshot d
         db_path.to_string_lossy()
     );
 
-    let pool = init_db(&db_path).await.map_err(|e| {
-        tracing::error!("Erro crítico ao inicializar banco SQLite: {}", e);
-        (
-            format!("Falha ao inicializar ou migrar o banco de dados local: {e}"),
-            log_dir_display.clone(),
-        )
 ```
 
 ### 2.8. Trava RAII Anti-Concorrência (`BackupOperationGuard`)

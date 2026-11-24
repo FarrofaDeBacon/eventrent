@@ -1215,12 +1215,16 @@ describe("R3 / Tarefa 0.3 — Contratos Reais Rust ↔ TypeScript e Cobertura do
       mockedInvoke.mockResolvedValueOnce(fix.sample_output);
       const res = await repo.scheduleRestore(
         "C:\\Backups\\EventRent\\backup.eventrent-backup",
+        "SenhaForte#123",
       );
       expect(
         commandReturnSchemas["schedule_restore"].safeParse(res).success,
       ).toBe(true);
       expect(mockedInvoke).toHaveBeenCalledWith("schedule_restore", {
-        input: { file_path: "C:\\Backups\\EventRent\\backup.eventrent-backup" },
+        input: {
+          file_path: "C:\\Backups\\EventRent\\backup.eventrent-backup",
+          password: "SenhaForte#123",
+        },
       });
     });
 

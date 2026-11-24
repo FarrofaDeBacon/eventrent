@@ -34,9 +34,15 @@ export class TauriBackupRepository implements BackupRepository {
     });
   }
 
-  async scheduleRestore(filePath: string): Promise<RestorePendingMarker> {
+  async scheduleRestore(
+    filePath: string,
+    password: string,
+  ): Promise<RestorePendingMarker> {
     return invoke<RestorePendingMarker>("schedule_restore", {
-      input: { file_path: filePath },
+      input: {
+        file_path: filePath,
+        password,
+      },
     });
   }
 

@@ -825,6 +825,14 @@ async fn test_backup_commands_rbac_technician_and_commercial_forbidden_and_owner
         matches!(res, Err(CoreError::Forbidden(_))),
         "schedule_restore deve ser proibido para técnico"
     );
+    let res_restore = app_state
+        .services
+        .authorize_restore_operation(&tech_session, "SenhaQualquer", &LoginPolicy::default())
+        .await;
+    assert!(
+        matches!(res_restore, Err(CoreError::Forbidden(_))),
+        "authorize_restore_operation deve ser proibido para técnico"
+    );
 
     // 7) choose_backup_folder (autorização no core)
     let res = app_state.services.authorize_backup_operation(&tech_session);
@@ -866,6 +874,15 @@ async fn test_backup_commands_rbac_technician_and_commercial_forbidden_and_owner
         "authorize_backup_operation deve ser proibido para comercial"
     );
 
+    let res_comm_restore = app_state
+        .services
+        .authorize_restore_operation(&comm_session, "SenhaQualquer", &LoginPolicy::default())
+        .await;
+    assert!(
+        matches!(res_comm_restore, Err(CoreError::Forbidden(_))),
+        "authorize_restore_operation deve ser proibido para comercial"
+    );
+
     // 5. Testa com o Proprietário -> DEVE ter permissão
     assert!(
         app_state
@@ -881,5 +898,29 @@ async fn test_backup_commands_rbac_technician_and_commercial_forbidden_and_owner
             .authorize_backup_operation(&owner_session)
             .is_ok(),
         "Proprietário deve ter autorização para operações de backup"
+    );
+    let owner_wrong_pw = app_state
+        .services
+        .authorize_restore_operation(
+            &owner_session,
+            "SenhaIncorreta#999",
+            &LoginPolicy::default(),
+        )
+        .await;
+    assert!(
+        matches!(owner_wrong_pw, Err(CoreError::InvalidCredentials)),
+        "schedule_restore com senha incorreta deve retornar InvalidCredentials"
+    );
+    let owner_right_pw = app_state
+        .services
+        .authorize_restore_operation(
+            &owner_session,
+            "SenhaForteOwner123!",
+            &LoginPolicy::default(),
+        )
+        .await;
+    assert!(
+        owner_right_pw.is_ok(),
+        "schedule_restore com senha correta do proprietário deve ser autorizado com sucesso"
     );
 }

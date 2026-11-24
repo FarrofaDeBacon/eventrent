@@ -365,6 +365,7 @@ async fn initialize_app(app_handle: &AppHandle) -> Result<(AppState, PathBuf), (
     // Executa restauração a frio pendente antes de abrir conexões do banco de dados (ADR-0017)
     match backup_service
         .execute_pending_restore_at_startup(eventrent_store_sqlite::CURRENT_MAX_MIGRATION)
+        .await
     {
         Ok(Some(report)) => {
             tracing::info!(

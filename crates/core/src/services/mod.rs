@@ -1029,6 +1029,150 @@ impl CoreServices {
         })
     }
 
+    /// Valida a senha do usuário ativo na sessão aplicando bloqueio progressivo por tentativas falhas e Argon2id.
+    pub async fn verify_user_password_with_lockout(
+        &self,
+        session: &SessionInfo,
+        current_password: &str,
+        policy: &LoginPolicy,
+        operation_name: &str,
+    ) -> Result<()> {
+        self.verify_session_active(session)?;
+
+        let maybe_user = self
+            .stores
+            .users
+            .find_by_id(&session.tenant_id, &session.user_id)
+            .await?;
+        let user = match maybe_user {
+            Some(u) if u.active => u,
+            _ => {
+                return Err(CoreError::Unauthorized(
+                    "Usuário inválido ou inativo.".to_string(),
+                ))
+            }
+        };
+
+        let now = Utc::now();
+        if let Some(ref locked_str) = user.locked_until {
+            if let Ok(locked_dt) = DateTime::parse_from_rfc3339(locked_str) {
+                if locked_dt.with_timezone(&Utc) > now {
+                    if policy.reveal_account_locked {
+                        return Err(CoreError::AccountLocked {
+                            locked_until: locked_str.clone(),
+                        });
+                    } else {
+                        return Err(CoreError::InvalidCredentials);
+                    }
+                }
+            }
+        }
+
+        if !verify_secret(current_password, &user.password_hash).await? {
+            let tenant_id_str = session.tenant_id.clone();
+            let user_id_str = user.id.clone();
+            let email_str = user.email.clone();
+            let op_str = operation_name.to_string();
+
+            let outcome = self
+                .run_transaction(|stores| {
+                    let tenant_id = tenant_id_str.clone();
+                    let user_id = user_id_str.clone();
+                    let email = email_str.clone();
+                    let op = op_str.clone();
+
+                    Box::pin(async move {
+                        let now = Utc::now();
+                        let now_str = now.to_rfc3339();
+                        let new_failures = stores
+                            .users()
+                            .increment_login_failure(&tenant_id, &user_id, &now_str)
+                            .await?;
+                        let lockout_secs = calculate_lockout_seconds(new_failures);
+                        let locked_until = if lockout_secs > 0 {
+                            Some((now + Duration::seconds(lockout_secs)).to_rfc3339())
+                        } else {
+                            None
+                        };
+
+                        if let Some(ref until) = locked_until {
+                            stores
+                                .users()
+                                .set_login_lockout(
+                                    &tenant_id,
+                                    &user_id,
+                                    Some(until.as_str()),
+                                    &now_str,
+                                )
+                                .await?;
+
+                            stores
+                                .audit()
+                                .append(&build_audit_entry(
+                                    &tenant_id,
+                                    Some(&user_id),
+                                    &format!("auth.{op}_locked"),
+                                    "user",
+                                    &user_id,
+                                    &format!(
+                                        "Conta bloqueada temporariamente após {new_failures} falhas consecutivas em {op}"
+                                    ),
+                                ))
+                                .await?;
+
+                            Ok(Some(until.clone()))
+                        } else {
+                            let masked_email = mask_email_for_audit(&email);
+                            stores
+                                .audit()
+                                .append(&build_audit_entry(
+                                    &tenant_id,
+                                    Some(&user_id),
+                                    &format!("auth.{op}_failed"),
+                                    "user",
+                                    &user_id,
+                                    &format!(
+                                        "Senha incorreta ao tentar operação {op} ({new_failures}) para {masked_email}"
+                                    ),
+                                ))
+                                .await?;
+
+                            Ok(None)
+                        }
+                    })
+                })
+                .await?;
+
+            if let Some(locked_until) = outcome {
+                if policy.reveal_account_locked {
+                    return Err(CoreError::AccountLocked { locked_until });
+                }
+            }
+            return Err(CoreError::InvalidCredentials);
+        }
+
+        // Senha correta: limpa eventuais tentativas falhas
+        if user.failed_attempts > 0 || user.locked_until.is_some() {
+            let tenant_id_str = session.tenant_id.clone();
+            let user_id_str = user.id.clone();
+            let _ = self
+                .run_transaction(|stores| {
+                    let tenant_id = tenant_id_str.clone();
+                    let user_id = user_id_str.clone();
+                    Box::pin(async move {
+                        let now_str = Utc::now().to_rfc3339();
+                        stores
+                            .users()
+                            .record_login_success(&tenant_id, &user_id, &now_str)
+                            .await
+                    })
+                })
+                .await;
+        }
+
+        Ok(())
+    }
+
     /// Regenera a chave de recuperação de um usuário autenticado.
     /// Exige a senha atual para validação, aplica política de lockout em caso de senha errada idêntica ao login,
     /// grava auditoria na mesma transação e devolve a nova chave em texto plano para exibição única.

@@ -139,7 +139,13 @@ export class MockBackupRepository implements BackupRepository {
     };
   }
 
-  async scheduleRestore(filePath: string): Promise<RestorePendingMarker> {
+  async scheduleRestore(
+    filePath: string,
+    password: string,
+  ): Promise<RestorePendingMarker> {
+    if (!password || password.trim().length === 0) {
+      throw new Error("Senha é obrigatória para agendar restauração.");
+    }
     return {
       backup_file_path: filePath,
       backup_sha256: "mock_sha256",

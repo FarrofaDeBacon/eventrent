@@ -33,6 +33,7 @@ pub struct VerifyBackupInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleRestoreInput {
     pub file_path: String,
+    pub password: String,
 }
 
 #[tauri::command]
@@ -214,9 +215,13 @@ pub async fn schedule_restore(
     input: ScheduleRestoreInput,
 ) -> Result<RestorePendingMarker, String> {
     let session = require_session(&state).await?;
+    let policy = eventrent_core::LoginPolicy {
+        reveal_account_locked: true,
+    };
     state
         .services
-        .authorize_backup_operation(&session)
+        .authorize_restore_operation(&session, &input.password, &policy)
+        .await
         .map_err(crate::map_core_err)?;
 
     let path = PathBuf::from(input.file_path.trim());

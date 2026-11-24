@@ -55,6 +55,7 @@
   let restoreModalOpen = $state(false);
   let backupToRestore = $state<BackupMetadataView | null>(null);
   let restoreConfirmationInput = $state("");
+  let restorePasswordInput = $state("");
   let isSchedulingRestore = $state(false);
 
   let canManage = $derived(
@@ -62,7 +63,8 @@
   );
 
   let isRestoreConfirmed = $derived(
-    restoreConfirmationInput.trim() === "RESTAURAR",
+    restoreConfirmationInput.trim() === "RESTAURAR" &&
+      restorePasswordInput.trim().length > 0,
   );
 
   function formatBytes(bytes: number): string {
@@ -216,6 +218,7 @@
   function openRestoreModal(backup: BackupMetadataView) {
     backupToRestore = backup;
     restoreConfirmationInput = "";
+    restorePasswordInput = "";
     restoreModalOpen = true;
   }
 
@@ -223,6 +226,7 @@
     restoreModalOpen = false;
     backupToRestore = null;
     restoreConfirmationInput = "";
+    restorePasswordInput = "";
   }
 
   async function handleConfirmRestore() {
@@ -230,7 +234,10 @@
 
     isSchedulingRestore = true;
     try {
-      await getBackupRepository().scheduleRestore(backupToRestore.file_path);
+      await getBackupRepository().scheduleRestore(
+        backupToRestore.file_path,
+        restorePasswordInput,
+      );
       toast.success(
         "Restauração agendada com sucesso. Feche e reinicie o EventRent para concluir.",
       );
@@ -720,6 +727,36 @@
           <span class="font-medium text-foreground">Versão:</span>
           v{backupToRestore.app_version} (schema #{backupToRestore.last_applied_migration})
         </div>
+      </div>
+
+      <div
+        class="rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-warning space-y-1"
+      >
+        <div class="font-semibold flex items-center gap-1.5">
+          <AlertTriangle class="h-4 w-4 shrink-0" />
+          Atenção com as credenciais restauradas
+        </div>
+        <p class="text-muted-foreground">
+          A restauração substituirá todos os cadastros do banco de dados,
+          incluindo usuários e senhas. Ao concluir a restauração, suas
+          credenciais de acesso voltarão a ser as que existiam no momento em que
+          o backup foi gerado.
+        </p>
+      </div>
+
+      <div class="space-y-2">
+        <label
+          for="restore-password-input"
+          class="text-xs font-medium text-foreground block"
+        >
+          Confirme sua senha de acesso atual:
+        </label>
+        <Input
+          id="restore-password-input"
+          type="password"
+          placeholder="Digite sua senha de acesso atual"
+          bind:value={restorePasswordInput}
+        />
       </div>
 
       <div class="space-y-2">
