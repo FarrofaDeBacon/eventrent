@@ -156,6 +156,8 @@ Em `crates/backup-fs/src/lib.rs`:
 <!-- prettier-ignore -->
 <!-- snippet: crates/backup-fs/src/lib.rs:749-785 -->
 ```rust
+            }
+        };
 
         let is_compatible = manifest.last_applied_migration <= current_max_migration;
 
@@ -191,8 +193,6 @@ Em `crates/backup-fs/src/lib.rs`:
             let mut actual_bytes = 0u64;
 
             loop {
-                match limited.read(&mut buffer) {
-                    Ok(0) => break,
 ```
 
 2. No método `execute_pending_restore_at_startup`, a inicialização do aplicativo detecta o marcador antes da abertura do banco SQLite, cria uma cópia de salvaguarda `eventrent.db.pre-restore.bak` e garante rollback atômico em caso de falha:
@@ -200,6 +200,8 @@ Em `crates/backup-fs/src/lib.rs`:
 <!-- prettier-ignore -->
 <!-- snippet: crates/backup-fs/src/lib.rs:789-825 -->
 ```rust
+                        hasher.update(&buffer[..n]);
+                        actual_bytes = actual_bytes.saturating_add(n as u64);
                         if actual_bytes > entry.byte_size {
                             return Ok(VerifyBackupResult {
                                 valid: false,
@@ -235,8 +237,6 @@ Em `crates/backup-fs/src/lib.rs`:
                         entry.path, entry.byte_size, actual_bytes
                     )),
                     is_compatible,
-                });
-            }
 ```
 
 ### 2.4. Snapshot Consistente do SQLite via `VACUUM INTO` (R3-d)
@@ -277,6 +277,11 @@ Em `src-tauri/src/commands/backup.rs`, os comandos `choose_backup_folder` e `cho
 <!-- prettier-ignore -->
 <!-- snippet: src-tauri/src/commands/backup.rs:216-274 -->
 ```rust
+
+#[tauri::command]
+pub async fn schedule_restore(
+    state: State<'_, AppState>,
+    input: ScheduleRestoreInput,
 ) -> Result<RestorePendingMarker, String> {
     let session = require_session(&state).await?;
     let policy = eventrent_core::LoginPolicy {
@@ -331,11 +336,6 @@ pub async fn choose_backup_folder(
     Ok(Some(folder_path.to_string_lossy().to_string()))
 }
 
-#[tauri::command]
-pub async fn choose_backup_file(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<Option<String>, String> {
 ```
 
 ### 2.6. Agendamento do Backup Automático e Cálculo de Obsolecência (`is_stale`) (R3-f)
@@ -437,42 +437,42 @@ Em `src/routes/settings/backup/+page.svelte`, o botão de confirmação permanec
 <!-- prettier-ignore -->
 <!-- snippet: src/routes/settings/backup/+page.svelte:728-763 -->
 ```svelte
-        <div>
-          <span class="font-medium text-foreground">Tamanho:</span>
-          {formatBytes(backupToRestore.byte_size)}
-        </div>
-        <div>
-          <span class="font-medium text-foreground">Versão:</span>
-          v{backupToRestore.app_version} (schema #{backupToRestore.last_applied_migration})
-        </div>
-      </div>
+                          isSchedulingRestore}
+                      >
+                        Restaurar...
+                      </Button>
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+      </CardContent>
+    </Card>
+  {/if}
+</div>
 
-      <div
-        class="rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-warning space-y-1"
-      >
-        <div class="font-semibold flex items-center gap-1.5">
-          <AlertTriangle class="h-4 w-4 shrink-0" />
-          Atenção com as credenciais restauradas
+<!-- Modal Bloqueante de Confirmação de Restauração -->
+{#if restoreModalOpen && backupToRestore}
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="restore-modal-title"
+  >
+    <div
+      class="w-full max-w-lg rounded-xl border border-destructive/40 bg-card p-6 shadow-2xl space-y-5 animate-in zoom-in-95 duration-200"
+    >
+      <div class="flex items-start gap-4">
+        <div class="rounded-full bg-destructive/10 p-3 text-destructive">
+          <ShieldAlert class="h-6 w-6" />
         </div>
-        <p class="text-muted-foreground">
-          A restauração substituirá todos os cadastros do banco de dados,
-          incluindo usuários e senhas. Ao concluir a restauração, suas
-          credenciais de acesso voltarão a ser as que existiam no momento em que
-          o backup foi gerado.
-        </p>
-      </div>
-
-      <div class="space-y-2">
-        <label
-          for="restore-password-input"
-          class="text-xs font-medium text-foreground block"
-        >
-          Confirme sua senha de acesso atual:
-        </label>
-        <Input
-          id="restore-password-input"
-          type="password"
-          placeholder="Digite sua senha de acesso atual"
+        <div class="space-y-1">
+          <h2
+            id="restore-modal-title"
+            class="text-lg font-bold text-foreground"
+          >
 ```
 
 ### 2.10. Teste E2E Playwright de Backup e Confirmação de Restauração
@@ -584,4 +584,42 @@ A suíte completa de validação (`pnpm verify`) foi executada com 100% de suces
 - **Passo 11**: Clippy Linter `eventrent-core` (0 advertências);
 - **Passo 12**: Clippy Linter `eventrent-store-sqlite` (0 advertências);
 - **Passo 13**: Clippy Linter `eventrent-app` (0 advertências);
-- **Passo 14**: Testes Unitários Rust Workspace (90 testes aprovados em 5 crates).
+- **Passo 14**: Testes Unitários Rust Workspace (93 testes aprovados em 5 crates).
+
+---
+
+## 6. Resolução dos Itens de Revisão (Fase 2N-rev2)
+
+| Item | Gravidade | Descrição do Problema | Solução Implementada | Commit |
+|---|---|---|---|---|
+| **R1** | **Alta** | Permissão `backup:manage` ausente em 5 comandos no core | `authorize_backup_operation` aplicado nos 8 comandos de backup no `coreServices` com testes estruturais e de RBAC | `4ad3c98` |
+| **R2** | **Alta** | Backup podia dar certo incompleto em silêncio | Remoção de descartes de erro em mídia e config; auto-verificação de integridade e hash antes do rename final `.zip` | `ad833a0` |
+| **R3** | **Alta** | Ausência de backup automático em background | Implementado `backup_scheduler.rs` com checagem a cada 15 min, execução no boot (>24h), retry de 1h após falha e eventos reativos | `8d01d20` |
+| **R4** | **Alta** | Snapshot pré-atualização rodava em todo boot e crescia sem limite | Snapshot condicionado a migrações pendentes (`pending > 0`), cópia de `.db` e `-wal`, pasta isolada `snapshots/` com retenção de 5 cópias | `e2b7022` |
+| **R5** | **Média** | Restauração não salvaguardava mídias nem verificava SHA a frio | Salvaguarda pré-restauração completa (banco, WAL e mídia), validação de SHA-256 no marcador atômico e reversão automática em falha | `737d9c4` |
+| **R6** | **Média** | Restauração não exigia conferência de senha | `authorize_restore_operation` com validação de senha do usuário ativo e proteção contra força bruta (lockout) | `737d9c4` |
+| **R7** | **Baixa** | Listagem assumia verificação sem hash prévio e erros de retenção eram mudos | Listagem inicializa com `verified = false`; botão interativo "Verificar Integridade" na tabela e log/aviso de retenção | `09a347e` |
+| **R8** | **Processo** | Roteiro de fumaça e validação de URLs fixadas | Roteiro estruturado de testes manuais e checagem de URLs raw com HTTP 200 via script | *atual* |
+
+---
+
+## 7. Roteiro de Fumaça (Teste Manual da Fase 2N-rev2)
+
+1. **Acesso e Configuração de Destino**:
+   - No menu lateral, acesse **Aparência & Operação > Backup e Restauração** (`/settings/backup`).
+   - Verifique os avisos de conformidade LGPD e privacidade.
+   - Clique em **Escolher Pasta** e aponte para um diretório local dedicado (ex: `D:\EventRentBackups`).
+   - Ajuste os dias de retenção diária, semanal e mensal e clique em **Salvar Configurações**.
+2. **Execução Manual e Integridade Imediata**:
+   - Clique em **Fazer Backup Agora**.
+   - Observe a animação e a conclusão com toast de sucesso informando o nome do arquivo gerado e tamanho compactado.
+   - Na tabela de backups, o arquivo recém-gerado será listado com compatibilidade verde.
+3. **Verificação de Integridade Sob Demanda**:
+   - Na linha da tabela, clique no botão **Verificar**.
+   - O aplicativo realiza o cálculo e comparação dos hashes SHA-256 de todas as entradas do arquivo ZIP.
+   - O badge muda para **Íntegro** e uma notificação confirma a validação física.
+4. **Agendamento de Restauração Segura**:
+   - Na linha do backup, clique em **Restaurar...**.
+   - No modal bloqueante, insira sua senha de login atual e digite a palavra `RESTAURAR` em maiúsculas.
+   - Clique em **Confirmar Restauração**. Uma notificação informa que a restauração foi agendada para a próxima inicialização.
+   - Feche o aplicativo e abra-o novamente. A inicialização a frio validará o hash SHA-256 do arquivo, gerará o snapshot de segurança do estado atual e restaurará o banco e os arquivos de mídia com sucesso.
