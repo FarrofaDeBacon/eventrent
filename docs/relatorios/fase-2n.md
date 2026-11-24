@@ -102,49 +102,49 @@ Em `crates/backup-fs/src/lib.rs`, o método `verify_backup_file` inspeciona o ca
 <!-- prettier-ignore -->
 <!-- snippet: crates/backup-fs/src/lib.rs:517-559 -->
 ```rust
-            let uncompressed_size = zf.size();
-            let compressed_size = zf.compressed_size();
-
-            if uncompressed_size > MAX_SINGLE_FILE_UNCOMPRESSED_BYTES {
-                return Ok(VerifyBackupResult {
-                    valid: false,
-                    manifest: None,
-                    error_message: Some(format!(
-                        "Possível Zip Bomb: o arquivo '{name}' excede o tamanho máximo descompactado permitido ({} bytes)",
-                        MAX_SINGLE_FILE_UNCOMPRESSED_BYTES
-                    )),
-                    is_compatible: false,
-                });
-            }
-
-            total_uncompressed_bytes = total_uncompressed_bytes.saturating_add(uncompressed_size);
-            if total_uncompressed_bytes > MAX_TOTAL_UNCOMPRESSED_BYTES {
-                return Ok(VerifyBackupResult {
-                    valid: false,
-                    manifest: None,
-                    error_message: Some(format!(
-                        "Possível Zip Bomb: o total descompactado do pacote excede o teto permitido ({} bytes)",
-                        MAX_TOTAL_UNCOMPRESSED_BYTES
-                    )),
-                    is_compatible: false,
-                });
-            }
-
-            // Ratio check para arquivos > 1 MiB
-            if compressed_size > 0 && uncompressed_size > 1024 * 1024 {
-                let ratio = uncompressed_size / compressed_size;
-                if ratio > MAX_COMPRESSION_RATIO {
-                    return Ok(VerifyBackupResult {
-                        valid: false,
-                        manifest: None,
-                        error_message: Some(format!(
-                            "Possível Zip Bomb: razão de compressão anômala ({ratio}:1) para o arquivo '{name}'",
-                        )),
-                        is_compatible: false,
-                    });
-                }
-            }
+    pub fn list_backups_in_folder(
+        &self,
+        folder: &Path,
+        current_max_migration: i64,
+    ) -> Result<Vec<BackupMetadataView>> {
+        if !folder.exists() || !folder.is_dir() {
+            return Ok(Vec::new());
         }
+
+        let mut list = Vec::new();
+        let entries = fs::read_dir(folder).map_err(|e| {
+            CoreError::Internal(format!(
+                "Falha ao ler diretório de backups ({}): {e}",
+                folder.display()
+            ))
+        })?;
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+
+            let fname = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            if !is_valid_backup_filename(fname) {
+                continue;
+            }
+
+            if let Ok(meta) = fs::metadata(&path) {
+                if let Ok(f) = File::open(&path) {
+                    if let Ok(mut archive) = ZipArchive::new(f) {
+                        if let Ok(mut mf) = archive.by_name("manifest.json") {
+                            let mut buf = String::new();
+                            if mf.read_to_string(&mut buf).is_ok() {
+                                if let Ok(manifest) = serde_json::from_str::<BackupManifest>(&buf) {
+                                    let is_compat =
+                                        manifest.last_applied_migration <= current_max_migration;
+                                    list.push(BackupMetadataView {
+                                        file_name: fname.to_string(),
+                                        file_path: path.to_string_lossy().to_string(),
 ```
 
 ### 2.3. Gravação Atômica do Marcador `restore_pending` e Restauração a Frio no Boot (R3-c)
@@ -156,43 +156,43 @@ Em `crates/backup-fs/src/lib.rs`:
 <!-- prettier-ignore -->
 <!-- snippet: crates/backup-fs/src/lib.rs:749-785 -->
 ```rust
-        })?;
+                }
+            };
 
-        // Gravação atômica com sync_all e rename
-        let tmp_marker_path = self.app_data_dir.join(format!(
-            "{RESTORE_PENDING_FILE}.tmp.{}",
-            uuid::Uuid::now_v7()
-        ));
-        {
-            let mut f = File::create(&tmp_marker_path).map_err(|e| {
-                CoreError::Internal(format!(
-                    "Falha ao criar marcador temporário de restauração: {e}"
-                ))
-            })?;
-            f.write_all(serialized.as_bytes()).map_err(|e| {
-                let _ = fs::remove_file(&tmp_marker_path);
-                CoreError::Internal(format!(
-                    "Falha ao gravar marcador temporário de restauração: {e}"
-                ))
-            })?;
-            f.sync_all().map_err(|e| {
-                let _ = fs::remove_file(&tmp_marker_path);
-                CoreError::Internal(format!(
-                    "Falha ao sincronizar marcador temporário com o disco: {e}"
-                ))
-            })?;
-        }
+            let mut limited = zf.take(entry.byte_size.saturating_add(1));
+            let mut hasher = Sha256::new();
+            let mut buffer = [0u8; 64 * 1024];
+            let mut actual_bytes = 0u64;
 
-        fs::rename(&tmp_marker_path, &marker_path).map_err(|e| {
-            let _ = fs::remove_file(&tmp_marker_path);
-            CoreError::Internal(format!(
-                "Falha ao gravar marcador de restauração pendente ({}): {e}",
-                marker_path.display()
-            ))
-        })?;
-
-        Ok(marker)
-    }
+            loop {
+                match limited.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        hasher.update(&buffer[..n]);
+                        actual_bytes = actual_bytes.saturating_add(n as u64);
+                        if actual_bytes > entry.byte_size {
+                            return Ok(VerifyBackupResult {
+                                valid: false,
+                                manifest: Some(manifest.clone()),
+                                error_message: Some(format!(
+                                    "Arquivo '{}' descompactou mais bytes do que o declarado no manifesto (Zip Bomb)",
+                                    entry.path
+                                )),
+                                is_compatible,
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        return Ok(VerifyBackupResult {
+                            valid: false,
+                            manifest: Some(manifest.clone()),
+                            error_message: Some(format!(
+                                "Falha ao extrair e ler arquivo '{}': {e}",
+                                entry.path
+                            )),
+                            is_compatible,
+                        });
+                    }
 ```
 
 2. No método `execute_pending_restore_at_startup`, a inicialização do aplicativo detecta o marcador antes da abertura do banco SQLite, cria uma cópia de salvaguarda `eventrent.db.pre-restore.bak` e garante rollback atômico em caso de falha:
@@ -200,43 +200,43 @@ Em `crates/backup-fs/src/lib.rs`:
 <!-- prettier-ignore -->
 <!-- snippet: crates/backup-fs/src/lib.rs:789-825 -->
 ```rust
-    pub fn execute_pending_restore_at_startup(
+            if actual_bytes != entry.byte_size {
+                return Ok(VerifyBackupResult {
+                    valid: false,
+                    manifest: Some(manifest.clone()),
+                    error_message: Some(format!(
+                        "Tamanho divergente para '{}': esperado {} bytes, encontrado {} bytes",
+                        entry.path, entry.byte_size, actual_bytes
+                    )),
+                    is_compatible,
+                });
+            }
+
+            let actual_hash = format!("{:x}", hasher.finalize());
+            if actual_hash != entry.sha256 {
+                return Ok(VerifyBackupResult {
+                    valid: false,
+                    manifest: Some(manifest.clone()),
+                    error_message: Some(format!(
+                        "Soma de verificação SHA-256 divergente para '{}': arquivo adulterado ou corrompido",
+                        entry.path
+                    )),
+                    is_compatible,
+                });
+            }
+        }
+
+        Ok(VerifyBackupResult {
+            valid: true,
+            manifest: Some(manifest),
+            error_message: None,
+            is_compatible,
+        })
+    }
+
+    /// Agenda a restauração a frio do backup para a próxima inicialização do aplicativo.
+    pub fn schedule_restore(
         &self,
-        current_max_migration: i64,
-    ) -> Result<Option<RestoreReport>> {
-        let marker_path = self.app_data_dir.join(RESTORE_PENDING_FILE);
-        if !marker_path.exists() {
-            return Ok(None);
-        }
-
-        tracing::info!(
-            marker_path = %marker_path.display(),
-            "Marcador de restauração pendente detectado no boot do sistema. Iniciando restauração a frio."
-        );
-
-        let marker_raw = fs::read_to_string(&marker_path).map_err(|e| {
-            CoreError::Internal(format!("Falha ao ler marcador de restauração: {e}"))
-        })?;
-
-        let marker: RestorePendingMarker = serde_json::from_str(&marker_raw).map_err(|e| {
-            CoreError::Internal(format!("Formato inválido no marcador de restauração: {e}"))
-        })?;
-
-        let backup_file_path = PathBuf::from(&marker.backup_file_path);
-        if !backup_file_path.exists() {
-            let _ = fs::remove_file(&marker_path);
-            return Err(CoreError::Validation(format!(
-                "O arquivo de backup agendado não foi encontrado: {}",
-                backup_file_path.display()
-            )));
-        }
-
-        // Validação profunda
-        let verify = self.verify_backup_file(&backup_file_path, current_max_migration)?;
-        if !verify.valid {
-            let _ = fs::rename(
-                &marker_path,
-                self.app_data_dir.join("restore_corrupted.json"),
 ```
 
 ### 2.4. Snapshot Consistente do SQLite via `VACUUM INTO` (R3-d)

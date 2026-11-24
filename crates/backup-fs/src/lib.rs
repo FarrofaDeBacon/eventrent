@@ -1154,7 +1154,20 @@ impl BackupFsService {
     }
 
     /// Cria um snapshot de salvaguarda prévia antes de qualquer atualização/migração no boot.
-    pub fn create_pre_update_snapshot_if_needed(&self, db_path: &Path) -> Result<Option<PathBuf>> {
+    ///
+    /// Regras:
+    /// 1. Somente cria se o arquivo `db_path` existir e tiver tamanho > 0.
+    /// 2. Abre conexão e consulta `_sqlx_migrations`. Se a tabela existir e `max_version >= current_max_migration`, não há migração pendente: retorna Ok(None).
+    /// 3. Se houver migração pendente (`max_version < current_max_migration`):
+    ///    - Executa snapshot consistente via `VACUUM INTO`, incorporando atomicamente todos os dados pendentes de WAL/SHM.
+    ///    - Valida o snapshot gerado através de `PRAGMA integrity_check`.
+    ///    - Move para `snapshots/pre-update_{ts}.bak.db`.
+    ///    - Executa retenção própria de snapshots mantendo apenas os 3 mais recentes em `snapshots/`, removendo os mais antigos.
+    pub async fn create_pre_update_snapshot_if_needed(
+        &self,
+        db_path: &Path,
+        current_max_migration: i64,
+    ) -> Result<Option<PathBuf>> {
         if !db_path.exists() {
             return Ok(None);
         }
@@ -1166,24 +1179,179 @@ impl BackupFsService {
             return Ok(None);
         }
 
+        // Abre conexão somente-leitura para conferir se há migração pendente
+        let conn_str = format!("sqlite://{}?mode=ro", db_path.display());
+        let pool = match sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&conn_str)
+            .await
+        {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("Não foi possível abrir banco para conferir migrações: {e}");
+                return Ok(None);
+            }
+        };
+
+        // Verifica se a tabela _sqlx_migrations existe
+        let table_exists: bool = match sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+        )
+        .fetch_one(&pool)
+        .await
+        {
+            Ok(count) => count > 0,
+            Err(_) => false,
+        };
+
+        let max_applied: i64 = if table_exists {
+            match sqlx::query_scalar::<_, Option<i64>>("SELECT MAX(version) FROM _sqlx_migrations")
+                .fetch_one(&pool)
+                .await
+            {
+                Ok(Some(v)) => v,
+                _ => 0,
+            }
+        } else {
+            // Se o arquivo existe e tem dados (>0 bytes), mas não tem _sqlx_migrations,
+            // todas as migrações estão pendentes.
+            0
+        };
+
+        pool.close().await;
+
+        if max_applied >= current_max_migration {
+            tracing::info!(
+                max_applied,
+                current_max_migration,
+                "Banco de dados já está na versão máxima de migração; nenhum snapshot pré-atualização é necessário."
+            );
+            return Ok(None);
+        }
+
+        tracing::info!(
+            max_applied,
+            current_max_migration,
+            "Migração pendente detectada! Gerando snapshot de segurança pré-atualização..."
+        );
+
         let snapshots_dir = self.app_data_dir.join("snapshots");
-        let _ = fs::create_dir_all(&snapshots_dir);
+        fs::create_dir_all(&snapshots_dir).map_err(|e| {
+            CoreError::Internal(format!("Falha ao criar diretório de snapshots: {e}"))
+        })?;
 
         let ts = Utc::now().format("%Y-%m-%d-%H%M%S").to_string();
         let snapshot_path = snapshots_dir.join(format!("pre-update_{ts}.bak.db"));
         let tmp_snapshot = snapshots_dir.join(format!("pre-update_{ts}.tmp.db"));
-
-        if fs::copy(db_path, &tmp_snapshot).is_ok()
-            && fs::rename(&tmp_snapshot, &snapshot_path).is_ok()
-        {
-            tracing::info!(
-                snapshot = %snapshot_path.display(),
-                "Snapshot de segurança pré-atualização gravado com sucesso antes das migrações."
-            );
-            return Ok(Some(snapshot_path));
-        }
         let _ = fs::remove_file(&tmp_snapshot);
-        Ok(None)
+
+        // Conecta ao banco para snapshot consistente via VACUUM INTO
+        let conn_rw = format!("sqlite://{}", db_path.display());
+        let rw_pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&conn_rw)
+            .await
+            .map_err(|e| {
+                CoreError::Internal(format!(
+                    "Falha ao conectar ao SQLite para snapshot pré-atualização: {e}"
+                ))
+            })?;
+
+        let tmp_str = tmp_snapshot.to_string_lossy().replace('\'', "''");
+        let vacuum_sql = format!("VACUUM INTO '{tmp_str}'");
+        let vacuum_res = sqlx::query(&vacuum_sql).execute(&rw_pool).await;
+        rw_pool.close().await;
+
+        vacuum_res.map_err(|e| {
+            let _ = fs::remove_file(&tmp_snapshot);
+            CoreError::Internal(format!(
+                "Falha ao executar VACUUM INTO no snapshot pré-atualização: {e}"
+            ))
+        })?;
+
+        // Valida integridade física do snapshot gerado via PRAGMA integrity_check
+        let check_conn = format!("sqlite://{}?mode=ro", tmp_snapshot.display());
+        let check_pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&check_conn)
+            .await
+            .map_err(|e| {
+                let _ = fs::remove_file(&tmp_snapshot);
+                CoreError::Internal(format!(
+                    "Falha ao conectar ao snapshot para integrity_check: {e}"
+                ))
+            })?;
+
+        let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
+            .fetch_one(&check_pool)
+            .await
+            .map_err(|e| {
+                let _ = fs::remove_file(&tmp_snapshot);
+                CoreError::Internal(format!(
+                    "Falha ao rodar PRAGMA integrity_check no snapshot: {e}"
+                ))
+            })?;
+        check_pool.close().await;
+
+        if integrity != "ok" {
+            let _ = fs::remove_file(&tmp_snapshot);
+            return Err(CoreError::Validation(format!(
+                "Integridade física do snapshot corrompida: {integrity}"
+            )));
+        }
+
+        // Renomeia o temporário para o nome final
+        fs::rename(&tmp_snapshot, &snapshot_path).map_err(|e| {
+            let _ = fs::remove_file(&tmp_snapshot);
+            CoreError::Internal(format!("Falha ao finalizar snapshot pré-atualização: {e}"))
+        })?;
+
+        tracing::info!(
+            snapshot = %snapshot_path.display(),
+            "Snapshot pré-atualização criado e validado com sucesso."
+        );
+
+        // Executa retenção própria de snapshots (mantém os 3 mais recentes)
+        Self::clean_old_snapshots(&snapshots_dir, 3)?;
+
+        Ok(Some(snapshot_path))
+    }
+
+    /// Limpa snapshots antigos mantendo apenas os `keep_count` mais recentes.
+    pub fn clean_old_snapshots(snapshots_dir: &Path, keep_count: usize) -> Result<()> {
+        if !snapshots_dir.exists() {
+            return Ok(());
+        }
+        let read_dir = match fs::read_dir(snapshots_dir) {
+            Ok(rd) => rd,
+            Err(_) => return Ok(()),
+        };
+
+        let mut snapshots = Vec::new();
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                if file_name.ends_with(".tmp.db") {
+                    let _ = fs::remove_file(&path);
+                } else if file_name.starts_with("pre-update_") && file_name.ends_with(".bak.db") {
+                    snapshots.push(path);
+                }
+            }
+        }
+
+        // Ordena em ordem decrescente (mais recentes primeiro)
+        snapshots.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+
+        if snapshots.len() > keep_count {
+            for old_snapshot in &snapshots[keep_count..] {
+                tracing::info!(
+                    snapshot = %old_snapshot.display(),
+                    "Removendo snapshot pré-atualização antigo de acordo com a política de retenção."
+                );
+                let _ = fs::remove_file(old_snapshot);
+            }
+        }
+        Ok(())
     }
 
     /// Executa a rotação e retenção de backups antigos de acordo com as políticas configuradas.
@@ -1947,5 +2115,121 @@ mod tests {
             "Backup deve falhar quando destino for inacessível ou inválido"
         );
         pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_pre_update_snapshot_skipped_when_no_migration_pending() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        // Simula banco com migração 10 já aplicada
+        {
+            let conn_rw = format!("sqlite://{}?mode=rw", env.db_path.display());
+            let p = SqlitePoolOptions::new().connect(&conn_rw).await.unwrap();
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS _sqlx_migrations (version BIGINT PRIMARY KEY, description TEXT, installed_on TIMESTAMP, success BOOLEAN, checksum BLOB, execution_time BIGINT);
+                 INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (10, 'auth_epoch', 1, X'', 10);",
+            )
+            .execute(&p)
+            .await
+            .unwrap();
+            p.close().await;
+        }
+
+        let snapshot = service
+            .create_pre_update_snapshot_if_needed(&env.db_path, 10)
+            .await
+            .expect("Execução da verificação de snapshot");
+
+        assert!(
+            snapshot.is_none(),
+            "Nenhum snapshot deve ser criado quando a versão máxima da migração já estiver aplicada"
+        );
+
+        let snapshots_dir = env.app_data_dir.join("snapshots");
+        if snapshots_dir.exists() {
+            let files = fs::read_dir(&snapshots_dir).unwrap().count();
+            assert_eq!(files, 0, "Nenhum arquivo de snapshot deve ser criado");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pre_update_snapshot_created_and_verified_when_migration_pending() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        // Simula banco com migração pendente (versão 8 aplicada, max atual 10)
+        {
+            let conn_rw = format!("sqlite://{}?mode=rw", env.db_path.display());
+            let p = SqlitePoolOptions::new().connect(&conn_rw).await.unwrap();
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS _sqlx_migrations (version BIGINT PRIMARY KEY, description TEXT, installed_on TIMESTAMP, success BOOLEAN, checksum BLOB, execution_time BIGINT);
+                 INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (8, 'venues', 1, X'', 10);",
+            )
+            .execute(&p)
+            .await
+            .unwrap();
+            p.close().await;
+        }
+
+        let snapshot = service
+            .create_pre_update_snapshot_if_needed(&env.db_path, 10)
+            .await
+            .expect("Execução do snapshot pré-atualização");
+
+        assert!(
+            snapshot.is_some(),
+            "Snapshot pré-atualização deve ser criado quando houver migração pendente"
+        );
+
+        let snapshot_path = snapshot.unwrap();
+        assert!(snapshot_path.exists());
+        assert!(snapshot_path.to_string_lossy().ends_with(".bak.db"));
+
+        // Valida que o snapshot gerado passa no PRAGMA integrity_check
+        let check_conn = format!("sqlite://{}?mode=ro", snapshot_path.display());
+        let check_pool = SqlitePoolOptions::new().connect(&check_conn).await.unwrap();
+        let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
+            .fetch_one(&check_pool)
+            .await
+            .unwrap();
+        check_pool.close().await;
+        assert_eq!(integrity, "ok", "Snapshot gerado deve ser 100% íntegro");
+    }
+
+    #[tokio::test]
+    async fn test_pre_update_snapshots_retention_keeps_only_three_most_recent() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+
+        let snapshots_dir = env.app_data_dir.join("snapshots");
+        fs::create_dir_all(&snapshots_dir).unwrap();
+
+        // Cria 5 snapshots fictícios ordenados no tempo e 1 temporário órfão
+        let s1 = snapshots_dir.join("pre-update_2026-11-24-100001.bak.db");
+        let s2 = snapshots_dir.join("pre-update_2026-11-24-100002.bak.db");
+        let s3 = snapshots_dir.join("pre-update_2026-11-24-100003.bak.db");
+        let s4 = snapshots_dir.join("pre-update_2026-11-24-100004.bak.db");
+        let s5 = snapshots_dir.join("pre-update_2026-11-24-100005.bak.db");
+        let tmp = snapshots_dir.join("pre-update_2026-11-24-100006.tmp.db");
+
+        for f in &[&s1, &s2, &s3, &s4, &s5, &tmp] {
+            fs::write(f, b"dummy db snapshot data").unwrap();
+        }
+
+        BackupFsService::clean_old_snapshots(&snapshots_dir, 3)
+            .expect("Retenção de snapshots pré-atualização");
+
+        // Os 3 mais recentes (s5, s4, s3) devem ser mantidos
+        assert!(s5.exists(), "Snapshot mais recente (s5) deve existir");
+        assert!(s4.exists(), "Segundo snapshot (s4) deve existir");
+        assert!(s3.exists(), "Terceiro snapshot (s3) deve existir");
+
+        // Os mais antigos (s1, s2) e o temporário órfão devem ter sido removidos
+        assert!(!s1.exists(), "Snapshot antigo (s1) deve ser removido");
+        assert!(!s2.exists(), "Snapshot antigo (s2) deve ser removido");
+        assert!(!tmp.exists(), "Arquivo temporário órfão deve ser removido");
     }
 }
