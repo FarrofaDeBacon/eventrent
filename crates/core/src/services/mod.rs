@@ -1,5 +1,6 @@
 mod backup;
 mod catalog;
+mod inventory;
 mod media;
 
 use crate::domain::{
@@ -309,6 +310,9 @@ impl<'a> TxStoreBundle for PassthroughTxStoreBundle<'a> {
     }
     fn catalog(&self) -> &dyn crate::store::CatalogStore {
         self.stores.catalog.as_ref()
+    }
+    fn inventory(&self) -> &dyn crate::store::InventoryStore {
+        self.stores.inventory.as_ref()
     }
     async fn commit(self: Box<Self>) -> Result<()> {
         Ok(())

@@ -5,6 +5,7 @@ pub mod catalog;
 pub mod config;
 pub mod customer;
 pub mod document;
+pub mod inventory;
 pub mod media;
 pub mod permission;
 pub mod role;
@@ -32,6 +33,7 @@ pub use document::{
     parse_document_with_type, validate_cnpj, validate_cpf, validate_foreign_document,
     DocumentNumber, DocumentType,
 };
+pub use inventory::*;
 pub use permission::*;
 pub use role::{Role, RoleWithPermissions};
 pub use settings::{

@@ -1,4 +1,5 @@
 mod catalog;
+mod inventory;
 mod media;
 
 use async_trait::async_trait;
@@ -6,11 +7,11 @@ use chrono::Utc;
 use eventrent_core::{
     normalize_for_search, run_in_tx, AuditLogEntry, AuditStore, BrandingStore, CatalogStore,
     CoreError, Customer, CustomerAddress, CustomerContact, CustomerCursor, CustomerFilter,
-    CustomerPage, CustomerStore, CustomerWithDetails, DocumentType, Result, Role, RoleStore,
-    RoleWithPermissions, StoreBundle, Tenant, TenantBranding, TenantSetting, TenantSettingStore,
-    TenantStore, TransactionManager, TransactionPolicy, TxStoreBundle, UpdateBrandingInput,
-    UserRecord, UserStore, UserWithRole, Venue, VenueContact, VenueCursor, VenueFilter,
-    VenueListItem, VenuePage, VenueSpace, VenueStore, VenueWithDetails,
+    CustomerPage, CustomerStore, CustomerWithDetails, DocumentType, InventoryStore, Result, Role,
+    RoleStore, RoleWithPermissions, StoreBundle, Tenant, TenantBranding, TenantSetting,
+    TenantSettingStore, TenantStore, TransactionManager, TransactionPolicy, TxStoreBundle,
+    UpdateBrandingInput, UserRecord, UserStore, UserWithRole, Venue, VenueContact, VenueCursor,
+    VenueFilter, VenueListItem, VenuePage, VenueSpace, VenueStore, VenueWithDetails,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, Row, Sqlite};
@@ -216,7 +217,8 @@ impl TransactionManager for SqliteTxManager {
             customers: arc.clone(),
             venues: arc.clone(),
             settings: arc.clone(),
-            catalog: arc,
+            catalog: arc.clone(),
+            inventory: arc,
         }))
     }
 }
@@ -232,6 +234,7 @@ pub struct SqliteTxStoreBundle {
     pub venues: Arc<dyn VenueStore>,
     pub settings: Arc<dyn TenantSettingStore>,
     pub catalog: Arc<dyn CatalogStore>,
+    pub inventory: Arc<dyn InventoryStore>,
 }
 
 #[async_trait]
@@ -270,6 +273,10 @@ impl TxStoreBundle for SqliteTxStoreBundle {
 
     fn catalog(&self) -> &dyn CatalogStore {
         self.catalog.as_ref()
+    }
+
+    fn inventory(&self) -> &dyn InventoryStore {
+        self.inventory.as_ref()
     }
 
     async fn commit(self: Box<Self>) -> Result<()> {
@@ -331,7 +338,8 @@ impl SqliteStore {
             customers: arc.clone(),
             venues: arc.clone(),
             settings: arc.clone(),
-            catalog: arc,
+            catalog: arc.clone(),
+            inventory: arc,
             tx_manager,
         }
     }
@@ -3285,7 +3293,8 @@ mod tests {
                 customers: store.clone(),
                 venues: store.clone(),
                 settings: store.clone(),
-                catalog: store,
+                catalog: store.clone(),
+                inventory: store,
             }))
         }
     }
@@ -3310,7 +3319,8 @@ mod tests {
             customers: Arc::new(normal_store.clone()),
             venues: Arc::new(normal_store.clone()),
             settings: Arc::new(normal_store.clone()),
-            catalog: Arc::new(normal_store),
+            catalog: Arc::new(normal_store.clone()),
+            inventory: Arc::new(normal_store),
             tx_manager: Some(tx_manager),
         };
         let services = CoreServices::new(bundle.clone());
@@ -3852,6 +3862,7 @@ mod tests {
             venues: store.clone(),
             settings: store.clone(),
             catalog: store.clone(),
+            inventory: store.clone(),
             tx_manager: None,
         };
 
@@ -7518,6 +7529,358 @@ mod tests {
         assert!(
             delete_err.is_err(),
             "DELETE em stock_movement deve ser abortado pelo trigger trg_stock_movement_no_delete"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_store_inventory_operations_crud_ledger_and_media() {
+        use eventrent_core::{
+            CoreServices, EquipmentUnit, EquipmentUnitMedia, PhysicalCondition, SessionInfo,
+            StockMovement, StockMovementType, UnitMediaType, UnitStatus, Warehouse,
+        };
+
+        let pool = init_memory_db().await.unwrap();
+        let store = SqliteStore::new(pool.clone()).into_bundle();
+        let tenant_id = ensure_default_tenant(store.tenants.as_ref(), store.branding.as_ref())
+            .await
+            .unwrap();
+        contract_system_roles(&store, &tenant_id).await;
+
+        let now = Utc::now().to_rfc3339();
+
+        // Provisiona usuário operador e media_blob para integridade referencial
+        let role_id: String = sqlx::query_scalar("SELECT id FROM role WHERE tenant_id = ? LIMIT 1")
+            .bind(&tenant_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let user_id = "usr_test_operator";
+        sqlx::query(
+            "INSERT INTO app_user (id, tenant_id, name, email, password_hash, role_id, active, created_at, updated_at)
+             VALUES (?, ?, 'Operador', 'op@test.local', 'hash', ?, 1, ?, ?)",
+        )
+        .bind(user_id)
+        .bind(&tenant_id)
+        .bind(&role_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO media_blob (id, tenant_id, sha256, mime_type, byte_size, storage_key, created_at, updated_at)
+             VALUES ('blob_test_001', ?, 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'image/jpeg', 1024, 'media/test/e3/e3b0.jpg', ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 1. Depósitos: buscar default existente
+        let default_wh = store
+            .inventory
+            .get_default_warehouse(&tenant_id)
+            .await
+            .unwrap()
+            .expect("Depósito padrão deve existir");
+        assert_eq!(default_wh.name, "Galpão Principal");
+        assert!(default_wh.is_default);
+
+        // Criar segundo depósito
+        let wh2_id = Uuid::now_v7().to_string();
+        let wh2 = Warehouse {
+            id: wh2_id.clone(),
+            tenant_id: tenant_id.clone(),
+            name: "Depósito Secundário".to_string(),
+            code: "DEP-02".to_string(),
+            description: None,
+            address_line1: None,
+            address_line2: None,
+            city: None,
+            state: None,
+            postal_code: None,
+            is_default: false,
+            active: true,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            deleted_at: None,
+            created_by: Some(user_id.to_string()),
+        };
+        store.inventory.create_warehouse(&wh2).await.unwrap();
+
+        // Listar depósitos (devem ser 2)
+        let warehouses = store
+            .inventory
+            .list_warehouses(&tenant_id, false)
+            .await
+            .unwrap();
+        assert_eq!(warehouses.len(), 2);
+
+        // Trocar default para o depósito 2
+        store
+            .inventory
+            .set_default_warehouse(&tenant_id, &wh2_id)
+            .await
+            .unwrap();
+        let new_default = store
+            .inventory
+            .get_default_warehouse(&tenant_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(new_default.id, wh2_id);
+
+        let old_default = store
+            .inventory
+            .find_warehouse_by_id(&tenant_id, &default_wh.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!old_default.is_default);
+
+        // 2. Sequência de Patrimônio Atômica
+        let tag1 = store
+            .inventory
+            .next_patrimony_tag(&tenant_id)
+            .await
+            .unwrap();
+        let tag2 = store
+            .inventory
+            .next_patrimony_tag(&tenant_id)
+            .await
+            .unwrap();
+        assert_eq!(tag1, "EQ000001");
+        assert_eq!(tag2, "EQ000002");
+
+        // 3. Cadastrar Categoria e Modelo
+        sqlx::query(
+            "INSERT INTO equipment_category (id, tenant_id, name, name_normalized, created_at, updated_at)
+             VALUES ('cat_test_inv', ?, 'Iluminação', 'iluminacao', ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let model_id = "mod_moving_head";
+        sqlx::query(
+            "INSERT INTO equipment_model (id, tenant_id, category_id, name, name_sort, search_text, control_mode, cost_price_cents, replacement_value_cents, created_at, updated_at)
+             VALUES (?, ?, 'cat_test_inv', 'Moving Head 7R', 'moving head 7r', 'moving head 7r', 'serialized', 250000, 450000, ?, ?)",
+        )
+        .bind(model_id)
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 4. Cadastrar Unidade Física Serializada
+        let unit1_id = Uuid::now_v7().to_string();
+        let unit1 = EquipmentUnit {
+            id: unit1_id.clone(),
+            tenant_id: tenant_id.clone(),
+            equipment_model_id: model_id.to_string(),
+            warehouse_id: default_wh.id.clone(),
+            patrimony_tag: tag1.clone(),
+            serial_number: Some("SN-7R-9988".to_string()),
+            status: UnitStatus::Available,
+            physical_condition: PhysicalCondition::New,
+            notes: Some("Em perfeito estado".to_string()),
+            acquisition_date: Some("2026-01-15".to_string()),
+            warranty_expires_at: None,
+            active: true,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            deleted_at: None,
+            created_by: Some(user_id.to_string()),
+        };
+        store.inventory.create_unit(&unit1).await.unwrap();
+
+        // Buscar por patrimônio e ID
+        let found_by_tag = store
+            .inventory
+            .find_unit_by_patrimony(&tenant_id, &tag1)
+            .await
+            .unwrap();
+        assert!(found_by_tag.is_some());
+        assert_eq!(
+            found_by_tag.unwrap().serial_number.as_deref(),
+            Some("SN-7R-9988")
+        );
+
+        // Atualizar condição física e notas
+        let mut unit1_mut = unit1.clone();
+        unit1_mut.physical_condition = PhysicalCondition::Good;
+        unit1_mut.notes = Some("Revisado".to_string());
+        store.inventory.update_unit(&unit1_mut).await.unwrap();
+
+        // 5. Mídias de Unidade Física
+        let media_id = Uuid::now_v7().to_string();
+        let unit_media = EquipmentUnitMedia {
+            id: media_id.clone(),
+            tenant_id: tenant_id.clone(),
+            equipment_unit_id: unit1_id.clone(),
+            blob_id: "blob_test_001".to_string(),
+            media_type: UnitMediaType::DamagePhoto,
+            caption: Some("Foto da lente frontal".to_string()),
+            created_at: now.clone(),
+            created_by: Some(user_id.to_string()),
+        };
+        store
+            .inventory
+            .attach_unit_media(&unit_media)
+            .await
+            .unwrap();
+
+        let medias = store
+            .inventory
+            .list_unit_media(&tenant_id, &unit1_id)
+            .await
+            .unwrap();
+        assert_eq!(medias.len(), 1);
+        assert_eq!(medias[0].media_type, UnitMediaType::DamagePhoto);
+
+        store
+            .inventory
+            .detach_unit_media(&tenant_id, &media_id)
+            .await
+            .unwrap();
+        let medias_after = store
+            .inventory
+            .list_unit_media(&tenant_id, &unit1_id)
+            .await
+            .unwrap();
+        assert_eq!(medias_after.len(), 0);
+
+        // 6. Livro-Razão e Movimentações de Estoque
+        let mov1 = StockMovement {
+            id: Uuid::now_v7().to_string(),
+            tenant_id: tenant_id.clone(),
+            equipment_model_id: model_id.to_string(),
+            equipment_unit_id: Some(unit1_id.clone()),
+            from_warehouse_id: None,
+            to_warehouse_id: Some(default_wh.id.clone()),
+            movement_type: StockMovementType::PurchaseIn,
+            quantity: 10,
+            reason: "Entrada por NF 1234".to_string(),
+            reference_id: None,
+            performed_by_user_id: user_id.to_string(),
+            created_at: now.clone(),
+        };
+        store.inventory.record_stock_movement(&mov1).await.unwrap();
+
+        let bal1 = store
+            .inventory
+            .get_stock_balance(&tenant_id, &default_wh.id, model_id)
+            .await
+            .unwrap()
+            .expect("Saldo deve existir");
+        assert_eq!(bal1.quantity_on_hand, 10);
+
+        // Transferência de 3 itens de default_wh para wh2
+        let mov2 = StockMovement {
+            id: Uuid::now_v7().to_string(),
+            tenant_id: tenant_id.clone(),
+            equipment_model_id: model_id.to_string(),
+            equipment_unit_id: None,
+            from_warehouse_id: Some(default_wh.id.clone()),
+            to_warehouse_id: Some(wh2_id.clone()),
+            movement_type: StockMovementType::TransferOut,
+            quantity: 3,
+            reason: "Transferência para filial".to_string(),
+            reference_id: None,
+            performed_by_user_id: user_id.to_string(),
+            created_at: now.clone(),
+        };
+        store.inventory.record_stock_movement(&mov2).await.unwrap();
+
+        let bal1_after = store
+            .inventory
+            .get_stock_balance(&tenant_id, &default_wh.id, model_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(bal1_after.quantity_on_hand, 7);
+
+        let bal2 = store
+            .inventory
+            .get_stock_balance(&tenant_id, &wh2_id, model_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(bal2.quantity_on_hand, 3);
+
+        // 7. Teste de Mascaramento Financeiro via CoreServices
+        let services = CoreServices::new(store);
+
+        // Criar usuário sem permissão finance:read (ex: Operador Técnico)
+        let tech_session = SessionInfo {
+            user_id: "usr_tech".to_string(),
+            tenant_id: tenant_id.clone(),
+            name: "Técnico".to_string(),
+            email: "tech@local.test".to_string(),
+            role_id: "role_tech".to_string(),
+            role_name: "Técnico".to_string(),
+            role_slug: "tecnico".to_string(),
+            permissions: vec!["catalog:read".to_string(), "inventory:read".to_string()],
+            authenticated_at: now.clone(),
+            last_activity_at: now.clone(),
+            inactivity_timeout_minutes: 60,
+            auth_epoch: 1,
+        };
+
+        let model_tech = services
+            .get_equipment_model(&tech_session, model_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            model_tech.model.cost_price_cents, None,
+            "Sem finance:read, cost_price_cents deve ser mascarado"
+        );
+        assert_eq!(
+            model_tech.model.replacement_value_cents, None,
+            "Sem finance:read, replacement_value_cents deve ser mascarado"
+        );
+
+        // Criar usuário com finance:read (ex: Proprietário/Financeiro)
+        let finance_session = SessionInfo {
+            user_id: "usr_fin".to_string(),
+            tenant_id: tenant_id.clone(),
+            name: "Financeiro".to_string(),
+            email: "fin@local.test".to_string(),
+            role_id: "role_fin".to_string(),
+            role_name: "Financeiro".to_string(),
+            role_slug: "financeiro".to_string(),
+            permissions: vec![
+                "catalog:read".to_string(),
+                "inventory:read".to_string(),
+                "finance:read".to_string(),
+            ],
+            authenticated_at: now.clone(),
+            last_activity_at: now.clone(),
+            inactivity_timeout_minutes: 60,
+            auth_epoch: 1,
+        };
+
+        let model_fin = services
+            .get_equipment_model(&finance_session, model_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            model_fin.model.cost_price_cents,
+            Some(250000),
+            "Com finance:read, cost_price_cents deve ser exibido"
+        );
+        assert_eq!(
+            model_fin.model.replacement_value_cents,
+            Some(450000),
+            "Com finance:read, replacement_value_cents deve ser exibido"
         );
     }
 }

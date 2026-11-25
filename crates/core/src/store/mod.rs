@@ -1,4 +1,5 @@
 use crate::domain::catalog::*;
+use crate::domain::inventory::*;
 use crate::domain::media::*;
 use crate::domain::{
     AuditLogEntry, Customer, CustomerAddress, CustomerContact, CustomerFilter, CustomerPage,
@@ -476,6 +477,77 @@ pub trait MediaStore: Send + Sync {
     }
 }
 
+#[async_trait]
+pub trait InventoryStore: Send + Sync {
+    // Depósitos (Warehouses)
+    async fn create_warehouse(&self, warehouse: &Warehouse) -> Result<()>;
+    async fn update_warehouse(&self, warehouse: &Warehouse) -> Result<()>;
+    async fn find_warehouse_by_id(&self, tenant_id: &str, id: &str) -> Result<Option<Warehouse>>;
+    async fn find_warehouse_by_code(
+        &self,
+        tenant_id: &str,
+        code: &str,
+    ) -> Result<Option<Warehouse>>;
+    async fn get_default_warehouse(&self, tenant_id: &str) -> Result<Option<Warehouse>>;
+    async fn list_warehouses(
+        &self,
+        tenant_id: &str,
+        include_inactive: bool,
+    ) -> Result<Vec<Warehouse>>;
+    async fn set_default_warehouse(&self, tenant_id: &str, id: &str) -> Result<()>;
+    async fn delete_warehouse(&self, tenant_id: &str, id: &str) -> Result<()>;
+
+    // Unidades Físicas (Equipment Units)
+    async fn create_unit(&self, unit: &EquipmentUnit) -> Result<()>;
+    async fn update_unit(&self, unit: &EquipmentUnit) -> Result<()>;
+    async fn find_unit_by_id(&self, tenant_id: &str, id: &str) -> Result<Option<EquipmentUnit>>;
+    async fn find_unit_by_patrimony(
+        &self,
+        tenant_id: &str,
+        tag: &str,
+    ) -> Result<Option<EquipmentUnit>>;
+    async fn list_units(
+        &self,
+        tenant_id: &str,
+        filter: &EquipmentUnitFilter,
+    ) -> Result<Vec<EquipmentUnit>>;
+    async fn next_patrimony_tag(&self, tenant_id: &str) -> Result<String>;
+    async fn delete_unit(&self, tenant_id: &str, id: &str) -> Result<()>;
+
+    // Estoque & Saldos (Stock & Balances)
+    async fn get_stock_balance(
+        &self,
+        tenant_id: &str,
+        warehouse_id: &str,
+        equipment_model_id: &str,
+    ) -> Result<Option<StockBalance>>;
+    async fn list_stock_balances_by_model(
+        &self,
+        tenant_id: &str,
+        equipment_model_id: &str,
+    ) -> Result<Vec<StockBalance>>;
+    async fn list_stock_balances_by_warehouse(
+        &self,
+        tenant_id: &str,
+        warehouse_id: &str,
+    ) -> Result<Vec<StockBalance>>;
+    async fn record_stock_movement(&self, movement: &StockMovement) -> Result<()>;
+    async fn list_stock_movements(
+        &self,
+        tenant_id: &str,
+        filter: &StockMovementFilter,
+    ) -> Result<Vec<StockMovement>>;
+
+    // Mídias da Unidade Física (Unit Media)
+    async fn attach_unit_media(&self, media: &EquipmentUnitMedia) -> Result<()>;
+    async fn detach_unit_media(&self, tenant_id: &str, id: &str) -> Result<()>;
+    async fn list_unit_media(
+        &self,
+        tenant_id: &str,
+        unit_id: &str,
+    ) -> Result<Vec<EquipmentUnitMedia>>;
+}
+
 #[derive(Default)]
 pub struct InMemoryMediaStore {
     blobs: std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,
@@ -580,6 +652,7 @@ pub struct StoreBundle {
     pub venues: Arc<dyn VenueStore>,
     pub settings: Arc<dyn TenantSettingStore>,
     pub catalog: Arc<dyn CatalogStore>,
+    pub inventory: Arc<dyn InventoryStore>,
     pub tx_manager: Option<Arc<dyn TransactionManager>>,
 }
 
@@ -595,6 +668,7 @@ impl StoreBundle {
         venues: Arc<dyn VenueStore>,
         settings: Arc<dyn TenantSettingStore>,
         catalog: Arc<dyn CatalogStore>,
+        inventory: Arc<dyn InventoryStore>,
         tx_manager: Option<Arc<dyn TransactionManager>>,
     ) -> Result<Self> {
         let Some(tx) = tx_manager else {
@@ -612,6 +686,7 @@ impl StoreBundle {
             venues,
             settings,
             catalog,
+            inventory,
             tx_manager: Some(tx),
         })
     }
@@ -633,6 +708,7 @@ pub trait TxStoreBundle: Send + Sync {
     fn venues(&self) -> &dyn VenueStore;
     fn settings(&self) -> &dyn TenantSettingStore;
     fn catalog(&self) -> &dyn CatalogStore;
+    fn inventory(&self) -> &dyn InventoryStore;
 
     async fn commit(self: Box<Self>) -> Result<()>;
     async fn rollback(self: Box<Self>) -> Result<()>;

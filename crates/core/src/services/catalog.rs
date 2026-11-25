@@ -960,10 +960,17 @@ impl CoreServices {
             None
         };
 
-        self.stores
+        let mut result = self
+            .stores
             .catalog
             .list_models(&session.tenant_id, filter, descendant_ids.as_deref())
-            .await
+            .await?;
+
+        for item in &mut result.items {
+            self.sanitize_model_financials(session, &mut item.model);
+        }
+
+        Ok(result)
     }
 
     pub async fn get_equipment_model(
@@ -972,7 +979,7 @@ impl CoreServices {
         id: &str,
     ) -> Result<EquipmentModelWithDetails> {
         self.check_session_and_permission(session, PERM_CATALOG_READ)?;
-        let model = self
+        let mut model = self
             .stores
             .catalog
             .find_model_by_id(&session.tenant_id, id)
@@ -980,6 +987,7 @@ impl CoreServices {
             .ok_or_else(|| {
                 CoreError::NotFound("Modelo de equipamento não encontrado.".to_string())
             })?;
+        self.sanitize_model_financials(session, &mut model);
 
         let categories = self
             .stores
