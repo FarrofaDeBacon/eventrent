@@ -934,3 +934,258 @@ async fn test_backup_commands_rbac_technician_and_commercial_forbidden_and_owner
         "schedule_restore com senha correta do proprietário deve ser autorizado com sucesso"
     );
 }
+
+#[tokio::test]
+async fn test_inventory_permissions_enforced_at_core_level_and_financial_masking() {
+    let (app_state, _guard, tenant_id, owner_session, _db_path) = setup_real_app_state().await;
+
+    // 1. Cria usuário Técnico
+    let tech_role = app_state
+        .services
+        .stores
+        .roles
+        .find_by_slug(&tenant_id, "technician")
+        .await
+        .unwrap()
+        .expect("Papel technician deve existir");
+
+    let _tech_user = app_state
+        .services
+        .create_user(
+            &owner_session,
+            &CreateUserInput {
+                name: "Técnico Silva".to_string(),
+                email: "tecnico_inv@real.local".to_string(),
+                password: "SenhaTech123!".to_string(),
+                role_id: tech_role.id,
+            },
+        )
+        .await
+        .unwrap();
+
+    let tech_session = app_state
+        .services
+        .login(
+            &tenant_id,
+            &LoginInput {
+                email: "tecnico_inv@real.local".to_string(),
+                password: "SenhaTech123!".to_string(),
+            },
+            &LoginPolicy::default(),
+            30,
+        )
+        .await
+        .unwrap();
+
+    // 2. Cria usuário Comercial
+    let comm_role = app_state
+        .services
+        .stores
+        .roles
+        .find_by_slug(&tenant_id, "commercial")
+        .await
+        .unwrap()
+        .expect("Papel commercial deve existir");
+
+    let _comm_user = app_state
+        .services
+        .create_user(
+            &owner_session,
+            &CreateUserInput {
+                name: "Comercial Santos".to_string(),
+                email: "comercial_inv@real.local".to_string(),
+                password: "SenhaComm123!".to_string(),
+                role_id: comm_role.id,
+            },
+        )
+        .await
+        .unwrap();
+
+    let comm_session = app_state
+        .services
+        .login(
+            &tenant_id,
+            &LoginInput {
+                email: "comercial_inv@real.local".to_string(),
+                password: "SenhaComm123!".to_string(),
+            },
+            &LoginPolicy::default(),
+            30,
+        )
+        .await
+        .unwrap();
+
+    // 3. Usuário Comercial NÃO possui warehouse:read nem warehouse:operate
+    assert!(
+        matches!(
+            app_state
+                .services
+                .list_warehouses(&comm_session, false)
+                .await,
+            Err(CoreError::Forbidden(_))
+        ),
+        "Comercial não deve poder listar depósitos"
+    );
+
+    let create_wh_input = eventrent_core::domain::inventory::CreateWarehouseInput {
+        name: "Depósito Proibido".to_string(),
+        code: "PROIB-01".to_string(),
+        description: None,
+        address_line1: None,
+        address_line2: None,
+        city: None,
+        state: None,
+        postal_code: None,
+        is_default: None,
+    };
+
+    assert!(
+        matches!(
+            app_state
+                .services
+                .create_warehouse(&comm_session, &create_wh_input)
+                .await,
+            Err(CoreError::Forbidden(_))
+        ),
+        "Comercial não deve poder criar depósitos"
+    );
+
+    assert!(
+        matches!(
+            app_state
+                .services
+                .list_equipment_units(&comm_session, &Default::default())
+                .await,
+            Err(CoreError::Forbidden(_))
+        ),
+        "Comercial não deve poder listar unidades físicas"
+    );
+
+    // 4. Usuário Técnico e Proprietário POSSUEM warehouse:read e warehouse:operate
+    let tech_warehouses = app_state
+        .services
+        .list_warehouses(&tech_session, false)
+        .await;
+    assert!(
+        tech_warehouses.is_ok(),
+        "Técnico deve poder listar depósitos"
+    );
+    assert!(
+        !tech_warehouses.unwrap().is_empty(),
+        "Depósito padrão deve estar presente"
+    );
+
+    let created_wh = app_state
+        .services
+        .create_warehouse(
+            &tech_session,
+            &eventrent_core::domain::inventory::CreateWarehouseInput {
+                name: "Galpão Técnico".to_string(),
+                code: "GALP-TECH".to_string(),
+                description: Some("Criado pelo técnico".to_string()),
+                address_line1: None,
+                address_line2: None,
+                city: Some("São Paulo".to_string()),
+                state: Some("SP".to_string()),
+                postal_code: None,
+                is_default: Some(false),
+            },
+        )
+        .await;
+    assert!(created_wh.is_ok(), "Técnico deve poder criar depósitos");
+
+    // 5. Teste de confidencialidade financeira: Técnico tem acesso a modelo mas valores financeiros devem ser None
+    let category = app_state
+        .services
+        .create_category(
+            &owner_session,
+            &eventrent_core::CreateCategoryInput {
+                parent_id: None,
+                name: "Áudio".to_string(),
+                description: None,
+                sort_order: 1,
+                active: true,
+            },
+        )
+        .await
+        .expect("Proprietário deve conseguir cadastrar categoria");
+
+    let cat_input = eventrent_core::CreateEquipmentModelInput {
+        category_id: category.id,
+        brand_id: None,
+        name: "Microfone Shure SM58".to_string(),
+        model_code: None,
+        sku: None,
+        ean: None,
+        ncm: None,
+        description: None,
+        control_mode: eventrent_core::ControlMode::Serialized,
+        weight_kg: None,
+        length_cm: None,
+        width_cm: None,
+        height_cm: None,
+        power_watts: None,
+        voltage: None,
+        amperage: None,
+        requires_case: false,
+        units_per_case: None,
+        daily_rate_cents: Some(5000),
+        replacement_value_cents: Some(120000),
+        cost_price_cents: Some(85000),
+        active: true,
+        attribute_values: vec![],
+    };
+
+    let model = app_state
+        .services
+        .create_equipment_model(&owner_session, &cat_input)
+        .await
+        .expect("Proprietário deve conseguir cadastrar modelo");
+
+    // Consulta pelo Proprietário -> financeiro presente
+    let owner_view = app_state
+        .services
+        .get_equipment_model(&owner_session, &model.model.id)
+        .await
+        .unwrap();
+    assert_eq!(owner_view.model.cost_price_cents, Some(85000));
+    assert_eq!(owner_view.model.replacement_value_cents, Some(120000));
+
+    // Consulta pelo Técnico -> financeiro sanitizado (None)
+    let tech_view = app_state
+        .services
+        .get_equipment_model(&tech_session, &model.model.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        tech_view.model.cost_price_cents, None,
+        "Preço de custo deve ser mascarado para técnico sem finance:read"
+    );
+    assert_eq!(
+        tech_view.model.replacement_value_cents, None,
+        "Valor de reposição deve ser mascarado para técnico sem finance:read"
+    );
+
+    // 6. Técnico consegue tombar unidade física para este modelo
+    let unit = app_state
+        .services
+        .create_equipment_unit(
+            &tech_session,
+            &eventrent_core::domain::inventory::CreateEquipmentUnitInput {
+                equipment_model_id: model.model.id.clone(),
+                warehouse_id: Some(created_wh.unwrap().id),
+                serial_number: Some("SHURE-SN-999".to_string()),
+                physical_condition: Some(eventrent_core::domain::inventory::PhysicalCondition::New),
+                notes: Some("Unidade nova na caixa".to_string()),
+                acquisition_date: None,
+                warranty_expires_at: None,
+            },
+        )
+        .await;
+    assert!(unit.is_ok(), "Técnico deve conseguir tombar unidade física");
+    let unit = unit.unwrap();
+    assert_eq!(
+        unit.patrimony_tag, "EQ000001",
+        "Primeiro patrimônio sequencial deve ser EQ000001"
+    );
+}
