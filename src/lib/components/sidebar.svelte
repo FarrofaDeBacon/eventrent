@@ -4,6 +4,7 @@
     FileSpreadsheet,
     CalendarDays,
     Speaker,
+    Boxes,
     Users,
     Truck,
     MapPin,
@@ -69,6 +70,12 @@
       href: "/catalog",
       icon: Speaker,
       permission: PERMISSIONS.CATALOG_READ,
+    },
+    {
+      labelKey: "nav.inventory",
+      href: "/inventory",
+      icon: Boxes,
+      permission: PERMISSIONS.WAREHOUSE_READ,
     },
     {
       labelKey: "nav.customers",
