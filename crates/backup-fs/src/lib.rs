@@ -1390,10 +1390,12 @@ impl BackupFsService {
 
         // 2. Validação física de integridade no banco restaurado via PRAGMA integrity_check
         {
-            let check_conn = format!("sqlite://{}?mode=ro", restored_db_tmp.display());
+            let check_opts = SqliteConnectOptions::new()
+                .filename(&restored_db_tmp)
+                .read_only(true);
             let check_pool = match sqlx::sqlite::SqlitePoolOptions::new()
                 .max_connections(1)
-                .connect(&check_conn)
+                .connect_with(check_opts)
                 .await
             {
                 Ok(p) => p,
@@ -1710,10 +1712,12 @@ impl BackupFsService {
         }
 
         // Abre conexão somente-leitura para conferir se há migração pendente
-        let conn_str = format!("sqlite://{}?mode=ro", db_path.display());
+        let ro_opts = SqliteConnectOptions::new()
+            .filename(db_path)
+            .read_only(true);
         let pool = match sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
-            .connect(&conn_str)
+            .connect_with(ro_opts)
             .await
         {
             Ok(p) => p,
@@ -1776,10 +1780,12 @@ impl BackupFsService {
         let _ = fs::remove_file(&tmp_snapshot);
 
         // Conecta ao banco para snapshot consistente via VACUUM INTO
-        let conn_rw = format!("sqlite://{}", db_path.display());
+        let rw_opts = SqliteConnectOptions::new()
+            .filename(db_path)
+            .read_only(false);
         let rw_pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
-            .connect(&conn_rw)
+            .connect_with(rw_opts)
             .await
             .map_err(|e| {
                 CoreError::Internal(format!(
@@ -1800,10 +1806,12 @@ impl BackupFsService {
         })?;
 
         // Valida integridade física do snapshot gerado via PRAGMA integrity_check
-        let check_conn = format!("sqlite://{}?mode=ro", tmp_snapshot.display());
+        let snap_opts = SqliteConnectOptions::new()
+            .filename(&tmp_snapshot)
+            .read_only(true);
         let check_pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
-            .connect(&check_conn)
+            .connect_with(snap_opts)
             .await
             .map_err(|e| {
                 let _ = fs::remove_file(&tmp_snapshot);
@@ -1965,10 +1973,12 @@ mod tests {
             fs::write(&sample_media, img_bytes).unwrap();
 
             // Inicializa banco SQLite com tabela de teste
-            let conn_str = format!("sqlite://{}?mode=rwc", db_path.display());
+            let conn_opts = SqliteConnectOptions::new()
+                .filename(&db_path)
+                .create_if_missing(true);
             let pool = SqlitePoolOptions::new()
                 .max_connections(1)
-                .connect(&conn_str)
+                .connect_with(conn_opts)
                 .await
                 .unwrap();
 
@@ -1999,6 +2009,22 @@ mod tests {
                 self.media_dir.clone(),
                 self.config_path.clone(),
             )
+        }
+
+        #[allow(dead_code)]
+        async fn pool_ro(&self) -> SqlitePool {
+            let opts = SqliteConnectOptions::new()
+                .filename(&self.db_path)
+                .read_only(true);
+            SqlitePoolOptions::new().connect_with(opts).await.unwrap()
+        }
+
+        #[allow(dead_code)]
+        async fn pool_rw(&self) -> SqlitePool {
+            let opts = SqliteConnectOptions::new()
+                .filename(&self.db_path)
+                .read_only(false);
+            SqlitePoolOptions::new().connect_with(opts).await.unwrap()
         }
     }
 
@@ -3183,5 +3209,119 @@ mod tests {
             current_bytes, preexisting_bytes,
             "Conteúdo da mídia preexistente deve permanecer rigorosamente inalterado"
         );
+    }
+
+    #[tokio::test]
+    async fn test_backup_and_restore_with_special_characters_in_path() {
+        let _test_guard = TEST_LOCK.lock().await;
+
+        let base_tmp =
+            std::env::temp_dir().join(format!("eventrent_special_test_{}", uuid::Uuid::now_v7()));
+        let root = base_tmp.join("Área #1 100% Espaço & Acentuação");
+        let app_data_dir = root.join("AppData Local");
+        let db_path = app_data_dir.join("eventrent_banco #1.db");
+        let config_path = app_data_dir.join("configuração & tema.json");
+        let media_dir = app_data_dir.join("mídias #100%");
+        let backup_dest = root.join("Destino de Backups 100%");
+
+        fs::create_dir_all(&app_data_dir).unwrap();
+        fs::create_dir_all(&media_dir).unwrap();
+        fs::create_dir_all(&backup_dest).unwrap();
+
+        fs::write(&config_path, r#"{"theme": "system"}"#).unwrap();
+
+        let img_bytes = b"special_path_media_bytes";
+        let mut hasher = Sha256::new();
+        hasher.update(img_bytes);
+        let sha = format!("{:x}", hasher.finalize());
+        let sample_dir = media_dir.join("default").join(&sha[..2]);
+        fs::create_dir_all(&sample_dir).unwrap();
+        let sample_media = sample_dir.join(&sha);
+        fs::write(&sample_media, img_bytes).unwrap();
+
+        let conn_opts = SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(conn_opts)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE test_special (id INTEGER PRIMARY KEY, valor TEXT);
+             INSERT INTO test_special (id, valor) VALUES (1, 'acentuação e % #');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let service = BackupFsService::new(
+            app_data_dir.clone(),
+            db_path.clone(),
+            media_dir.clone(),
+            config_path.clone(),
+        );
+
+        let (manifest, backup_path) = service
+            .run_backup(&backup_dest, &pool, "0.10.0-fase2n")
+            .await
+            .expect("Backup deve suceder mesmo com caminhos contendo acentos, %, # e espaços");
+        pool.close().await;
+
+        assert_eq!(manifest.files.len(), 3); // db, config, media
+
+        let verify = service
+            .verify_backup_file(&backup_path, 10)
+            .expect("Verificação sob demanda");
+        assert!(
+            verify.valid,
+            "Backup em pasta com caracteres especiais deve ser válido: {:?}",
+            verify.error_message
+        );
+
+        // Altera o banco para testar restauração
+        let rw_opts = SqliteConnectOptions::new()
+            .filename(&db_path)
+            .read_only(false);
+        let pool_rw = SqlitePoolOptions::new()
+            .connect_with(rw_opts)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM test_special WHERE id = 1")
+            .execute(&pool_rw)
+            .await
+            .unwrap();
+        pool_rw.close().await;
+
+        service
+            .schedule_restore(&backup_path, "usr_special", 10)
+            .expect("Agendamento de restauração");
+
+        let report = service
+            .execute_pending_restore_at_startup(10)
+            .await
+            .expect("Execução da restauração a frio");
+        assert!(report.is_some(), "Relatório de restauração gerado");
+
+        // Confere restauração dos dados via SqliteConnectOptions::filename
+        let ro_opts = SqliteConnectOptions::new()
+            .filename(&db_path)
+            .read_only(true);
+        let pool_check = SqlitePoolOptions::new()
+            .connect_with(ro_opts)
+            .await
+            .unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM test_special WHERE id = 1")
+            .fetch_one(&pool_check)
+            .await
+            .unwrap();
+        pool_check.close().await;
+        assert_eq!(
+            count, 1,
+            "Dados originais devem ter sido restaurados com sucesso"
+        );
+
+        let _ = fs::remove_dir_all(&base_tmp);
     }
 }
