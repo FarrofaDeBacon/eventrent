@@ -116,6 +116,8 @@ pub struct BackupManifest {
     pub database_integrity_checked: bool,
     pub files: Vec<BackupFileEntry>,
     pub table_counts: HashMap<String, i64>,
+    #[serde(default)]
+    pub skipped_media_files: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +131,8 @@ pub struct BackupMetadataView {
     pub is_compatible: bool,
     pub file_count: usize,
     pub verified: bool,
+    #[serde(default)]
+    pub skipped_media_files: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

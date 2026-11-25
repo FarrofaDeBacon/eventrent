@@ -202,9 +202,15 @@
     isRunningBackup = true;
     try {
       const result = await getBackupRepository().runBackupNow();
-      toast.success(
-        `Backup concluído: ${result.file_name} (${formatBytes(result.byte_size)})`,
-      );
+      if (result.skipped_media_files && result.skipped_media_files > 0) {
+        toast.warning(
+          `Backup concluído com ressalvas: ${result.file_name} (${formatBytes(result.byte_size)}). ${result.skipped_media_files} arquivo(s) espúrios/não-canônicos ignorados na pasta de mídia.`,
+        );
+      } else {
+        toast.success(
+          `Backup concluído: ${result.file_name} (${formatBytes(result.byte_size)})`,
+        );
+      }
       await loadData();
     } catch (err) {
       toast.error(
@@ -647,7 +653,18 @@
                     <td
                       class="py-3 px-4 font-mono text-xs text-foreground font-medium"
                     >
-                      {backup.file_name}
+                      <div class="flex items-center gap-1.5 flex-wrap">
+                        <span>{backup.file_name}</span>
+                        {#if backup.skipped_media_files && backup.skipped_media_files > 0}
+                          <Badge
+                            variant="secondary"
+                            class="text-[10px] px-1.5 py-0 bg-amber-500/10 text-amber-500 border border-amber-500/20"
+                            title="{backup.skipped_media_files} arquivo(s) espúrios/não-canônicos ignorados"
+                          >
+                            {backup.skipped_media_files} ignorados
+                          </Badge>
+                        {/if}
+                      </div>
                     </td>
                     <td class="py-3 px-4 text-xs text-muted-foreground">
                       {formatBytes(backup.byte_size)}

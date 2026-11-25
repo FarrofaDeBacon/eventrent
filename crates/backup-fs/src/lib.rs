@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
@@ -354,6 +354,7 @@ impl BackupFsService {
             });
 
             // 3.3. Adiciona arquivos de mídia (modo Stored / sem recompressão)
+            let mut skipped_media_files = 0u64;
             if media_dir_buf.exists() {
                 if !media_dir_buf.is_dir() {
                     let _ = fs::remove_file(&temp_zip_path);
@@ -386,41 +387,43 @@ impl BackupFsService {
                         if path.is_dir() {
                             stack.push(path);
                         } else if path.is_file() {
-                            let file_name = path
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or_default();
-                            if file_name.starts_with(".tmp.") || file_name.contains(".tmp.") {
+                            let rel = match path.strip_prefix(&media_dir_buf) {
+                                Ok(r) => r,
+                                Err(_) => {
+                                    skipped_media_files += 1;
+                                    continue;
+                                }
+                            };
+
+                            let rel_slash = rel.to_string_lossy().replace('\\', "/");
+
+                            // Rejeita qualquer arquivo não-canônico (ex: Thumbs.db, .DS_Store, *.restore_tmp, *.tmp.*).
+                            // Apenas caminhos estritamente no padrão media/<tenant>/<2 hex>/<64 hex> são aceitos.
+                            if validate_canonical_media_path(&rel_slash).is_err() {
+                                tracing::warn!(
+                                    path = %path.display(),
+                                    rel = %rel_slash,
+                                    "Arquivo não-canônico na pasta de mídia ignorado durante backup"
+                                );
+                                skipped_media_files += 1;
                                 continue;
                             }
 
-                            let rel = path.strip_prefix(&media_dir_buf).map_err(|e| {
-                                let _ = fs::remove_file(&temp_zip_path);
-                                CoreError::Internal(format!(
-                                    "Falha ao calcular caminho relativo de mídia ({}): {e}",
-                                    path.display()
-                                ))
-                            })?;
+                            // Extrai o hash esperado a partir do nome do arquivo (último segmento de 64 hex)
+                            let expected_hash = match rel_slash.rsplit('/').next() {
+                                Some(h) if h.len() == 64 => h,
+                                _ => {
+                                    skipped_media_files += 1;
+                                    continue;
+                                }
+                            };
 
-                            let rel_slash = rel.to_string_lossy().replace('\\', "/");
-                            let zip_entry_name = format!("media/{rel_slash}");
-                            validate_zip_entry_name(&zip_entry_name).inspect_err(|_| {
-                                let _ = fs::remove_file(&temp_zip_path);
-                            })?;
-
+                            // Lê o arquivo para verificar se o hash SHA-256 do conteúdo realmente bate com o nome
                             let mut mf = File::open(&path).map_err(|e| {
                                 let _ = fs::remove_file(&temp_zip_path);
                                 CoreError::Internal(format!(
                                     "Falha ao abrir arquivo de mídia para backup ({}): {e}",
                                     path.display()
-                                ))
-                            })?;
-
-                            zip.start_file(&zip_entry_name, stored_opts).map_err(|e| {
-                                let _ = fs::remove_file(&temp_zip_path);
-                                CoreError::Internal(format!(
-                                    "Falha ao iniciar entrada de mídia no zip ({}): {e}",
-                                    zip_entry_name
                                 ))
                             })?;
 
@@ -441,19 +444,54 @@ impl BackupFsService {
                                 }
                                 hasher.update(&buffer[..n]);
                                 total_bytes += n as u64;
-                                zip.write_all(&buffer[..n]).map_err(|e| {
-                                    let _ = fs::remove_file(&temp_zip_path);
-                                    CoreError::Internal(format!(
-                                        "Falha ao gravar arquivo de mídia no zip ({}): {e}",
-                                        path.display()
-                                    ))
-                                })?;
                             }
+
+                            let actual_hash = format!("{:x}", hasher.finalize());
+                            if !actual_hash.eq_ignore_ascii_case(expected_hash) {
+                                tracing::warn!(
+                                    path = %path.display(),
+                                    expected = %expected_hash,
+                                    actual = %actual_hash,
+                                    "Arquivo de mídia com conteúdo divergente do nome hash ignorado durante backup"
+                                );
+                                skipped_media_files += 1;
+                                continue;
+                            }
+
+                            // Grava no arquivo ZIP o arquivo canônico validado
+                            let zip_entry_name = format!("media/{rel_slash}");
+                            validate_zip_entry_name(&zip_entry_name).inspect_err(|_| {
+                                let _ = fs::remove_file(&temp_zip_path);
+                            })?;
+
+                            mf.seek(std::io::SeekFrom::Start(0)).map_err(|e| {
+                                let _ = fs::remove_file(&temp_zip_path);
+                                CoreError::Internal(format!(
+                                    "Falha ao reposicionar ponteiro do arquivo de mídia ({}): {e}",
+                                    path.display()
+                                ))
+                            })?;
+
+                            zip.start_file(&zip_entry_name, stored_opts).map_err(|e| {
+                                let _ = fs::remove_file(&temp_zip_path);
+                                CoreError::Internal(format!(
+                                    "Falha ao iniciar entrada de mídia no zip ({}): {e}",
+                                    zip_entry_name
+                                ))
+                            })?;
+
+                            std::io::copy(&mut mf, &mut zip).map_err(|e| {
+                                let _ = fs::remove_file(&temp_zip_path);
+                                CoreError::Internal(format!(
+                                    "Falha ao gravar arquivo de mídia no zip ({}): {e}",
+                                    path.display()
+                                ))
+                            })?;
 
                             file_entries.push(BackupFileEntry {
                                 path: zip_entry_name,
                                 byte_size: total_bytes,
-                                sha256: format!("{:x}", hasher.finalize()),
+                                sha256: actual_hash,
                             });
                         }
                     }
@@ -470,6 +508,7 @@ impl BackupFsService {
                 database_integrity_checked: true,
                 files: file_entries,
                 table_counts,
+                skipped_media_files,
             };
 
             let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(|e| {
@@ -592,6 +631,7 @@ impl BackupFsService {
                                         // A listagem lê apenas o manifesto; a verificação profunda com conferência
                                         // criptográfica de SHA-256 de todas as entradas ocorre sob demanda via verify_backup.
                                         verified: false,
+                                        skipped_media_files: manifest.skipped_media_files,
                                     });
                                 }
                             }
@@ -2490,8 +2530,14 @@ mod tests {
         let env = TestEnvironment::setup().await;
         let service = env.service();
 
-        let sample_media = env.media_dir.join("locked_file.png");
-        fs::write(&sample_media, b"fake png data").unwrap();
+        let img_bytes = b"sample locked media content";
+        let mut hasher = Sha256::new();
+        hasher.update(img_bytes);
+        let sha = format!("{:x}", hasher.finalize());
+        let sample_dir = env.media_dir.join("default").join(&sha[..2]);
+        fs::create_dir_all(&sample_dir).unwrap();
+        let sample_media = sample_dir.join(&sha);
+        fs::write(&sample_media, img_bytes).unwrap();
 
         // Trava o arquivo para leitura
         #[cfg(windows)]
@@ -2891,6 +2937,82 @@ mod tests {
         assert_eq!(
             current_db_bytes, initial_db_bytes,
             "Rollback deve garantir que banco de dados continue intacto"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_backup_ignores_non_canonical_media_and_restores_successfully() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        // Insere arquivos não-canônicos e espúrios na pasta de mídia
+        fs::write(
+            env.media_dir.join("Thumbs.db"),
+            b"fake windows thumbs cache",
+        )
+        .unwrap();
+        fs::write(env.media_dir.join(".DS_Store"), b"fake macos ds_store").unwrap();
+        fs::write(
+            env.media_dir.join("backup_residue.restore_tmp"),
+            b"leftover restore tmp",
+        )
+        .unwrap();
+        fs::write(
+            env.media_dir.join("transient.tmp.48912"),
+            b"leftover upload tmp",
+        )
+        .unwrap();
+
+        let tenant_folder = env.media_dir.join("tenant_test");
+        fs::create_dir_all(&tenant_folder).unwrap();
+        fs::write(
+            tenant_folder.join("random_document.pdf"),
+            b"not a canonical media",
+        )
+        .unwrap();
+
+        // Arquivo que até tem 64 hex no nome, mas o SHA-256 real do conteúdo não bate
+        let hex_folder = tenant_folder.join("aa");
+        fs::create_dir_all(&hex_folder).unwrap();
+        let forged_name = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        fs::write(hex_folder.join(forged_name), b"corrupted or forged content").unwrap();
+
+        let conn_str = format!("sqlite://{}?mode=ro", env.db_path.display());
+        let pool = SqlitePoolOptions::new().connect(&conn_str).await.unwrap();
+
+        let (manifest, backup_path) = service
+            .run_backup(&env.backup_dest, &pool, "0.10.0-fase2n")
+            .await
+            .expect("Backup deve suceder mesmo com arquivos espúrios na pasta de mídia");
+        pool.close().await;
+
+        // Deve ter ignorado os 6 arquivos não-canônicos
+        assert_eq!(
+            manifest.skipped_media_files, 6,
+            "Deve contabilizar exatamente os 6 arquivos não-canônicos ignorados"
+        );
+
+        // O backup deve ser 100% íntegro e válido na auto-verificação e verificação sob demanda
+        let verify_res = service
+            .verify_backup_file(&backup_path, 10)
+            .expect("Verificação deve rodar com sucesso");
+        assert!(
+            verify_res.valid,
+            "Backup com mídia não-canônica ignorada deve ser considerado válido: {:?}",
+            verify_res.error_message
+        );
+
+        // Restauração do backup deve funcionar sem falhar por causa dos arquivos espúrios
+        service
+            .schedule_restore(&backup_path, "usr_admin", 10)
+            .expect("Agendamento de restauração deve ser aceito");
+
+        let restore_res = service.execute_pending_restore_at_startup(10).await;
+        assert!(
+            restore_res.is_ok(),
+            "Restauração deve concluir com sucesso sem ser bloqueada por arquivos ignorados: {:?}",
+            restore_res.err()
         );
     }
 }

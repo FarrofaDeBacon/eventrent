@@ -36,6 +36,7 @@ export const BackupManifestSchema = z.object({
   database_integrity_checked: z.boolean(),
   files: z.array(BackupFileEntrySchema),
   table_counts: z.record(z.string(), z.number().int()),
+  skipped_media_files: z.number().int().nonnegative().default(0),
 });
 export type BackupManifest = z.infer<typeof BackupManifestSchema>;
 
@@ -49,6 +50,7 @@ export const BackupMetadataViewSchema = z.object({
   is_compatible: z.boolean(),
   file_count: z.number().int().nonnegative(),
   verified: z.boolean(),
+  skipped_media_files: z.number().int().nonnegative().default(0),
 });
 export type BackupMetadataView = z.infer<typeof BackupMetadataViewSchema>;
 

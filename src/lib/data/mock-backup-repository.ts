@@ -94,6 +94,7 @@ export class MockBackupRepository implements BackupRepository {
       is_compatible: true,
       file_count: 5,
       verified: true,
+      skipped_media_files: 0,
     };
 
     this.mockBackups.unshift(newBackup);
@@ -133,6 +134,7 @@ export class MockBackupRepository implements BackupRepository {
           },
         ],
         table_counts: { users: 1 },
+        skipped_media_files: 0,
       },
       error_message: null,
       is_compatible: true,

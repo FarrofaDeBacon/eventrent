@@ -160,6 +160,7 @@ pub async fn run_backup_now(state: State<'_, AppState>) -> Result<BackupMetadata
         is_compatible: true,
         file_count: manifest.files.len(),
         verified: true,
+        skipped_media_files: manifest.skipped_media_files,
     })
 }
 
