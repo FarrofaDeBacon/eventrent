@@ -2171,6 +2171,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_retention_execution_never_deletes_most_recent_when_limits_are_zero() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        let conn_str = format!("sqlite://{}?mode=ro", env.db_path.display());
+        let pool = SqlitePoolOptions::new().connect(&conn_str).await.unwrap();
+
+        let (_manifest, backup_path) = service
+            .run_backup(&env.backup_dest, &pool, "0.10.0-fase2n")
+            .await
+            .unwrap();
+
+        pool.close().await;
+
+        let plan = service
+            .execute_retention(&env.backup_dest, 0, 0, 0)
+            .expect("Execução da retenção");
+
+        assert!(
+            backup_path.exists(),
+            "O backup recém-criado deve continuar existindo mesmo com retenção zerada"
+        );
+        assert_eq!(plan.files_to_keep.len(), 1);
+        assert_eq!(plan.files_to_delete.len(), 0);
+    }
+
+    #[tokio::test]
     async fn test_zip_slip_rejection_dot_dot() {
         let _test_guard = TEST_LOCK.lock().await;
         let env = TestEnvironment::setup().await;

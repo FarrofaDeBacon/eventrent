@@ -96,6 +96,25 @@ impl CoreServices {
     ) -> Result<BackupStatus> {
         self.authorize_backup_operation(session)?;
 
+        if settings.retention_daily < 1 || settings.retention_daily > 60 {
+            return Err(CoreError::Validation(format!(
+                "Retenção diária inválida ({}). O valor deve estar entre 1 e 60 dias.",
+                settings.retention_daily
+            )));
+        }
+        if settings.retention_weekly > 52 {
+            return Err(CoreError::Validation(format!(
+                "Retenção semanal inválida ({}). O valor deve estar entre 0 e 52 semanas.",
+                settings.retention_weekly
+            )));
+        }
+        if settings.retention_monthly > 60 {
+            return Err(CoreError::Validation(format!(
+                "Retenção mensal inválida ({}). O valor deve estar entre 0 e 60 meses.",
+                settings.retention_monthly
+            )));
+        }
+
         if !settings.destination_folder.trim().is_empty() {
             let dest_path = std::path::Path::new(&settings.destination_folder);
             if !dest_path.exists() {

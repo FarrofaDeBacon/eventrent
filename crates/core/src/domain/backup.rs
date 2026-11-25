@@ -288,6 +288,12 @@ pub fn calculate_retention_plan(
 
     let mut keep_set = HashSet::new();
 
+    // REGRA DE SEGURANÇA ABSOLUTA: O backup mais recente NUNCA pode ser excluído,
+    // independentemente de limites zerados ou qualquer política de expiração.
+    if let Some(most_recent) = sorted.first() {
+        keep_set.insert(most_recent.file_path.clone());
+    }
+
     // 1. Diários: os primeiros `daily_limit` backups mais recentes
     for c in sorted.iter().take(daily_limit as usize) {
         keep_set.insert(c.file_path.clone());
@@ -606,5 +612,41 @@ mod tests {
                 "Backup do dia {day} deve ser retido pelo limite diário"
             );
         }
+    }
+
+    #[test]
+    fn test_retention_plan_never_deletes_most_recent_even_if_limits_zero() {
+        let base = DateTime::parse_from_rfc3339("2026-11-23T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let mut candidates = Vec::new();
+        for day in 0..5 {
+            let dt = base - Duration::days(day);
+            candidates.push(RetentionCandidate {
+                file_name: format!("backup-{day}.eventrent-backup"),
+                file_path: format!("/backups/backup-{day}.eventrent-backup"),
+                created_at: dt,
+            });
+        }
+
+        // Limites zerados em todas as políticas
+        let plan = calculate_retention_plan(&candidates, 0, 0, 0);
+
+        // O backup mais recente (day 0) DEVE ser preservado
+        assert_eq!(
+            plan.files_to_keep.len(),
+            1,
+            "Exatamente 1 arquivo (o mais recente) deve ser protegido contra deleção"
+        );
+        assert_eq!(
+            plan.files_to_keep[0], "/backups/backup-0.eventrent-backup",
+            "O arquivo retido deve ser o backup mais recente"
+        );
+        assert_eq!(
+            plan.files_to_delete.len(),
+            4,
+            "Os 4 backups mais antigos devem ser marcados para descarte"
+        );
     }
 }

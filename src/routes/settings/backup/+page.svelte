@@ -158,17 +158,14 @@
       const input: SetBackupSettingsInput = {
         destination_folder: destinationFolder.trim(),
         schedule_enabled: autoBackupEnabled,
-        retention_daily: Math.max(
-          1,
-          Math.min(365, Number(retentionDaily) || 7),
-        ),
+        retention_daily: Math.max(1, Math.min(60, Number(retentionDaily) || 7)),
         retention_weekly: Math.max(
-          1,
-          Math.min(52, Number(retentionWeekly) || 4),
+          0,
+          Math.min(52, Number(retentionWeekly) || 0),
         ),
         retention_monthly: Math.max(
-          1,
-          Math.min(120, Number(retentionMonthly) || 12),
+          0,
+          Math.min(60, Number(retentionMonthly) || 0),
         ),
       };
 
@@ -453,12 +450,12 @@
                     id="ret-days"
                     type="number"
                     min="1"
-                    max="365"
+                    max="60"
                     bind:value={retentionDaily}
                     disabled={!canManage || isSavingSettings}
                   />
                   <span class="text-[10px] text-muted-foreground block">
-                    Mantém 1 por dia nos últimos X dias.
+                    Mantém 1 por dia nos últimos X dias (1 a 60).
                   </span>
                 </div>
                 <div class="space-y-1">
@@ -471,13 +468,13 @@
                   <Input
                     id="ret-weeks"
                     type="number"
-                    min="1"
+                    min="0"
                     max="52"
                     bind:value={retentionWeekly}
                     disabled={!canManage || isSavingSettings}
                   />
                   <span class="text-[10px] text-muted-foreground block">
-                    Mantém 1 por semana nas últimas X semanas.
+                    Mantém 1 por semana nas últimas X semanas (0 a 52).
                   </span>
                 </div>
                 <div class="space-y-1">
@@ -490,13 +487,13 @@
                   <Input
                     id="ret-months"
                     type="number"
-                    min="1"
-                    max="120"
+                    min="0"
+                    max="60"
                     bind:value={retentionMonthly}
                     disabled={!canManage || isSavingSettings}
                   />
                   <span class="text-[10px] text-muted-foreground block">
-                    Mantém 1 por mês nos últimos X meses.
+                    Mantém 1 por mês nos últimos X meses (0 a 60).
                   </span>
                 </div>
               </div>
