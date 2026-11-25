@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 pub use sqlx;
 pub type DbPool = Pool<Sqlite>;
-pub const CURRENT_MAX_MIGRATION: i64 = 10;
+pub const CURRENT_MAX_MIGRATION: i64 = 11;
 
 pub(crate) fn map_sqlx_err(err: sqlx::Error) -> CoreError {
     match &err {
@@ -7378,5 +7378,146 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err_v4, CoreError::Unauthorized(_)));
+    }
+
+    #[tokio::test]
+    async fn test_migration_0011_schema_triggers_and_constraints() {
+        let pool = init_memory_db().await.unwrap();
+        let store = SqliteStore::new(pool.clone()).into_bundle();
+        let tenant_id = ensure_default_tenant(store.tenants.as_ref(), store.branding.as_ref())
+            .await
+            .unwrap();
+        contract_system_roles(&store, &tenant_id).await;
+
+        // 1. Confere se o depósito padrão inicial foi provisionado pela migração
+        let default_wh_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM warehouse WHERE tenant_id = ? AND is_default = 1 AND deleted_at IS NULL",
+        )
+        .bind(&tenant_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            default_wh_count, 1,
+            "Deve existir exatamente 1 depósito padrão após migração"
+        );
+
+        // 2. Confere se a sequência de patrimônio inicial foi provisionada
+        let seq_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM equipment_patrimony_seq WHERE tenant_id = ?")
+                .bind(&tenant_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(seq_count, 1, "Sequência de patrimônio deve existir");
+
+        // 3. Tentar inserir um segundo depósito padrão deve falhar pelo índice único parcial
+        let second_default_err = sqlx::query(
+            "INSERT INTO warehouse (id, tenant_id, name, code, is_default, active, created_at, updated_at)
+             VALUES ('wh_second', ?, 'Segundo Depósito Padrão', 'SEC_DEF', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        )
+        .bind(&tenant_id)
+        .execute(&pool)
+        .await;
+        assert!(
+            second_default_err.is_err(),
+            "Segundo depósito padrão ativo deve violar índice único parcial"
+        );
+
+        // 4. Criação de categoria e modelo para teste de movimentação e saldo
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO equipment_category (id, tenant_id, name, name_normalized, created_at, updated_at)
+             VALUES ('cat_01', ?, 'Áudio', 'audio', ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO equipment_model (id, tenant_id, category_id, name, name_sort, search_text, control_mode, created_at, updated_at)
+             VALUES ('mod_01', ?, 'cat_01', 'Pioneer CDJ-3000', 'pioneer cdj-3000', 'pioneer cdj-3000', 'serialized', ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 5. Teste da constraint de saldo não-negativo em stock_balance
+        let negative_balance_err = sqlx::query(
+            "INSERT INTO stock_balance (id, tenant_id, warehouse_id, equipment_model_id, quantity_on_hand, updated_at)
+             VALUES ('sb_01', ?, (SELECT id FROM warehouse WHERE tenant_id = ? LIMIT 1), 'mod_01', -1, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&tenant_id)
+        .bind(&now)
+        .execute(&pool)
+        .await;
+        assert!(
+            negative_balance_err.is_err(),
+            "Saldo negativo deve ser categoricamente bloqueado por CHECK constraint"
+        );
+
+        // 6. Teste de triggers de imutabilidade append-only em stock_movement
+        let role_id: String = sqlx::query_scalar("SELECT id FROM role WHERE tenant_id = ? LIMIT 1")
+            .bind(&tenant_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let user_id = "usr_test_operator";
+        sqlx::query(
+            "INSERT INTO app_user (id, tenant_id, name, email, password_hash, role_id, active, created_at, updated_at)
+             VALUES (?, ?, 'Operador', 'op@test.local', 'hash', ?, 1, ?, ?)",
+        )
+        .bind(user_id)
+        .bind(&tenant_id)
+        .bind(&role_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let wh_id: String =
+            sqlx::query_scalar("SELECT id FROM warehouse WHERE tenant_id = ? LIMIT 1")
+                .bind(&tenant_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        sqlx::query(
+            "INSERT INTO stock_movement (id, tenant_id, equipment_model_id, to_warehouse_id, movement_type, quantity, reason, performed_by_user_id, created_at)
+             VALUES ('sm_01', ?, 'mod_01', ?, 'purchase_in', 5, 'Compra inicial', ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&wh_id)
+        .bind(user_id)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // UPDATE em stock_movement DEVE ser abortado pelo trigger
+        let update_err = sqlx::query("UPDATE stock_movement SET quantity = 10 WHERE id = 'sm_01'")
+            .execute(&pool)
+            .await;
+        assert!(
+            update_err.is_err(),
+            "UPDATE em stock_movement deve ser abortado pelo trigger trg_stock_movement_no_update"
+        );
+
+        // DELETE em stock_movement DEVE ser abortado pelo trigger
+        let delete_err = sqlx::query("DELETE FROM stock_movement WHERE id = 'sm_01'")
+            .execute(&pool)
+            .await;
+        assert!(
+            delete_err.is_err(),
+            "DELETE em stock_movement deve ser abortado pelo trigger trg_stock_movement_no_delete"
+        );
     }
 }
