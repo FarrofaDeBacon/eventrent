@@ -87,8 +87,8 @@ pub async fn run_scheduled_backup_if_due(
                 "Agendador de backup: backup automático concluído com sucesso."
             );
 
-            // Registra sucesso
-            let _ = state
+            // Registra sucesso na auditoria e configurações
+            if let Err(e) = state
                 .services
                 .record_backup_outcome(
                     &state.default_tenant_id,
@@ -97,7 +97,13 @@ pub async fn run_scheduled_backup_if_due(
                     None,
                     Some(&backup_file.to_string_lossy()),
                 )
-                .await;
+                .await
+            {
+                tracing::error!(
+                    error = %e,
+                    "Falha ao registrar desfecho de sucesso de backup automático na auditoria/configurações"
+                );
+            }
 
             // Executa rotação e retenção na pasta de destino
             let _ = state.backup_service.execute_retention(
@@ -128,8 +134,8 @@ pub async fn run_scheduled_backup_if_due(
                 "Agendador de backup: falha na execução do backup automático."
             );
 
-            // Registra falha
-            let _ = state
+            // Registra falha na auditoria e configurações
+            if let Err(e) = state
                 .services
                 .record_backup_outcome(
                     &state.default_tenant_id,
@@ -138,7 +144,13 @@ pub async fn run_scheduled_backup_if_due(
                     Some(&err_str),
                     None,
                 )
-                .await;
+                .await
+            {
+                tracing::error!(
+                    error = %e,
+                    "Falha ao registrar desfecho de falha de backup automático na auditoria/configurações"
+                );
+            }
 
             // Emite evento Tauri para a interface exibir aviso de falha
             if let Some(app) = app_handle {

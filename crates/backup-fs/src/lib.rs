@@ -66,6 +66,101 @@ pub fn validate_canonical_media_path(rel: &str) -> Result<()> {
     Ok(())
 }
 
+/// Consulta o espaço livre aproximado disponível em bytes no disco correspondente ao caminho informado.
+#[cfg(windows)]
+pub fn get_available_disk_space(path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    let mut check_path = path.to_path_buf();
+    while !check_path.exists() {
+        if !check_path.pop() {
+            break;
+        }
+    }
+    let wide: Vec<u16> = check_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut free_bytes_available: u64 = 0;
+    let mut total_number_of_bytes: u64 = 0;
+    let mut total_number_of_free_bytes: u64 = 0;
+
+    extern "system" {
+        fn GetDiskFreeSpaceExW(
+            lpDirectoryName: *const u16,
+            lpFreeBytesAvailableToCaller: *mut u64,
+            lpTotalNumberOfBytes: *mut u64,
+            lpTotalNumberOfFreeBytes: *mut u64,
+        ) -> i32;
+    }
+
+    let success = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut free_bytes_available,
+            &mut total_number_of_bytes,
+            &mut total_number_of_free_bytes,
+        )
+    };
+
+    if success != 0 {
+        Some(free_bytes_available)
+    } else {
+        None
+    }
+}
+
+#[cfg(unix)]
+pub fn get_available_disk_space(path: &Path) -> Option<u64> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut check_path = path.to_path_buf();
+    while !check_path.exists() {
+        if !check_path.pop() {
+            break;
+        }
+    }
+
+    let c_path = CString::new(check_path.as_os_str().as_bytes()).ok()?;
+    #[repr(C)]
+    struct Statvfs {
+        f_bsize: std::ffi::c_ulong,
+        f_frsize: std::ffi::c_ulong,
+        f_blocks: std::ffi::c_ulong,
+        f_bfree: std::ffi::c_ulong,
+        f_bavail: std::ffi::c_ulong,
+        f_files: std::ffi::c_ulong,
+        f_ffree: std::ffi::c_ulong,
+        f_favail: std::ffi::c_ulong,
+        f_fsid: std::ffi::c_ulong,
+        f_flag: std::ffi::c_ulong,
+        f_namemax: std::ffi::c_ulong,
+        f_spare: [std::ffi::c_int; 6],
+    }
+    extern "C" {
+        fn statvfs(path: *const std::ffi::c_char, buf: *mut Statvfs) -> std::ffi::c_int;
+    }
+    unsafe {
+        let mut stat: Statvfs = std::mem::zeroed();
+        if statvfs(c_path.as_ptr(), &mut stat) == 0 {
+            let frsize = if stat.f_frsize > 0 {
+                stat.f_frsize
+            } else {
+                stat.f_bsize
+            };
+            Some((stat.f_bavail as u64).saturating_mul(frsize as u64))
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
+pub fn get_available_disk_space(_path: &Path) -> Option<u64> {
+    None
+}
+
 impl BackupFsService {
     pub fn new(
         app_data_dir: PathBuf,
@@ -98,6 +193,18 @@ impl BackupFsService {
                 destination_folder.display()
             ))
         })?;
+
+        // Checagem de espaço livre aproximado no destino antes de iniciar o backup
+        if let Some(free_space) = get_available_disk_space(destination_folder) {
+            let db_size = fs::metadata(&self.db_path).map(|m| m.len()).unwrap_or(0);
+            let estimated_required = db_size.saturating_mul(2).max(10 * 1024 * 1024);
+            if free_space < estimated_required {
+                return Err(CoreError::Validation(format!(
+                    "Espaço livre insuficiente no disco de destino ({} bytes disponíveis, estimados {} bytes necessários). Libere espaço antes de executar o backup.",
+                    free_space, estimated_required
+                )));
+            }
+        }
 
         let now = Utc::now();
         let ts = now.format("%Y-%m-%d-%H%M%S").to_string();
@@ -920,7 +1027,12 @@ impl BackupFsService {
         })?;
         let mut hasher = Sha256::new();
         let mut buf = [0u8; 64 * 1024];
-        while let Ok(n) = f.read(&mut buf) {
+        loop {
+            let n = f.read(&mut buf).map_err(|e| {
+                CoreError::Internal(format!(
+                    "Falha ao ler bytes do arquivo de backup para cálculo de SHA-256: {e}"
+                ))
+            })?;
             if n == 0 {
                 break;
             }
@@ -1138,6 +1250,21 @@ impl BackupFsService {
             ));
         }
 
+        // Checagem de espaço livre aproximado no disco do app_data_dir antes da restauração
+        if let Some(free_space) = get_available_disk_space(&self.app_data_dir) {
+            let backup_size = fs::metadata(&backup_file_path)
+                .map(|m| m.len())
+                .unwrap_or(0);
+            let estimated_required = backup_size.saturating_mul(2).max(10 * 1024 * 1024);
+            if free_space < estimated_required {
+                let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                return Err(CoreError::Validation(format!(
+                    "Espaço livre insuficiente no disco para restauração ({} bytes disponíveis, estimados {} bytes necessários).",
+                    free_space, estimated_required
+                )));
+            }
+        }
+
         // Cria snapshot de salvaguarda prévia (pre-restore) cobrindo banco e mídia com propagação estrita de erros
         let mut pre_restore_path_str = None;
         let db_backup_original = self.app_data_dir.join("eventrent.db.pre-restore.bak");
@@ -1296,6 +1423,20 @@ impl BackupFsService {
             pre_restore_path_str = Some(pre_restore_file.to_string_lossy().to_string());
         }
 
+        let orig_wal = PathBuf::from(format!("{}-wal", self.db_path.to_string_lossy()));
+        let orig_shm = PathBuf::from(format!("{}-shm", self.db_path.to_string_lossy()));
+        let bak_wal = PathBuf::from(format!("{}-wal", db_backup_original.to_string_lossy()));
+        let bak_shm = PathBuf::from(format!("{}-shm", db_backup_original.to_string_lossy()));
+        let _ = fs::remove_file(&bak_wal);
+        let _ = fs::remove_file(&bak_shm);
+
+        if orig_wal.exists() {
+            let _ = fs::copy(&orig_wal, &bak_wal);
+        }
+        if orig_shm.exists() {
+            let _ = fs::copy(&orig_shm, &bak_shm);
+        }
+
         // Rastreamento de arquivos criados para garantia de rollback integral
         let mut extracted_media_paths: Vec<PathBuf> = Vec::new();
         let restored_db_tmp = self.app_data_dir.join("eventrent.restored.tmp.db");
@@ -1311,6 +1452,16 @@ impl BackupFsService {
             }
             if db_backup_original.exists() {
                 let _ = fs::copy(&db_backup_original, &self.db_path);
+            }
+            if bak_wal.exists() {
+                let _ = fs::copy(&bak_wal, &orig_wal);
+            } else {
+                let _ = fs::remove_file(&orig_wal);
+            }
+            if bak_shm.exists() {
+                let _ = fs::copy(&bak_shm, &orig_shm);
+            } else {
+                let _ = fs::remove_file(&orig_shm);
             }
             let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
         };
@@ -1668,9 +1819,11 @@ impl BackupFsService {
         }
         let _ = fs::remove_file(&restored_cfg_tmp);
 
-        // Remove o marcador de restauração pendente e o backup original de rollback
+        // Remove o marcador de restauração pendente e os backups originais de rollback
         let _ = fs::remove_file(&marker_path);
         let _ = fs::remove_file(&db_backup_original);
+        let _ = fs::remove_file(&bak_wal);
+        let _ = fs::remove_file(&bak_shm);
 
         tracing::info!(
             files_restored_count,
@@ -3323,5 +3476,53 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&base_tmp);
+    }
+
+    #[tokio::test]
+    async fn test_restore_rollback_preserves_wal_file_when_restore_fails() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        let pool = env.pool_ro().await;
+        let (_manifest, backup_path) = service
+            .run_backup(&env.backup_dest, &pool, "0.10.0-fase2n")
+            .await
+            .unwrap();
+        pool.close().await;
+
+        // Cria arquivos -wal e -shm simulando transações uncommitted
+        let wal_path = PathBuf::from(format!("{}-wal", env.db_path.to_string_lossy()));
+        let wal_bytes = b"wal simulation uncommitted data 1234567890";
+        fs::write(&wal_path, wal_bytes).unwrap();
+
+        // Adultera o backup para forçar falha e rollback
+        let bad_zip = env.backup_dest.join("bad_backup_wal_test.eventrent-backup");
+        fs::copy(&backup_path, &bad_zip).unwrap();
+
+        // Agenda marcador
+        let marker = RestorePendingMarker {
+            backup_file_path: bad_zip.to_string_lossy().to_string(),
+            backup_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
+            scheduled_at: Utc::now().to_rfc3339(),
+            scheduled_by_user_id: "usr_admin".to_string(),
+        };
+        fs::write(
+            env.app_data_dir.join(RESTORE_PENDING_FILE),
+            serde_json::to_string(&marker).unwrap(),
+        )
+        .unwrap();
+
+        let res = service.execute_pending_restore_at_startup(10).await;
+        assert!(res.is_err(), "Restauração deve falhar com SHA divergente");
+
+        // O arquivo -wal original DEVE ter sido preservado pelo rollback
+        assert!(wal_path.exists(), "Arquivo -wal deve existir após rollback");
+        let current_wal_bytes = fs::read(&wal_path).unwrap();
+        assert_eq!(
+            current_wal_bytes, wal_bytes,
+            "Conteúdo do arquivo -wal deve ter sido preservado intacto pelo rollback"
+        );
     }
 }
