@@ -1520,6 +1520,43 @@ impl BackupFsService {
                     )));
                 }
 
+                // Verifica se o arquivo de mídia já existe previamente com o mesmo tamanho e SHA-256.
+                // Como o armazenamento de mídia é endereçado por conteúdo (CAS), arquivos preexistentes
+                // idênticos não precisam ser regravados e JAMAIS devem entrar em extracted_media_paths,
+                // garantindo que um rollback eventual não destrua mídias preexistentes legítimas do banco atual.
+                let already_present_and_valid = if target_path.is_file() {
+                    if let Ok(existing_meta) = fs::metadata(&target_path) {
+                        if existing_meta.len() == meta.byte_size {
+                            if let Ok(mut ef) = File::open(&target_path) {
+                                let mut e_hasher = Sha256::new();
+                                let mut e_buf = [0u8; 64 * 1024];
+                                while let Ok(n) = ef.read(&mut e_buf) {
+                                    if n == 0 {
+                                        break;
+                                    }
+                                    e_hasher.update(&e_buf[..n]);
+                                }
+                                let e_sha = format!("{:x}", e_hasher.finalize());
+                                e_sha.eq_ignore_ascii_case(&meta.sha256)
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if already_present_and_valid {
+                    // Arquivo idêntico já existe previamente: preserva intacto e não adiciona a extracted_media_paths
+                    files_restored_count += 1;
+                    continue;
+                }
+
                 if let Some(parent) = target_path.parent() {
                     if let Err(e) = fs::create_dir_all(parent) {
                         rollback(&extracted_media_paths);
@@ -3013,6 +3050,110 @@ mod tests {
             restore_res.is_ok(),
             "Restauração deve concluir com sucesso sem ser bloqueada por arquivos ignorados: {:?}",
             restore_res.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_restore_rollback_preserves_preexisting_media_when_restoration_fails() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        // Identifica o arquivo de mídia preexistente criado no setup
+        let sample_media_files: Vec<PathBuf> = fs::read_dir(env.media_dir.join("default"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .flat_map(|sub| {
+                fs::read_dir(sub.path())
+                    .unwrap()
+                    .filter_map(|e| e.ok().map(|ent| ent.path()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert!(
+            !sample_media_files.is_empty(),
+            "Mídia preexistente deve existir"
+        );
+        let preexisting_media_path = sample_media_files[0].clone();
+        let preexisting_bytes = fs::read(&preexisting_media_path).unwrap();
+
+        let conn_str = format!("sqlite://{}?mode=ro", env.db_path.display());
+        let pool = SqlitePoolOptions::new().connect(&conn_str).await.unwrap();
+        let (_manifest, backup_path) = service
+            .run_backup(&env.backup_dest, &pool, "0.10.0-fase2n")
+            .await
+            .expect("Backup deve ser criado");
+        pool.close().await;
+
+        // Cria uma cópia adulterada do zip onde um arquivo extra de mídia falhará na conferência de SHA
+        let tampered_zip = env.backup_dest.join("tampered_rollback.eventrent-backup");
+        {
+            let src = File::open(&backup_path).unwrap();
+            let mut archive = ZipArchive::new(src).unwrap();
+            let dst = File::create(&tampered_zip).unwrap();
+            let mut writer = ZipWriter::new(dst);
+            let opt = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+            let bad_media_hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+            let bad_media_entry = format!("media/default/bb/{bad_media_hash}");
+
+            for i in 0..archive.len() {
+                let mut e = archive.by_index(i).unwrap();
+                let name = e.name().to_string();
+                let mut d = Vec::new();
+                e.read_to_end(&mut d).unwrap();
+                if name == "manifest.json" {
+                    let mut mf: BackupManifest = serde_json::from_slice(&d).unwrap();
+                    // Adiciona entrada fraudulenta ao manifesto
+                    mf.files.push(BackupFileEntry {
+                        path: bad_media_entry.clone(),
+                        byte_size: 15,
+                        sha256: bad_media_hash.to_string(),
+                    });
+                    d = serde_json::to_vec_pretty(&mf).unwrap();
+                }
+                writer.start_file(name, opt).unwrap();
+                writer.write_all(&d).unwrap();
+            }
+
+            // Grava o arquivo com bytes divergentes do sha declarado
+            writer.start_file(bad_media_entry, opt).unwrap();
+            writer.write_all(b"wrong sha bytes").unwrap();
+            writer.finish().unwrap();
+        }
+
+        // Agenda e executa restauração que falhará na conferência do arquivo fraudulento
+        let mut hasher = Sha256::new();
+        let b = fs::read(&tampered_zip).unwrap();
+        hasher.update(&b);
+        let marker = RestorePendingMarker {
+            backup_file_path: tampered_zip.to_string_lossy().to_string(),
+            backup_sha256: format!("{:x}", hasher.finalize()),
+            scheduled_at: Utc::now().to_rfc3339(),
+            scheduled_by_user_id: "usr_admin".to_string(),
+        };
+        fs::write(
+            env.app_data_dir.join(RESTORE_PENDING_FILE),
+            serde_json::to_string(&marker).unwrap(),
+        )
+        .unwrap();
+
+        let res = service.execute_pending_restore_at_startup(10).await;
+        assert!(
+            res.is_err(),
+            "Restauração deve falhar devido à divergência de SHA no arquivo corrompido"
+        );
+
+        // Ponto Crítico da Tarefa 0.2:
+        // A mídia preexistente DEVE continuar existindo e intacta, NÃO pode ter sido deletada pelo rollback!
+        assert!(
+            preexisting_media_path.exists(),
+            "Mídia preexistente não deve ser deletada no rollback de restauração"
+        );
+        let current_bytes = fs::read(&preexisting_media_path).unwrap();
+        assert_eq!(
+            current_bytes, preexisting_bytes,
+            "Conteúdo da mídia preexistente deve permanecer rigorosamente inalterado"
         );
     }
 }
