@@ -288,3 +288,27 @@ A migração `0007_venues_and_settings.sql` introduz:
 - `media_blob`: metadados de arquivos físicos endereçados por conteúdo (`sha256` de 64 caracteres hexadecimais) fora do banco (`MediaStore`), com `mime_type CHECK (mime_type IN ('image/webp', 'image/jpeg', 'image/png', 'application/pdf'))`, `byte_size > 0`, `width` e `height` (`NULL` para PDF), `storage_key` (`<tenant_id>/<2_hex>/<sha256>`), `UNIQUE (tenant_id, id)` e índice único parcial `idx_media_blob_sha_mime_active ON media_blob (tenant_id, sha256, mime_type) WHERE deleted_at IS NULL` garantindo deduplicação por tenant.
 - `media_asset`: ativo de mídia (`kind IN ('image', 'document')`), referenciando `blob_id` e opcionalmente `thumb_blob_id` via FKs compostas `(tenant_id, blob_id)` e `(tenant_id, thumb_blob_id)` (`ON DELETE RESTRICT`), metadados (`title`, `doc_type IN ('manual', 'datasheet', 'certificate', 'other')`, `origin IN ('manufacturer', 'own', 'website', 'other')`, `credit_note`, `language`, `version_note`, `original_filename` saneado, `width`, `height`, `byte_size`) e `UNIQUE (tenant_id, id)`.
 - `equipment_model_media`: tabela de vínculo específica por entidade (nunca polimórfica) ligando `equipment_model` a `media_asset` via FKs compostas `(tenant_id, model_id)` e `(tenant_id, asset_id)`, com `is_primary`, `sort_order`, índice único parcial `idx_equipment_model_media_link_active ON (tenant_id, model_id, asset_id) WHERE deleted_at IS NULL` e índice único parcial `idx_equipment_model_media_primary_active ON (tenant_id, model_id) WHERE is_primary = 1 AND deleted_at IS NULL` garantindo no máximo uma foto principal por modelo.
+
+---
+
+## 9. Gestão de Unidades Físicas, Estoque Multidepósito e Livro-Razão (Fase 2B — Migração `0011_inventory.sql` / ADR-0018)
+
+A migração `0011_inventory.sql` introduz o modelo relacional de gestão física e quantitativa de estoque:
+
+- `warehouse`: cadastro de depósitos, galpões e sedes de armazenamento por tenant.
+  - Campos: `id`, `tenant_id`, `name`, `code`, `description`, `address_line1`, `address_line2`, `city`, `state`, `postal_code`, `is_default` (`INTEGER NOT NULL DEFAULT 0`), `active` (`INTEGER NOT NULL DEFAULT 1`), `created_at`, `updated_at`, `deleted_at`, `created_by`.
+  - FKs e Índices: `UNIQUE (tenant_id, id)`, `FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE`, `FOREIGN KEY (created_by) REFERENCES app_user(id) ON DELETE SET NULL`. Índice único parcial `idx_warehouse_tenant_code_active ON warehouse (tenant_id, code) WHERE deleted_at IS NULL`.
+- `equipment_patrimony_seq`: tabela de controle atômico de numeração patrimonial sequencial por tenant (`tenant_id PRIMARY KEY`, `last_number INTEGER NOT NULL DEFAULT 0`).
+- `equipment_unit`: unidades físicas tombadas de modelos serializados (`control_mode = 'serialized'`).
+  - Campos: `id`, `tenant_id`, `equipment_model_id`, `warehouse_id`, `patrimony_tag` (ex: `EQ000001`), `serial_number`, `status` (`CHECK IN ('available', 'allocated', 'in_transit', 'maintenance', 'damaged', 'lost', 'retired')`), `physical_condition` (`CHECK IN ('new', 'good', 'fair', 'poor')`), `notes`, `acquisition_date`, `warranty_expires_at`, `active`, `created_at`, `updated_at`, `deleted_at`, `created_by`.
+  - FKs compostas: `FOREIGN KEY (tenant_id, equipment_model_id) REFERENCES equipment_model(tenant_id, id) ON DELETE RESTRICT`, `FOREIGN KEY (tenant_id, warehouse_id) REFERENCES warehouse(tenant_id, id) ON DELETE RESTRICT`.
+  - Índices únicos parciais: `idx_equipment_unit_tenant_tag_active ON equipment_unit (tenant_id, patrimony_tag) WHERE deleted_at IS NULL` e `idx_equipment_unit_tenant_serial_active ON equipment_unit (tenant_id, equipment_model_id, serial_number) WHERE deleted_at IS NULL AND serial_number IS NOT NULL`.
+- `stock_balance`: agregador de saldos por depósito para itens quantitativos (`control_mode = 'quantity'`).
+  - Campos: `id`, `tenant_id`, `warehouse_id`, `equipment_model_id`, `quantity_on_hand` (`CHECK >= 0`), `quantity_allocated` (`CHECK >= 0`), `quantity_maintenance` (`CHECK >= 0`), `updated_at`.
+  - Constraint estrita: saldo em mãos (`quantity_on_hand`) nunca negativo, protegido por trigger SQLite `trg_stock_balance_no_negative`.
+- `stock_movement`: livro-razão imutável (_append-only ledger_) de todas as movimentações.
+  - Campos: `id`, `tenant_id`, `equipment_model_id`, `equipment_unit_id` (opcional), `from_warehouse_id` (opcional), `to_warehouse_id` (opcional), `movement_type` (`CHECK IN ('purchase_in', 'return_in', 'rental_out', 'transfer_out', 'transfer_in', 'maintenance_out', 'maintenance_in', 'loss_out', 'adjustment')`), `quantity` (`CHECK > 0`), `reason`, `reference_id`, `performed_by_user_id`, `created_at`.
+  - Triggers de Imutabilidade: `trg_stock_movement_no_update` e `trg_stock_movement_no_delete` abortam sumariamente tentativas de mutação ou deleção física/lógica.
+- `equipment_unit_media`: fotos de vistoria, avarias ou números de série vinculadas a unidades específicas.
+  - Campos: `id`, `tenant_id`, `equipment_unit_id`, `blob_id`, `media_type` (`CHECK IN ('damage_photo', 'inspection_photo', 'serial_photo', 'invoice_doc')`), `caption`, `created_at`, `created_by`.
+- Provisionamento Automático de Depósito Padrão: Triggers `trg_tenant_create_default_warehouse` e `trg_tenant_create_default_patrimony_seq` criam automaticamente o `"Galpão Principal"` e inicializam a sequência de patrimônio na inserção de novos tenants e para o tenant preexistente.

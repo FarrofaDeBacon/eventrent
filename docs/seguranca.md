@@ -239,3 +239,27 @@ O mecanismo de segurança para cópias de salvaguarda e restauração offline fo
 14. **Agendamento Autenticado**: Clique em **Restaurar...** na linha do backup gerado, informe a senha atual do usuário Proprietário e digite `RESTAURAR`.
 15. **Reinicialização da Aplicação**: Feche o aplicativo. Abra-o novamente através do inicializador do sistema (`EventRent.exe` ou `pnpm tauri dev`). Durante a inicialização a frio, o sistema detecta o marcador atômico `restore_pending.json`, valida o hash SHA-256 do arquivo contra adulterações, cria a salvaguarda pré-restauração e extrai o banco e mídias.
 16. **Verificação de Sucesso**: Ao abrir o sistema, verifique que o cliente `TESTE RESTAURACAO` e sua mídia associada reapareceram integralmente restaurados.
+
+---
+
+## 12. Segurança de Estoque, Isolamento RBAC e Confidencialidade Financeira (Fase 2B / ADR-0018)
+
+Para garantir a rastreabilidade patrimonial, integridade do livro-razão e confidencialidade de dados estratégicos da locadora:
+
+1. **Matriz de Permissões RBAC de Estoque**:
+   - `warehouse:read`: autoriza consulta a depósitos cadastrados, unidades físicas tombadas, saldos e histórico de movimentações no livro-razão.
+   - `warehouse:operate`: autoriza operações ativas de estoque (cadastrar e editar depósitos, tombar unidades físicas com geração de patrimônio, alterar status operacional/condição e registrar movimentações de entrada, saída, transferência e ajuste).
+   - O papel do **Proprietário** possui ambas as permissões, além de `finance:read` e `finance:manage`.
+   - O papel do **Técnico** possui `warehouse:read`, `warehouse:operate` e `catalog:read`, porém **NÃO possui** permissões financeiras (`finance:read`).
+
+2. **Sanitização Dinâmica e Confidencialidade de Custos e Reposição**:
+   - Para impedir que técnicos ou operadores de logística acessem os custos de aquisição ou valores contábeis de reposição de equipamentos, o Core aplica o método `sanitize_model_financials` em todas as consultas (`get_equipment_model`, `list_equipment_models`).
+   - Se a sessão autenticada não possuir explicitamente `finance:read`, os campos `cost_price_cents` e `replacement_value_cents` são forçados a `None` no Core **antes** de retornar para o canal IPC ou camada de apresentação.
+
+3. **Imutabilidade e Integridade do Livro-Razão (`stock_movement`)**:
+   - O livro-razão de movimentações físicas e quantitativas é append-only. Triggers de banco de dados (`trg_stock_movement_no_update` e `trg_stock_movement_no_delete`) rejeitam qualquer tentativa de alteração ou deleção física de registros históricos, garantindo trilha de auditoria à prova de fraude.
+   - A constraint de saldo não-negativo em `stock_balance` é protegida em tempo de execução via trigger SQLite, impedindo alocações ou baixas que extrapolem o saldo existente.
+
+4. **Isolamento Multi-tenant e Prevenção de Injeção de Caminhos**:
+   - Todas as tabelas de estoque (`warehouse`, `equipment_patrimony_seq`, `equipment_unit`, `stock_balance`, `stock_movement`, `equipment_unit_media`) utilizam chaves compostas contendo `tenant_id` e chaves estrangeiras com `ON DELETE CASCADE` ou `RESTRICT`.
+   - Fotos de avaria e vistorias reutilizam o canal seguro de hashing SHA-256 da `MediaStore`, prevenindo path traversal e ataques de injeção de arquivos no sistema operacional.
