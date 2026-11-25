@@ -1,0 +1,18 @@
+{
+  "command": "schedule_restore",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": {
+    "backup_file_path": "C:\\Backups\\EventRent\\backup-2026-11-23.eventrent-backup",
+    "backup_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "scheduled_at": "2026-11-23T10:00:00Z",
+    "scheduled_by_user_id": "018f0000-0000-7000-8000-000000000002"
+  },
+  "sample_errors": {
+    "Conflict": "Conflito de registro: Já existe um registro com os dados informados.",
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "NotFound": "Registro não encontrado: O identificador solicitado não existe.",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada.",
+    "Validation": "Erro de validação: Dados de entrada inválidos para a operação."
+  }
+}

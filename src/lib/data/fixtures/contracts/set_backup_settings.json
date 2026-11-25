@@ -1,0 +1,21 @@
+{
+  "command": "set_backup_settings",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": {
+    "destination_folder": "C:\\Backups\\EventRent",
+    "last_backup_at": "2026-11-23T10:00:00Z",
+    "last_backup_error": null,
+    "last_backup_status": "success",
+    "retention_daily": 7,
+    "retention_monthly": 6,
+    "retention_weekly": 4,
+    "schedule_enabled": true
+  },
+  "sample_errors": {
+    "Conflict": "Conflito de registro: Já existe um registro com os dados informados.",
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada.",
+    "Validation": "Erro de validação: Dados de entrada inválidos para a operação."
+  }
+}

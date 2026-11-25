@@ -23,6 +23,7 @@ pub const PERM_FINANCE_MANAGE: &str = "finance:manage";
 pub const PERM_AUDIT_READ: &str = "audit:read";
 pub const PERM_SETTINGS_READ: &str = "settings:read";
 pub const PERM_SETTINGS_MANAGE: &str = "settings:manage";
+pub const PERM_BACKUP_MANAGE: &str = "backup:manage";
 
 pub const ROLE_SLUG_OWNER: &str = "owner";
 pub const ROLE_SLUG_COMMERCIAL: &str = "commercial";
@@ -56,6 +57,7 @@ pub const ALL_PERMISSIONS: &[&str] = &[
     PERM_AUDIT_READ,
     PERM_SETTINGS_READ,
     PERM_SETTINGS_MANAGE,
+    PERM_BACKUP_MANAGE,
 ];
 
 #[derive(Debug, Clone)]

@@ -65,9 +65,15 @@ pub async fn regenerate_recovery_key(
     let policy = eventrent_core::LoginPolicy {
         reveal_account_locked: true,
     };
-    state
+    let result = state
         .services
         .regenerate_recovery_key(&session, &input.current_password, &policy)
         .await
-        .map_err(crate::map_core_err)
+        .map_err(crate::map_core_err)?;
+
+    // Mantém a sessão atual válida no AppState enquanto outras sessões do usuário
+    // que mantiverem o epoch antigo serão invalidadas na próxima operação
+    state.sync_current_session_epoch().await?;
+
+    Ok(result)
 }

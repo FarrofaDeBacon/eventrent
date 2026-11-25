@@ -47,7 +47,7 @@ As intervenções foram divididas em dois blocos complementares:
 A interface `AuthRepository` no TypeScript declara o retorno de `RecoverPasswordResult`:
 
 <!-- prettier-ignore -->
-<!-- snippet: src/lib/data/auth-repository.ts:23-28 -->
+<!-- snippet: src/lib/data/auth-repository.ts:23-28@64e038b -->
 ```typescript
   recoverPasswordWithKey(
     input: RecoverPasswordInput,
@@ -60,7 +60,7 @@ A interface `AuthRepository` no TypeScript declara o retorno de `RecoverPassword
 Na implementação Tauri (`src/lib/data/tauri-auth-repository.ts`), o comando IPC `recover_password` é invocado tipado:
 
 <!-- prettier-ignore -->
-<!-- snippet: src/lib/data/tauri-auth-repository.ts:40-44 -->
+<!-- snippet: src/lib/data/tauri-auth-repository.ts:40-44@64e038b -->
 ```typescript
   async recoverPasswordWithKey(
     input: RecoverPasswordInput,
@@ -72,7 +72,7 @@ Na implementação Tauri (`src/lib/data/tauri-auth-repository.ts`), o comando IP
 Na implementação de mock (`src/lib/data/mock-auth-repository.ts`), uma nova chave é gerada e retornada:
 
 <!-- prettier-ignore -->
-<!-- snippet: src/lib/data/mock-auth-repository.ts:435-460 -->
+<!-- snippet: src/lib/data/mock-auth-repository.ts:436-461@64e038b -->
 ```typescript
   async recoverPasswordWithKey(
     input: RecoverPasswordInput,
@@ -105,7 +105,7 @@ Na implementação de mock (`src/lib/data/mock-auth-repository.ts`), uma nova ch
 Na tela de login (`src/routes/login/+page.svelte`), a nova chave retornada é atribuída à variável em memória para abertura do modal bloqueante:
 
 <!-- prettier-ignore -->
-<!-- snippet: src/routes/login/+page.svelte:64-81 -->
+<!-- snippet: src/routes/login/+page.svelte:64-81@64e038b -->
 ```svelte
     try {
       const repo = getAuthRepository();
@@ -130,7 +130,7 @@ Na tela de login (`src/routes/login/+page.svelte`), a nova chave retornada é at
 A confirmação digitada no modal bloqueante (`src/lib/components/recovery-key-modal.svelte`):
 
 <!-- prettier-ignore -->
-<!-- snippet: src/lib/components/recovery-key-modal.svelte:38-40 -->
+<!-- snippet: src/lib/components/recovery-key-modal.svelte:38-40@64e038b -->
 ```svelte
   let typedConfirmation = $state("");
   let isConfirmed = $derived(typedConfirmation.trim() === "Guardei a chave");
@@ -138,7 +138,7 @@ A confirmação digitada no modal bloqueante (`src/lib/components/recovery-key-m
 ```
 
 <!-- prettier-ignore -->
-<!-- snippet: src/lib/components/recovery-key-modal.svelte:192-225 -->
+<!-- snippet: src/lib/components/recovery-key-modal.svelte:192-225@64e038b -->
 ```svelte
         <div
           class="space-y-2 rounded-[var(--radius)] border border-border bg-muted/40 p-4"
@@ -179,7 +179,7 @@ A confirmação digitada no modal bloqueante (`src/lib/components/recovery-key-m
 Teste E2E comprovando a obrigatoriedade da frase "Guardei a chave":
 
 <!-- prettier-ignore -->
-<!-- snippet: e2e/recovery-and-account.spec.ts:60-90 -->
+<!-- snippet: e2e/recovery-and-account.spec.ts:60-90@64e038b -->
 ```typescript
     // Botões de ação do modal
     await expect(page.getByTestId("copy-recovery-key-btn")).toBeVisible();
@@ -221,7 +221,7 @@ Teste E2E comprovando a obrigatoriedade da frase "Guardei a chave":
 A migração `0010_auth_epoch.sql` adiciona apenas a coluna `auth_epoch`:
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/store-sqlite/migrations/0010_auth_epoch.sql:1-3 -->
+<!-- snippet: crates/store-sqlite/migrations/0010_auth_epoch.sql:1-3@64e038b -->
 ```sql
 -- Migração 0010: Controle de época de autenticação para invalidação de sessão (Fase 2S / ADR-0016)
 ALTER TABLE app_user ADD COLUMN auth_epoch INTEGER NOT NULL DEFAULT 0;
@@ -231,7 +231,7 @@ ALTER TABLE app_user ADD COLUMN auth_epoch INTEGER NOT NULL DEFAULT 0;
 A revalidação no Core (`crates/core/src/services/mod.rs`):
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/core/src/services/mod.rs:433-461 -->
+<!-- snippet: crates/core/src/services/mod.rs:433-461@64e038b -->
 ```rust
     pub async fn revalidate_session(&self, session: &SessionInfo) -> Result<SessionInfo> {
         self.verify_session_active(session)?;
@@ -267,7 +267,7 @@ A revalidação no Core (`crates/core/src/services/mod.rs`):
 A guarda no Tauri (`src-tauri/src/lib.rs`):
 
 <!-- prettier-ignore -->
-<!-- snippet: src-tauri/src/lib.rs:113-150 -->
+<!-- snippet: src-tauri/src/lib.rs:113-150@64e038b -->
 ```rust
     pub async fn require_session(&self) -> Result<SessionInfo, String> {
         self.require_session_at(Utc::now()).await
@@ -316,7 +316,7 @@ A guarda no Tauri (`src-tauri/src/lib.rs`):
 A diretiva CSP no `src-tauri/tauri.conf.json`:
 
 <!-- prettier-ignore -->
-<!-- snippet: src-tauri/tauri.conf.json:24-26 -->
+<!-- snippet: src-tauri/tauri.conf.json:24-26@64e038b -->
 ```json
     "security": {
       "csp": "default-src 'self'; script-src 'self'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; style-src 'self'; style-src-attr 'unsafe-inline'"
@@ -326,7 +326,7 @@ A diretiva CSP no `src-tauri/tauri.conf.json`:
 O teste automatizado em `src-tauri/src/guards.rs`:
 
 <!-- prettier-ignore -->
-<!-- snippet: src-tauri/src/guards.rs:587-620 -->
+<!-- snippet: src-tauri/src/guards.rs:587-620@64e038b -->
 ```rust
     fn test_tauri_csp_is_strict_and_free_of_unsafe_eval() {
         use std::path::Path;

@@ -78,12 +78,13 @@ As permissões são definidas como constantes imutáveis em `crates/core/src/dom
 | `PERM_AUDIT_READ`         | `audit:read`         | Consultar trilha de auditoria (`audit_log`)                 |
 | `PERM_SETTINGS_READ`      | `settings:read`      | Consultar parâmetros globais do sistema                     |
 | `PERM_SETTINGS_MANAGE`    | `settings:manage`    | Alterar parâmetros globais do sistema                       |
+| `PERM_BACKUP_MANAGE`      | `backup:manage`      | Gerenciar backups e restaurar estado do sistema             |
 
 ### 4.2. Perfis de Sistema Padrão
 
 Criados de forma idempotente por `ensure_system_roles` para cada tenant:
 
-1. **Proprietário (`owner`)**: Possui **todas as 25 permissões** do catálogo canônico (`ALL_PERMISSIONS`).
+1. **Proprietário (`owner`)**: Possui **todas as 26 permissões** do catálogo canônico (`ALL_PERMISSIONS`).
 2. **Comercial (`commercial`)**: `customer:read`, `customer:manage`, `supplier:read`, `venue:read`, `venue:manage`, `catalog:read`, `reservation:read`, `reservation:manage`, `quote:read`, `quote:manage`, `branding:read`.
 3. **Estoque (`warehouse`)**: `supplier:read`, `supplier:manage`, `venue:read`, `venue:manage`, `catalog:read`, `catalog:manage`, `reservation:read`, `warehouse:read`, `warehouse:operate`, `branding:read`.
 4. **Técnico (`technician`)**: `venue:read`, `catalog:read`, `reservation:read`, `warehouse:read`, `warehouse:operate`, `branding:read`.
@@ -202,3 +203,16 @@ Criados de forma idempotente por `ensure_system_roles` para cada tenant:
     - Remover um vínculo (`remove_model_media`) apenas desfaz o vínculo do modelo; o arquivo físico no `MediaStore` só é removido pela **coleta de lixo manual** (`collect_unreferenced_media`) quando nenhum vínculo ativo no tenant referencia o blob SHA-256.
   - **Importação em Lote de Fotos (`/catalog/import-photos`)**:
     - O nome do arquivo (sem extensão e normalizado) é casado automaticamente na ordem estrita: **1º SKU**, **2º Código do Modelo** e **3º EAN**, exibindo pré-visualização (`Casado`, `Ambíguo`, `Sem correspondência`) para revisão/correção manual antes da confirmação e processando cada arquivo individualmente sem abortar o lote.
+
+---
+
+### Backup e Restauração Offline Transacional (Fase 2N / ADR-0017)
+
+- **RN-BKP-01 — Controle de Acesso e Permissão**: Exclusivo para usuários com permissão `backup:manage` (Proprietário por padrão).
+- **RN-BKP-02 — Snapshot SQLite Consistente**: O banco SQLite é congelado atomicamente via `VACUUM INTO temp_path`, eliminando fragmentos de WAL sujos, seguido de `PRAGMA integrity_check` obrigatório antes de arquivar.
+- **RN-BKP-03 — Pacote Híbrido Zip com Mídias Deduplicadas**: O backup empacota `manifest.json`, `database.sqlite` e todos os arquivos em `media/` preservando os hashes SHA-256 dos anexos de catálogo e branding.
+- **RN-BKP-04 — Proteção Criptográfica Contra Adulteração**: Ao verificar ou restaurar, todos os hashes SHA-256 dos arquivos contidos no arquivo `.zip` são recomputados e validados contra o manifesto. Arquivos corrompidos ou adulterados são rejeitados.
+- **RN-BKP-05 — Compatibilidade de Schema e Versão**: Backups cuja última migração aplicada seja maior que a versão máxima suportada pelo binário são marcados como incompatíveis e sua restauração é expressamente impedida.
+- **RN-BKP-06 — Isolamento de Concorrência**: Operações de backup adquirem a trava RAII `BackupOperationGuard`. Operações concorrentes de backup/restauração e a coleta de lixo de mídias (`run_media_gc`) são bloqueadas enquanto a rotina estiver em execução.
+- **RN-BKP-07 — Retenção Automatizada (Dias, Semanas e Meses)**: Ao concluir um backup com sucesso, a limpeza de retenção preserva no máximo um backup por dia nos últimos X dias, um por semana nas últimas Y semanas e um por mês nos últimos Z meses, eliminando cópias obsoletas de forma determinística.
+- **RN-BKP-08 — Restauração a Frio na Inicialização**: A substituição do banco e da pasta de mídia é agendada em marcador atômico e executada exclusivamente a frio antes da inicialização de conexões e pools SQLite na inicialização do aplicativo, com criação prévia de salvaguarda de segurança (`.pre-restore.bak`).

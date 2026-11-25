@@ -430,6 +430,97 @@ pub fn build_fixture_for_command(cmd_name: &str) -> Option<ContractFixture> {
             json!("C:\\Users\\User\\Documents\\manual.pdf"),
             standard_errors_for(false, true, false),
         ),
+        "get_backup_status" => (
+            true,
+            json!({
+                "settings": {
+                    "destination_folder": "C:\\Backups\\EventRent",
+                    "schedule_enabled": true,
+                    "retention_daily": 7,
+                    "retention_weekly": 4,
+                    "retention_monthly": 6,
+                    "last_backup_at": "2026-11-23T10:00:00Z",
+                    "last_backup_status": "success",
+                    "last_backup_error": null
+                },
+                "is_backup_due": false,
+                "days_since_last_backup": 0,
+                "is_stale": false
+            }),
+            standard_errors_for(false, false, false),
+        ),
+        "set_backup_settings" => (
+            true,
+            json!({
+                "destination_folder": "C:\\Backups\\EventRent",
+                "schedule_enabled": true,
+                "retention_daily": 7,
+                "retention_weekly": 4,
+                "retention_monthly": 6,
+                "last_backup_at": "2026-11-23T10:00:00Z",
+                "last_backup_status": "success",
+                "last_backup_error": null
+            }),
+            standard_errors_for(false, false, true),
+        ),
+        "run_backup_now" => (
+            true,
+            sample_backup_metadata_view_json(),
+            standard_errors_for(false, false, true),
+        ),
+        "list_backups" => (
+            true,
+            json!([sample_backup_metadata_view_json()]),
+            standard_errors_for(false, false, false),
+        ),
+        "verify_backup" => (
+            true,
+            json!({
+                "valid": true,
+                "manifest": {
+                    "manifest_version": 1,
+                    "app_version": "0.10.0-fase2n",
+                    "created_at": "2026-11-23T10:00:00Z",
+                    "last_applied_migration": 10,
+                    "migrations_checksum": "abc123checksum",
+                    "database_integrity_checked": true,
+                    "files": [
+                        {
+                            "path": "database/eventrent.db",
+                            "byte_size": 1048576,
+                            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                        }
+                    ],
+                    "table_counts": {
+                        "users": 1,
+                        "equipment_models": 5
+                    }
+                },
+                "error_message": null,
+                "is_compatible": true
+            }),
+            standard_errors_for(false, true, false),
+        ),
+        "schedule_restore" => (
+            true,
+            json!({
+                "backup_file_path": "C:\\Backups\\EventRent\\backup-2026-11-23.eventrent-backup",
+                "backup_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                "scheduled_at": "2026-11-23T10:00:00Z",
+                "scheduled_by_user_id": "018f0000-0000-7000-8000-000000000002"
+            }),
+            standard_errors_for(false, true, true),
+        ),
+        "choose_backup_folder" => (
+            true,
+            json!("C:\\Backups\\EventRent"),
+            standard_errors_for(false, false, false),
+        ),
+        "choose_backup_file" => (
+            true,
+            json!("C:\\Backups\\EventRent\\backup-2026-11-23.eventrent-backup"),
+            standard_errors_for(false, false, false),
+        ),
         _ => return None,
     };
 
@@ -654,6 +745,20 @@ fn sample_media_view_json() -> serde_json::Value {
         "sort_order": 1,
         "created_at": "2026-11-21T10:00:00Z",
         "updated_at": "2026-11-21T10:00:00Z"
+    })
+}
+
+fn sample_backup_metadata_view_json() -> serde_json::Value {
+    json!({
+        "file_name": "eventrent-backup-2026-11-23-100000.eventrent-backup",
+        "file_path": "C:\\Backups\\EventRent\\eventrent-backup-2026-11-23-100000.eventrent-backup",
+        "byte_size": 2048576,
+        "created_at": "2026-11-23T10:00:00Z",
+        "app_version": "0.10.0-fase2n",
+        "last_applied_migration": 10,
+        "is_compatible": true,
+        "file_count": 4,
+        "verified": true
     })
 }
 

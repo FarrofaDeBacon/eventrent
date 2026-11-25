@@ -180,3 +180,48 @@ Para eliminar brechas de privilégio estático e garantir a revogação instant�
    - Se o usuário continua ativo (`active == true` e `deleted_at IS NULL`);
    - Se `session.auth_epoch == user.auth_epoch`: se divergir, a sessão em memória é **imediatamente revogada** e o comando aborta com `CoreError::Unauthorized`;
    - **Recarregamento dinâmico de permissões**: As permissões associadas ao papel do usuário são recarregadas dinamicamente do banco a cada comando protegido, garantindo que concessões ou remoções de direitos entrem em vigor instantaneamente, sem necessidade de logout/login.
+
+---
+
+## 11. Arquitetura de Backup e Restauração Transacional a Frio (Fase 2N / ADR-0017)
+
+O mecanismo de segurança para cópias de salvaguarda e restauração offline foi projetado sob os seguintes pilares:
+
+1. **Snapshot Transacional Consistente via `VACUUM INTO`**:
+   - Para evitar corrupções causadas por leituras concorrentes ou fragmentos de WAL ativos, o backup do banco SQLite é gerado por comando atômico `VACUUM INTO temp_db_path`.
+   - O arquivo snapshot gerado passa obrigatoriamente por verificação de integridade física profunda via `PRAGMA integrity_check` antes de ser incorporado ao pacote final.
+
+2. **Formato Híbrido Zip com Manifesto e Hashes Criptográficos**:
+   - O pacote de backup (`.zip`) contém:
+     - `manifest.json`: metadados da cópia (versão do aplicativo, última migração aplicada, contagem de linhas por tabela, lista de arquivos e hashes SHA-256 individuais);
+     - `database.sqlite`: o banco relacional snapshot limpo e validado;
+     - `media/`: cópia integral dos blobs de mídia (`<sha256>`), preservando a deduplicação.
+   - O arquivo final é gravado de maneira atômica (`.zip.tmp` -> `.zip`) no destino configurado.
+
+3. **Proteção Contra Adulteração e Verificação Estrita de Compatibilidade**:
+   - Todo backup verificado ou restaurado tem os hashes SHA-256 de todas as entradas conferidos contra o manifesto interno.
+   - Qualquer divergência de hash, arquivo ausente ou falha no `integrity_check` do SQLite contido resulta em **rejeição sumária** da operação.
+   - **Regra de Versionamento**: Backups contendo versão de schema superior à versão máxima suportada pelo binário em execução são classificados como `is_compatible = false` e sua restauração é bloqueada para evitar corrupção lógica do banco.
+
+4. **Isolamento de Concorrência via RAII (`BackupOperationGuard`)**:
+   - Apenas uma operação de backup ou restauração pode ser executada por vez no processo.
+   - Durante a rotina de backup, o coletor de lixo de mídia (`run_media_gc`) é automaticamente bloqueado para evitar remoção de arquivos que estejam sendo arquivados.
+
+5. **Restauração a Frio na Inicialização do Aplicativo**:
+   - Para contornar bloqueios de sistema de arquivos do Windows (_file locking_) e garantir a consistência dos dados, a restauração é agendada em tempo de execução (`schedule_restore`) e gravada em um marcador temporário com permissões restritas.
+   - A execução da restauração ocorre **a frio** (`execute_pending_restore_at_startup`), antes de inicializar o pool de conexões SQLite e antes do bootstrap da aplicação.
+   - O aplicativo executa backup de segurança do estado atual (`.pre-restore.bak`), substitui o banco e a pasta de mídia atomicamente e remove o marcador de agendamento.
+
+6. **Conformidade com a LGPD e Proteção de Dados**:
+   - O pacote de backup contém a totalidade dos dados operacionais e cadastrais da empresa (clientes, documentos, telefones, endereços e fornecedores).
+   - A aplicação exibe avisos proeminentes de privacidade, instruindo os operadores sobre a necessidade de armazenar backups em mídias criptografadas com controle estrito de acesso físico e digital.
+
+7. **Autenticação Reforçada e Confirmação Tipográfica para Restauração**:
+   - Apenas operadores com permissão `backup:manage` (Proprietário) podem agendar restaurações.
+   - O agendamento exige a validação da senha do usuário em sessão (com contagem de lockout progressivo contra força bruta) e confirmação tipográfica explícita da palavra literal `RESTAURAR`.
+   - O hash SHA-256 do arquivo ZIP é registrado no marcador atômico `restore_pending.json` e revalidado a frio no momento da extração. Se o arquivo sofrer qualquer modificação entre o agendamento e o reinício, a restauração é abortada com reversão segura.
+
+8. **Agendamento em Background e Retenção Automatizada**:
+   - Backup automático diário gerenciado em background a cada 15 minutos e na inicialização após 24 horas sem cópias de segurança.
+   - Em caso de falha transitória na criação automática, o agendador impõe uma janela de espera mínima de 1 hora antes de nova tentativa para evitar sobrecarga.
+   - Retenção determinística por dias, semanas e meses com rotação segura na pasta configurada pelo usuário.

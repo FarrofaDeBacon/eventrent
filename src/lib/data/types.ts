@@ -188,6 +188,7 @@ export const PERMISSIONS = {
   AUDIT_READ: "audit:read",
   SETTINGS_READ: "settings:read",
   SETTINGS_MANAGE: "settings:manage",
+  BACKUP_MANAGE: "backup:manage",
 } as const;
 
 /** Slugs dos perfis de sistema (fonte: `crates/core/src/domain/permission.rs`). */

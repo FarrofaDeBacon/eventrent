@@ -21,6 +21,7 @@ use uuid::Uuid;
 
 pub use sqlx;
 pub type DbPool = Pool<Sqlite>;
+pub const CURRENT_MAX_MIGRATION: i64 = 10;
 
 pub(crate) fn map_sqlx_err(err: sqlx::Error) -> CoreError {
     match &err {

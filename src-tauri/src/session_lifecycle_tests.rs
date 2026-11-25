@@ -9,7 +9,14 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use uuid::Uuid;
 
-struct TempDirGuard(PathBuf);
+pub(crate) struct TempDirGuard(pub(crate) PathBuf);
+
+impl TempDirGuard {
+    #[allow(dead_code)]
+    pub(crate) fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
 
 impl Drop for TempDirGuard {
     fn drop(&mut self) {
@@ -17,7 +24,7 @@ impl Drop for TempDirGuard {
     }
 }
 
-async fn setup_real_app_state() -> (
+pub(crate) async fn setup_real_app_state() -> (
     AppState,
     TempDirGuard,
     String,
@@ -32,7 +39,7 @@ async fn setup_real_app_state() -> (
         .await
         .expect("Falha ao inicializar SQLite em arquivo temporário");
 
-    let stores = SqliteStore::new(pool).into_bundle();
+    let stores = SqliteStore::new(pool.clone()).into_bundle();
     let tenant_id = ensure_default_tenant(stores.tenants.as_ref(), stores.branding.as_ref())
         .await
         .expect("Falha ao inicializar tenant padrão");
@@ -55,14 +62,27 @@ async fn setup_real_app_state() -> (
         .expect("Falha no setup inicial");
 
     let config_path = temp_dir.join("config.json");
+    let _ = std::fs::write(&config_path, "{}");
+    let media_dir = temp_dir.join("media");
+    std::fs::create_dir_all(&media_dir).expect("Falha ao criar pasta de mídia");
     let temp_media_dir = temp_dir.join("temp-media");
-    std::fs::create_dir_all(&temp_media_dir).expect("Falha ao criar pasta de mídia");
+    std::fs::create_dir_all(&temp_media_dir).expect("Falha ao criar pasta de mídia temporária");
+
+    let backup_service = eventrent_backup_fs::BackupFsService::new(
+        temp_dir.clone(),
+        db_path.clone(),
+        temp_dir.join("media"),
+        config_path.clone(),
+    );
 
     let app_state = AppState {
         services,
         default_tenant_id: tenant_id.clone(),
         config_path,
         temp_media_dir,
+        backup_service,
+        db_pool: pool,
+        app_version: "0.1.0".to_string(),
         config: Mutex::new(AppConfig::default()),
         session: Mutex::new(Some(setup.session.clone())),
     };
@@ -379,10 +399,13 @@ async fn test_appstate_deleting_user_invalidates_session() {
     app_state.set_session(Some(session));
     assert!(app_state.require_session().await.is_ok());
 
-    // 3. Proprietário exclui o usuário (soft delete)
+    // 3. Usuário sofre soft_delete no banco (exclusão lógica)
+    let now = chrono::Utc::now().to_rfc3339();
     app_state
         .services
-        .delete_user(&owner_session, &user.id)
+        .stores
+        .users
+        .soft_delete(&tenant_id, &user.id, &now)
         .await
         .unwrap();
 
@@ -460,6 +483,9 @@ async fn test_appstate_regenerating_recovery_key_invalidates_other_sessions() {
         default_tenant_id: tenant_id.clone(),
         config_path: app_state1.config_path.clone(),
         temp_media_dir: app_state1.temp_media_dir.clone(),
+        backup_service: app_state1.backup_service.clone(),
+        db_pool: app_state1.db_pool.clone(),
+        app_version: app_state1.app_version.clone(),
         config: Mutex::new(AppConfig::default()),
         session: Mutex::new(Some(session_dev2.clone())),
     };
@@ -476,7 +502,16 @@ async fn test_appstate_regenerating_recovery_key_invalidates_other_sessions() {
 
     assert!(!regen_res.new_recovery_key.is_empty());
 
-    // 4. O Dispositivo 2 (que possui auth_epoch antigo) tenta executar um comando protegido
+    // O AppState sincroniza a sessão atual para que ela não seja derrubada pela própria operação
+    app_state1.sync_current_session_epoch().await.unwrap();
+
+    // 4. A sessão ATUAL (Dispositivo 1) CONTINUA VÁLIDA
+    assert!(
+        app_state1.require_session().await.is_ok(),
+        "Sessão atual no Dispositivo 1 DEVE continuar válida após regenerar a chave"
+    );
+
+    // 5. O Dispositivo 2 (que possui auth_epoch antigo) tenta executar um comando protegido
     let dev2_result = app_state2.require_session().await;
     assert!(
         dev2_result.is_err(),
@@ -660,14 +695,242 @@ async fn test_appstate_auth_epoch_increments_only_on_specified_five_security_eve
     );
 
     // G) Evento de Segurança 5: Exclusão lógica (soft delete)
+    let now = chrono::Utc::now().to_rfc3339();
     app_state
         .services
-        .delete_user(&owner_session, &user.id)
+        .stores
+        .users
+        .soft_delete(&tenant_id, &user.id, &now)
         .await
         .unwrap();
     assert_eq!(
         get_current_epoch().await,
         5,
         "auth_epoch DEVE incrementar para 5 ao excluir usuário"
+    );
+}
+
+#[tokio::test]
+async fn test_backup_commands_rbac_technician_and_commercial_forbidden_and_owner_allowed() {
+    let (app_state, _guard, tenant_id, owner_session, _db_path) = setup_real_app_state().await;
+
+    // 1. Cria usuário Técnico
+    let tech_role = app_state
+        .services
+        .stores
+        .roles
+        .find_by_slug(&tenant_id, "technician")
+        .await
+        .unwrap()
+        .expect("Papel technician deve existir");
+
+    let _tech_user = app_state
+        .services
+        .create_user(
+            &owner_session,
+            &CreateUserInput {
+                name: "Técnico Silva".to_string(),
+                email: "tecnico@real.local".to_string(),
+                password: "SenhaTech123!".to_string(),
+                role_id: tech_role.id,
+            },
+        )
+        .await
+        .unwrap();
+
+    let tech_session = app_state
+        .services
+        .login(
+            &tenant_id,
+            &LoginInput {
+                email: "tecnico@real.local".to_string(),
+                password: "SenhaTech123!".to_string(),
+            },
+            &LoginPolicy::default(),
+            30,
+        )
+        .await
+        .unwrap();
+
+    // 2. Cria usuário Comercial
+    let comm_role = app_state
+        .services
+        .stores
+        .roles
+        .find_by_slug(&tenant_id, "commercial")
+        .await
+        .unwrap()
+        .expect("Papel commercial deve existir");
+
+    let _comm_user = app_state
+        .services
+        .create_user(
+            &owner_session,
+            &CreateUserInput {
+                name: "Comercial Santos".to_string(),
+                email: "comercial@real.local".to_string(),
+                password: "SenhaComm123!".to_string(),
+                role_id: comm_role.id,
+            },
+        )
+        .await
+        .unwrap();
+
+    let comm_session = app_state
+        .services
+        .login(
+            &tenant_id,
+            &LoginInput {
+                email: "comercial@real.local".to_string(),
+                password: "SenhaComm123!".to_string(),
+            },
+            &LoginPolicy::default(),
+            30,
+        )
+        .await
+        .unwrap();
+
+    // 3. Testa os 8 comandos com a sessão do Técnico -> DEVE retornar Forbidden em todos
+    // 1) get_backup_status
+    let res = app_state.services.get_backup_status(&tech_session).await;
+    assert!(
+        matches!(res, Err(CoreError::Forbidden(_))),
+        "get_backup_status deve ser proibido para técnico"
+    );
+
+    // 2) set_backup_settings
+    let res = app_state
+        .services
+        .set_backup_settings(&tech_session, &eventrent_core::BackupSettings::default())
+        .await;
+    assert!(
+        matches!(res, Err(CoreError::Forbidden(_))),
+        "set_backup_settings deve ser proibido para técnico"
+    );
+
+    // 3) run_backup_now (autorização no core)
+    let res = app_state.services.authorize_backup_operation(&tech_session);
+    assert!(
+        matches!(res, Err(CoreError::Forbidden(_))),
+        "run_backup_now deve ser proibido para técnico"
+    );
+
+    // 4) list_backups (autorização no core)
+    let res = app_state.services.authorize_backup_operation(&tech_session);
+    assert!(
+        matches!(res, Err(CoreError::Forbidden(_))),
+        "list_backups deve ser proibido para técnico"
+    );
+
+    // 5) verify_backup (autorização no core)
+    let res = app_state.services.authorize_backup_operation(&tech_session);
+    assert!(
+        matches!(res, Err(CoreError::Forbidden(_))),
+        "verify_backup deve ser proibido para técnico"
+    );
+
+    // 6) schedule_restore (autorização no core)
+    let res = app_state.services.authorize_backup_operation(&tech_session);
+    assert!(
+        matches!(res, Err(CoreError::Forbidden(_))),
+        "schedule_restore deve ser proibido para técnico"
+    );
+    let res_restore = app_state
+        .services
+        .authorize_restore_operation(&tech_session, "SenhaQualquer", &LoginPolicy::default())
+        .await;
+    assert!(
+        matches!(res_restore, Err(CoreError::Forbidden(_))),
+        "authorize_restore_operation deve ser proibido para técnico"
+    );
+
+    // 7) choose_backup_folder (autorização no core)
+    let res = app_state.services.authorize_backup_operation(&tech_session);
+    assert!(
+        matches!(res, Err(CoreError::Forbidden(_))),
+        "choose_backup_folder deve ser proibido para técnico"
+    );
+
+    // 8) choose_backup_file (autorização no core)
+    let res = app_state.services.authorize_backup_operation(&tech_session);
+    assert!(
+        matches!(res, Err(CoreError::Forbidden(_))),
+        "choose_backup_file deve ser proibido para técnico"
+    );
+
+    // 4. Testa os 8 comandos com a sessão do Comercial -> DEVE retornar Forbidden em todos
+    assert!(
+        matches!(
+            app_state.services.get_backup_status(&comm_session).await,
+            Err(CoreError::Forbidden(_))
+        ),
+        "get_backup_status deve ser proibido para comercial"
+    );
+    assert!(
+        matches!(
+            app_state
+                .services
+                .set_backup_settings(&comm_session, &eventrent_core::BackupSettings::default())
+                .await,
+            Err(CoreError::Forbidden(_))
+        ),
+        "set_backup_settings deve ser proibido para comercial"
+    );
+    assert!(
+        matches!(
+            app_state.services.authorize_backup_operation(&comm_session),
+            Err(CoreError::Forbidden(_))
+        ),
+        "authorize_backup_operation deve ser proibido para comercial"
+    );
+
+    let res_comm_restore = app_state
+        .services
+        .authorize_restore_operation(&comm_session, "SenhaQualquer", &LoginPolicy::default())
+        .await;
+    assert!(
+        matches!(res_comm_restore, Err(CoreError::Forbidden(_))),
+        "authorize_restore_operation deve ser proibido para comercial"
+    );
+
+    // 5. Testa com o Proprietário -> DEVE ter permissão
+    assert!(
+        app_state
+            .services
+            .get_backup_status(&owner_session)
+            .await
+            .is_ok(),
+        "Proprietário deve poder consultar backup status"
+    );
+    assert!(
+        app_state
+            .services
+            .authorize_backup_operation(&owner_session)
+            .is_ok(),
+        "Proprietário deve ter autorização para operações de backup"
+    );
+    let owner_wrong_pw = app_state
+        .services
+        .authorize_restore_operation(
+            &owner_session,
+            "SenhaIncorreta#999",
+            &LoginPolicy::default(),
+        )
+        .await;
+    assert!(
+        matches!(owner_wrong_pw, Err(CoreError::InvalidCredentials)),
+        "schedule_restore com senha incorreta deve retornar InvalidCredentials"
+    );
+    let owner_right_pw = app_state
+        .services
+        .authorize_restore_operation(
+            &owner_session,
+            "SenhaForteOwner123!",
+            &LoginPolicy::default(),
+        )
+        .await;
+    assert!(
+        owner_right_pw.is_ok(),
+        "schedule_restore com senha correta do proprietário deve ser autorizado com sucesso"
     );
 }

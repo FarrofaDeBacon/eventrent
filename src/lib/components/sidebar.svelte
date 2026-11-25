@@ -11,6 +11,7 @@
     Shield,
     Palette,
     SlidersHorizontal,
+    Archive,
     User,
     ChevronLeft,
     ChevronRight,
@@ -110,6 +111,12 @@
       href: "/settings/operation",
       icon: SlidersHorizontal,
       permission: PERMISSIONS.SETTINGS_READ,
+    },
+    {
+      labelKey: "nav.backup",
+      href: "/settings/backup",
+      icon: Archive,
+      permission: PERMISSIONS.BACKUP_MANAGE,
     },
     {
       labelKey: "nav.account",

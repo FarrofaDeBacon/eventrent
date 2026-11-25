@@ -261,6 +261,38 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
         name: "save_model_document_as",
         is_public: false,
     },
+    CommandDefinition {
+        name: "get_backup_status",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "set_backup_settings",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "run_backup_now",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "list_backups",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "verify_backup",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "schedule_restore",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "choose_backup_folder",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "choose_backup_file",
+        is_public: false,
+    },
 ];
 
 /// Guarda central de autenticação para comandos protegidos do Tauri.
@@ -669,5 +701,61 @@ mod tests {
             style_src_attr_part.contains("'unsafe-inline'"),
             "style-src-attr deve conter 'unsafe-inline' para virtual-list e anti-FOUC: {style_src_attr_part}"
         );
+    }
+
+    #[test]
+    fn test_all_backup_commands_call_core_authorization_guard() {
+        use std::path::Path;
+
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let backup_cmd_path = manifest_dir.join("src").join("commands").join("backup.rs");
+        let content = std::fs::read_to_string(&backup_cmd_path)
+            .expect("Falha ao ler src-tauri/src/commands/backup.rs");
+
+        let backup_commands = [
+            ("get_backup_status", vec!["services.get_backup_status"]),
+            ("set_backup_settings", vec!["services.set_backup_settings"]),
+            (
+                "run_backup_now",
+                vec!["services.authorize_backup_operation"],
+            ),
+            ("list_backups", vec!["services.authorize_backup_operation"]),
+            ("verify_backup", vec!["services.authorize_backup_operation"]),
+            (
+                "schedule_restore",
+                vec![
+                    "services.authorize_backup_operation",
+                    "services.authorize_restore_operation",
+                ],
+            ),
+            (
+                "choose_backup_folder",
+                vec!["services.authorize_backup_operation"],
+            ),
+            (
+                "choose_backup_file",
+                vec!["services.authorize_backup_operation"],
+            ),
+        ];
+
+        for (cmd_name, expected_calls) in backup_commands {
+            let fn_pattern = format!("pub async fn {cmd_name}(");
+            let fn_pos = content.find(&fn_pattern).unwrap_or_else(|| {
+                panic!("Handler para comando de backup '{cmd_name}' não encontrado em backup.rs")
+            });
+            let slice = &content[fn_pos..];
+            let fn_end = slice.find("#[tauri::command]").unwrap_or(slice.len());
+            let body = &slice[..fn_end];
+            let normalized_body: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+
+            let has_auth_call = expected_calls.iter().any(|call| {
+                let normalized_call: String = call.chars().filter(|c| !c.is_whitespace()).collect();
+                normalized_body.contains(&normalized_call)
+            });
+            assert!(
+                has_auth_call,
+                "Comando de backup '{cmd_name}' NÃO invoca autorização no Core! Esperado um de: {expected_calls:?}"
+            );
+        }
     }
 }

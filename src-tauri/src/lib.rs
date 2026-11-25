@@ -1,3 +1,4 @@
+pub mod backup_scheduler;
 pub mod commands;
 pub mod contracts;
 pub mod guards;
@@ -23,6 +24,9 @@ pub struct AppState {
     pub default_tenant_id: String,
     pub config_path: PathBuf,
     pub temp_media_dir: PathBuf,
+    pub backup_service: eventrent_backup_fs::BackupFsService,
+    pub db_pool: eventrent_store_sqlite::DbPool,
+    pub app_version: String,
     config: Mutex<AppConfig>,
     session: Mutex<Option<SessionInfo>>,
 }
@@ -147,6 +151,32 @@ impl AppState {
         }
 
         Ok(revalidated)
+    }
+
+    /// Sincroniza o auth_epoch da sessão em memória com o banco de dados.
+    /// Chamado após operações de segurança iniciadas pela própria sessão ativa
+    /// (como regenerate_recovery_key), garantindo que a sessão atual permaneça válida
+    /// enquanto todas as outras sessões concorrentes do mesmo usuário são invalidadas.
+    pub async fn sync_current_session_epoch(&self) -> Result<(), String> {
+        let session_snapshot = {
+            let guard = self.session.lock().unwrap_or_else(PoisonError::into_inner);
+            guard.clone()
+        };
+        if let Some(mut s) = session_snapshot {
+            if let Some(user) = self
+                .services
+                .stores
+                .users
+                .find_by_id(&s.tenant_id, &s.user_id)
+                .await
+                .map_err(crate::map_core_err)?
+            {
+                s.auth_epoch = user.auth_epoch;
+                let mut guard = self.session.lock().unwrap_or_else(PoisonError::into_inner);
+                *guard = Some(s);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -324,6 +354,51 @@ async fn initialize_app(app_handle: &AppHandle) -> Result<(AppState, PathBuf), (
     })?;
 
     let db_path = resolve_db_path(&app_dir);
+    let media_dir = app_dir.join("media");
+
+    let backup_service = eventrent_backup_fs::BackupFsService::new(
+        app_dir.clone(),
+        db_path.clone(),
+        media_dir.clone(),
+        config_path.clone(),
+    );
+
+    // Executa restauração a frio pendente antes de abrir conexões do banco de dados (ADR-0017)
+    match backup_service
+        .execute_pending_restore_at_startup(eventrent_store_sqlite::CURRENT_MAX_MIGRATION)
+        .await
+    {
+        Ok(Some(report)) => {
+            tracing::info!(
+                restored_file = %report.restored_backup_file,
+                files_count = report.files_restored_count,
+                pre_restore_snapshot = ?report.pre_restore_snapshot_file,
+                "Restauração a frio executada com sucesso antes da abertura do banco SQLite."
+            );
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                "Falha ao executar restauração a frio pendente no startup."
+            );
+            return Err((
+                format!("Falha crítica na restauração pendente de backup: {e}"),
+                log_dir_display.clone(),
+            ));
+        }
+    }
+
+    // Snapshot atômico de segurança pré-atualização antes de aplicar migrações ou abrir o banco
+    if let Err(err) = backup_service
+        .create_pre_update_snapshot_if_needed(
+            &db_path,
+            eventrent_store_sqlite::CURRENT_MAX_MIGRATION,
+        )
+        .await
+    {
+        tracing::warn!("Aviso: falha ao gerar snapshot pré-atualização: {err}");
+    }
 
     tracing::info!(
         "Inicializando banco SQLite em: {}",
@@ -338,7 +413,7 @@ async fn initialize_app(app_handle: &AppHandle) -> Result<(AppState, PathBuf), (
         )
     })?;
 
-    let store_bundle = SqliteStore::new(pool).into_bundle();
+    let store_bundle = SqliteStore::new(pool.clone()).into_bundle();
 
     let default_tenant_id = ensure_default_tenant(
         store_bundle.tenants.as_ref(),
@@ -392,6 +467,7 @@ async fn initialize_app(app_handle: &AppHandle) -> Result<(AppState, PathBuf), (
     }
 
     let services = CoreServices::with_media_store(store_bundle, Arc::new(media_store));
+    let app_version = env!("CARGO_PKG_VERSION").to_string();
 
     Ok((
         AppState {
@@ -399,6 +475,9 @@ async fn initialize_app(app_handle: &AppHandle) -> Result<(AppState, PathBuf), (
             default_tenant_id,
             config_path,
             temp_media_dir,
+            backup_service,
+            db_pool: pool,
+            app_version,
             config: Mutex::new(app_config),
             session: Mutex::new(None),
         },
@@ -425,6 +504,7 @@ pub fn run() {
                 match initialize_app(&app_handle).await {
                     Ok((state, _log_dir)) => {
                         app_handle.manage(state);
+                        backup_scheduler::start_backup_scheduler(app_handle.clone());
                         Ok(())
                     }
                     Err((err_msg, log_path_display)) => {
@@ -515,6 +595,14 @@ pub fn run() {
             commands::media::collect_unreferenced_media,
             commands::media::open_model_document_external,
             commands::media::save_model_document_as,
+            commands::backup::get_backup_status,
+            commands::backup::set_backup_settings,
+            commands::backup::run_backup_now,
+            commands::backup::list_backups,
+            commands::backup::verify_backup,
+            commands::backup::schedule_restore,
+            commands::backup::choose_backup_folder,
+            commands::backup::choose_backup_file,
         ])
         .build(tauri::generate_context!());
 
@@ -617,7 +705,7 @@ mod tests {
 
         let pool = init_memory_db().await.unwrap();
 
-        let stores = eventrent_store_sqlite::SqliteStore::new(pool).into_bundle();
+        let stores = eventrent_store_sqlite::SqliteStore::new(pool.clone()).into_bundle();
         let default_tenant_id =
             ensure_default_tenant(stores.tenants.as_ref(), stores.branding.as_ref())
                 .await
@@ -646,11 +734,21 @@ mod tests {
         ));
         let config_path = temp_dir.join("config.json");
 
+        let backup_service = eventrent_backup_fs::BackupFsService::new(
+            temp_dir.clone(),
+            temp_dir.join("eventrent.db"),
+            temp_dir.join("media"),
+            config_path.clone(),
+        );
+
         let app_state = AppState {
             services,
             default_tenant_id: default_tenant_id.clone(),
             config_path,
             temp_media_dir: temp_dir.join("temp-media"),
+            backup_service,
+            db_pool: pool,
+            app_version: "0.1.0".to_string(),
             config: Mutex::new(AppConfig::default()),
             session: Mutex::new(None),
         };
