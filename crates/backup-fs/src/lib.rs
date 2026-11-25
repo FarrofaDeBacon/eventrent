@@ -3525,4 +3525,196 @@ mod tests {
             "Conteúdo do arquivo -wal deve ter sido preservado intacto pelo rollback"
         );
     }
+
+    #[tokio::test]
+    async fn test_full_end_to_end_backup_mutation_and_restore_cycle() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        // 1. Popula múltiplas tabelas no banco de dados SQLite
+        let pool = env.pool_rw().await;
+        sqlx::query(
+            "CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL);
+             INSERT INTO customers (id, name, email) VALUES
+             ('cust_01', 'Cliente Original 1', 'cli1@real.local'),
+             ('cust_02', 'Cliente Original 2', 'cli2@real.local'),
+             ('cust_03', 'TESTE RESTAURACAO', 'restauracao@real.local');
+             CREATE TABLE products (id TEXT PRIMARY KEY, title TEXT NOT NULL, price INTEGER NOT NULL);
+             INSERT INTO products (id, title, price) VALUES
+             ('prod_01', 'Pioneer CDJ-3000', 15000),
+             ('prod_02', 'Mesa Yamaha QL5', 45000);",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        // 2. Cria múltiplos arquivos canônicos de mídia com SHA-256 e tamanhos conhecidos
+        let media_files = vec![
+            (
+                b"conteudo da foto 1 do modelo pioneer cdj 3000".to_vec(),
+                "default",
+            ),
+            (
+                b"conteudo da foto 2 do modelo pioneer detalhes traseiros".to_vec(),
+                "default",
+            ),
+            (
+                b"conteudo do documento pdf do cliente teste restauracao".to_vec(),
+                "tenant_alpha",
+            ),
+        ];
+
+        let mut expected_media = Vec::new();
+        for (bytes, tenant) in &media_files {
+            let mut hasher = Sha256::new();
+            hasher.update(bytes);
+            let sha = format!("{:x}", hasher.finalize());
+            let dir = env.media_dir.join(tenant).join(&sha[..2]);
+            fs::create_dir_all(&dir).unwrap();
+            let file_path = dir.join(&sha);
+            fs::write(&file_path, bytes).unwrap();
+            expected_media.push((file_path, sha, bytes.clone()));
+        }
+
+        // 3. Executa backup completo
+        let pool_ro = env.pool_ro().await;
+        let (manifest, backup_path) = service
+            .run_backup(&env.backup_dest, &pool_ro, "0.10.0-fase2n")
+            .await
+            .expect("Backup completo inicial deve ter sucesso");
+        pool_ro.close().await;
+
+        assert!(backup_path.exists(), "Arquivo de backup deve existir");
+        assert!(
+            manifest.files.len() >= 5,
+            "Manifesto deve conter db, config e ao menos 3 mídias"
+        );
+
+        let verify_result = service
+            .verify_backup_file(&backup_path, 10)
+            .expect("Verificação do backup gerado");
+        assert!(
+            verify_result.valid,
+            "Backup recém-gerado deve ser estritamente válido"
+        );
+
+        // 4. Mutação do ambiente:
+        // A) No banco: apaga o cliente TESTE RESTAURACAO, altera o cliente 1, adiciona um intruso
+        let pool_mut = env.pool_rw().await;
+        sqlx::query(
+            "DELETE FROM customers WHERE id = 'cust_03';
+             UPDATE customers SET name = 'Cliente 1 Corrompido' WHERE id = 'cust_01';
+             INSERT INTO customers (id, name, email) VALUES ('cust_evil', 'Intruso', 'evil@hacker.local');
+             DELETE FROM products WHERE id = 'prod_01';",
+        )
+        .execute(&pool_mut)
+        .await
+        .unwrap();
+        pool_mut.close().await;
+
+        // B) No disco de mídia: apaga uma mídia e adultera outra
+        let (first_media_path, _, _) = &expected_media[0];
+        fs::remove_file(first_media_path).expect("Apagar primeira mídia");
+        let (second_media_path, _, _) = &expected_media[1];
+        fs::write(
+            second_media_path,
+            b"bytes adulterados que nao batem com sha256",
+        )
+        .unwrap();
+
+        // 5. Agenda a restauração a frio
+        let marker = service
+            .schedule_restore(&backup_path, "usr_admin", 10)
+            .expect("Agendamento de restauração deve ser aceito");
+        assert_eq!(marker.scheduled_by_user_id, "usr_admin");
+        assert!(
+            env.app_data_dir.join(RESTORE_PENDING_FILE).exists(),
+            "Marcador restore_pending deve existir"
+        );
+
+        // 6. Executa a restauração a frio no boot
+        let restore_report = service
+            .execute_pending_restore_at_startup(10)
+            .await
+            .expect("Execução da restauração a frio no boot deve ter sucesso")
+            .expect("Relatório de restauração deve existir");
+
+        assert!(
+            restore_report.files_restored_count >= 5,
+            "Contagem de arquivos restaurados deve cobrir db, config e mídias"
+        );
+        assert!(
+            restore_report.pre_restore_snapshot_file.is_some(),
+            "Salvaguarda pré-restauração deve ter sido criada com sucesso"
+        );
+        assert!(
+            !env.app_data_dir.join(RESTORE_PENDING_FILE).exists(),
+            "Marcador deve ter sido consumido e removido"
+        );
+
+        // 7. Validação ponta a ponta dos dados no SQLite
+        let pool_check = env.pool_ro().await;
+        let restored_customers: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, name FROM customers ORDER BY id")
+                .fetch_all(&pool_check)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            restored_customers.len(),
+            3,
+            "Devem existir exatamente os 3 clientes originais"
+        );
+        assert_eq!(
+            restored_customers[0],
+            ("cust_01".to_string(), "Cliente Original 1".to_string())
+        );
+        assert_eq!(
+            restored_customers[1],
+            ("cust_02".to_string(), "Cliente Original 2".to_string())
+        );
+        assert_eq!(
+            restored_customers[2],
+            ("cust_03".to_string(), "TESTE RESTAURACAO".to_string())
+        );
+
+        let restored_products: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, title FROM products ORDER BY id")
+                .fetch_all(&pool_check)
+                .await
+                .unwrap();
+        assert_eq!(
+            restored_products.len(),
+            2,
+            "Devem existir os 2 produtos originais"
+        );
+        assert_eq!(
+            restored_products[0],
+            ("prod_01".to_string(), "Pioneer CDJ-3000".to_string())
+        );
+        pool_check.close().await;
+
+        // 8. Validação ponta a ponta de todas as mídias em disco (SHA-256 e bytes exatos)
+        for (media_path, expected_sha, expected_bytes) in &expected_media {
+            assert!(
+                media_path.exists(),
+                "Arquivo de mídia {} deve existir após restauração",
+                media_path.display()
+            );
+            let actual_bytes = fs::read(media_path).unwrap();
+            assert_eq!(
+                &actual_bytes, expected_bytes,
+                "Bytes da mídia restaurada devem ser idênticos aos originais"
+            );
+            let mut hasher = Sha256::new();
+            hasher.update(&actual_bytes);
+            let actual_sha = format!("{:x}", hasher.finalize());
+            assert_eq!(
+                &actual_sha, expected_sha,
+                "SHA-256 da mídia restaurada deve bater com o original"
+            );
+        }
+    }
 }
