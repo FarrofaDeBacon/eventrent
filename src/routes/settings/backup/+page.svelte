@@ -530,11 +530,27 @@
             <div
               class="flex items-center justify-between border-b border-border pb-2"
             >
-              <span class="text-muted-foreground">Último backup:</span>
+              <span class="text-muted-foreground"
+                >Último backup bem-sucedido:</span
+              >
               <span class="font-medium text-foreground">
-                {formatDate(status?.settings.last_backup_at ?? null)}
+                {formatDate(
+                  status?.settings.last_success_at ??
+                    status?.settings.last_backup_at ??
+                    null,
+                )}
               </span>
             </div>
+            {#if status?.settings.last_attempt_at && status.settings.last_attempt_at !== (status.settings.last_success_at ?? status.settings.last_backup_at)}
+              <div
+                class="flex items-center justify-between border-b border-border pb-2 text-xs"
+              >
+                <span class="text-muted-foreground">Última tentativa:</span>
+                <span class="font-medium text-foreground">
+                  {formatDate(status.settings.last_attempt_at)}
+                </span>
+              </div>
+            {/if}
             <div
               class="flex items-center justify-between border-b border-border pb-2"
             >

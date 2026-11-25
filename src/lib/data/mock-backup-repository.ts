@@ -16,6 +16,8 @@ const DEFAULT_SETTINGS: BackupSettings = {
   retention_daily: 7,
   retention_weekly: 4,
   retention_monthly: 6,
+  last_attempt_at: null,
+  last_success_at: null,
   last_backup_at: null,
   last_backup_status: null,
   last_backup_error: null,
@@ -101,6 +103,8 @@ export class MockBackupRepository implements BackupRepository {
 
     const updatedSettings: BackupSettings = {
       ...settings,
+      last_attempt_at: nowIso,
+      last_success_at: nowIso,
       last_backup_at: nowIso,
       last_backup_status: "success",
       last_backup_error: null,

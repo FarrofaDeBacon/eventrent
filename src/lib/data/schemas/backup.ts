@@ -6,6 +6,8 @@ export const BackupSettingsSchema = z.object({
   retention_daily: z.number().int().nonnegative(),
   retention_weekly: z.number().int().nonnegative(),
   retention_monthly: z.number().int().nonnegative(),
+  last_attempt_at: z.string().nullable().optional(),
+  last_success_at: z.string().nullable().optional(),
   last_backup_at: z.string().nullable(),
   last_backup_status: z.string().nullable(),
   last_backup_error: z.string().nullable(),

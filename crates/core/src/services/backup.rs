@@ -1,6 +1,6 @@
 use crate::domain::{
-    days_since_last_backup, is_backup_due_with_status, is_backup_stale, BackupSettings,
-    BackupStatus, TenantSetting, PERM_BACKUP_MANAGE, SETTING_BACKUP_SETTINGS,
+    days_since_last_backup, is_backup_due_v2, is_backup_stale, BackupSettings, BackupStatus,
+    TenantSetting, PERM_BACKUP_MANAGE, SETTING_BACKUP_SETTINGS,
 };
 use crate::error::{CoreError, Result};
 use crate::services::{build_audit_entry, CoreServices};
@@ -40,11 +40,27 @@ impl CoreServices {
     pub async fn get_backup_status_for_tenant(&self, tenant_id: &str) -> Result<BackupStatus> {
         let settings = self.get_backup_settings_for_tenant(tenant_id).await?;
         let now = Utc::now();
-        let last_at = settings.last_backup_at.as_deref();
+        let last_success = settings.last_success_at.as_deref().or(
+            if settings.last_backup_status.as_deref() == Some("success") {
+                settings.last_backup_at.as_deref()
+            } else {
+                None
+            },
+        );
+        let last_attempt = settings
+            .last_attempt_at
+            .as_deref()
+            .or(settings.last_backup_at.as_deref());
         let last_status = settings.last_backup_status.as_deref();
-        let due = is_backup_due_with_status(last_at, last_status, now, settings.schedule_enabled);
-        let stale = is_backup_stale(last_at, now);
-        let days = days_since_last_backup(last_at, now);
+        let due = is_backup_due_v2(
+            last_success,
+            last_attempt,
+            last_status,
+            now,
+            settings.schedule_enabled,
+        );
+        let stale = is_backup_stale(last_success, now);
+        let days = days_since_last_backup(last_success, now);
 
         Ok(BackupStatus {
             settings,
@@ -164,7 +180,11 @@ impl CoreServices {
     ) -> Result<()> {
         let mut settings = self.get_backup_settings_for_tenant(tenant_id).await?;
         let now = Utc::now().to_rfc3339();
-        settings.last_backup_at = Some(now.clone());
+        settings.last_attempt_at = Some(now.clone());
+        if status == "success" {
+            settings.last_success_at = Some(now.clone());
+            settings.last_backup_at = Some(now.clone());
+        }
         settings.last_backup_status = Some(status.to_string());
         settings.last_backup_error = error.map(|s| s.to_string());
 

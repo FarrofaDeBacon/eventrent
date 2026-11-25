@@ -71,6 +71,11 @@ pub struct BackupSettings {
     pub retention_daily: u32,
     pub retention_weekly: u32,
     pub retention_monthly: u32,
+    #[serde(default)]
+    pub last_attempt_at: Option<String>,
+    #[serde(default)]
+    pub last_success_at: Option<String>,
+    #[serde(default)]
     pub last_backup_at: Option<String>,
     pub last_backup_status: Option<String>,
     pub last_backup_error: Option<String>,
@@ -84,6 +89,8 @@ impl Default for BackupSettings {
             retention_daily: DEFAULT_RETENTION_DAILY,
             retention_weekly: DEFAULT_RETENTION_WEEKLY,
             retention_monthly: DEFAULT_RETENTION_MONTHLY,
+            last_attempt_at: None,
+            last_success_at: None,
             last_backup_at: None,
             last_backup_status: None,
             last_backup_error: None,
@@ -190,26 +197,56 @@ pub fn is_backup_due_with_status(
     now: DateTime<Utc>,
     schedule_enabled: bool,
 ) -> bool {
+    is_backup_due_v2(
+        last_backup_at,
+        last_backup_at,
+        last_backup_status,
+        now,
+        schedule_enabled,
+    )
+}
+
+/// Determina se um backup agendado está devido levando em consideração o status e as datas de sucesso e tentativa.
+/// - Se não agendado: false.
+/// - Se nunca houve sucesso: true.
+/// - Se a última execução falhou: devido se passou mais de 1 hora desde a última tentativa (last_attempt_at).
+/// - Se a última execução teve sucesso: devido se passou mais de 24 horas desde o último sucesso (last_success_at).
+pub fn is_backup_due_v2(
+    last_success_at: Option<&str>,
+    last_attempt_at: Option<&str>,
+    last_backup_status: Option<&str>,
+    now: DateTime<Utc>,
+    schedule_enabled: bool,
+) -> bool {
     if !schedule_enabled {
         return false;
     }
-    if last_backup_status == Some("failed") {
-        match last_backup_at {
-            None => true,
-            Some(s) => match DateTime::parse_from_rfc3339(s) {
-                Ok(dt) => (now - dt.with_timezone(&Utc)).num_hours() >= 1,
-                Err(_) => true,
-            },
+    match last_success_at {
+        None => true,
+        Some(success_str) => {
+            if last_backup_status == Some("failed") {
+                // Em caso de falha, tenta novamente após 1h desde a última tentativa
+                match last_attempt_at {
+                    None => true,
+                    Some(attempt_str) => match DateTime::parse_from_rfc3339(attempt_str) {
+                        Ok(dt) => (now - dt.with_timezone(&Utc)).num_hours() >= 1,
+                        Err(_) => true,
+                    },
+                }
+            } else {
+                match DateTime::parse_from_rfc3339(success_str) {
+                    Ok(dt) => (now - dt.with_timezone(&Utc)).num_hours() >= 24,
+                    Err(_) => true,
+                }
+            }
         }
-    } else {
-        is_backup_due(last_backup_at, now, schedule_enabled)
     }
 }
 
-/// Determina se o status de backup está "estéril" (> 7 dias sem backup ou nenhum backup já realizado).
+/// Determina se o status de backup está "estéril" (> 7 dias sem backup de SUCESSO ou nenhum backup já realizado).
 /// Aciona alerta fixo e destacado na interface de usuário.
-pub fn is_backup_stale(last_backup_at: Option<&str>, now: DateTime<Utc>) -> bool {
-    match last_backup_at {
+pub fn is_backup_stale(last_success_at: Option<&str>, now: DateTime<Utc>) -> bool {
+    match last_success_at {
         None => true,
         Some(s) => match DateTime::parse_from_rfc3339(s) {
             Ok(dt) => (now - dt.with_timezone(&Utc)).num_days() >= 7,
@@ -218,9 +255,9 @@ pub fn is_backup_stale(last_backup_at: Option<&str>, now: DateTime<Utc>) -> bool
     }
 }
 
-/// Calcula quantos dias se passaram desde o último backup.
-pub fn days_since_last_backup(last_backup_at: Option<&str>, now: DateTime<Utc>) -> Option<u32> {
-    let s = last_backup_at?;
+/// Calcula quantos dias se passaram desde o último backup de SUCESSO.
+pub fn days_since_last_backup(last_success_at: Option<&str>, now: DateTime<Utc>) -> Option<u32> {
+    let s = last_success_at?;
     let dt = DateTime::parse_from_rfc3339(s).ok()?;
     let days = (now - dt.with_timezone(&Utc)).num_days();
     if days < 0 {
@@ -497,6 +534,44 @@ mod tests {
         assert!(is_backup_due(Some(&stale_time), now, true));
         assert!(is_backup_stale(Some(&stale_time), now));
         assert_eq!(days_since_last_backup(Some(&stale_time), now), Some(8));
+
+        // Cenário da Tarefa 0.3: Backup falha todo dia (ex: pendrive desconectado).
+        // last_success_at foi há 8 dias, mas last_attempt_at foi há 30 minutos (falha).
+        // O aviso de mais de 7 dias sem backup NÃO pode ser suprimido pela tentativa falha!
+        let last_success = (now - Duration::days(8)).to_rfc3339();
+        let last_attempt = (now - Duration::minutes(30)).to_rfc3339();
+        assert!(
+            is_backup_stale(Some(&last_success), now),
+            "Deve permanecer estéril mesmo se houver tentativas recentes de falha"
+        );
+        assert_eq!(
+            days_since_last_backup(Some(&last_success), now),
+            Some(8),
+            "Dias decorridos deve ser calculado estritamente a partir do último sucesso"
+        );
+        // Tentativa de 30 minutos atrás com status failed -> ainda em backoff de 1h
+        assert!(
+            !is_backup_due_v2(
+                Some(&last_success),
+                Some(&last_attempt),
+                Some("failed"),
+                now,
+                true
+            ),
+            "Tentativa falha há menos de 1h deve aguardar backoff de retry"
+        );
+        // Tentativa de 70 minutos atrás com status failed -> deve tentar novamente
+        let old_attempt = (now - Duration::minutes(70)).to_rfc3339();
+        assert!(
+            is_backup_due_v2(
+                Some(&last_success),
+                Some(&old_attempt),
+                Some("failed"),
+                now,
+                true
+            ),
+            "Tentativa falha há mais de 1h deve acionar nova tentativa de backup"
+        );
     }
 
     #[test]
