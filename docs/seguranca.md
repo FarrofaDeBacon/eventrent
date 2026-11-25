@@ -224,4 +224,18 @@ O mecanismo de segurança para cópias de salvaguarda e restauração offline fo
 8. **Agendamento em Background e Retenção Automatizada**:
    - Backup automático diário gerenciado em background a cada 15 minutos e na inicialização após 24 horas sem cópias de segurança.
    - Em caso de falha transitória na criação automática, o agendador impõe uma janela de espera mínima de 1 hora antes de nova tentativa para evitar sobrecarga.
-   - Retenção determinística por dias, semanas e meses com rotação segura na pasta configurada pelo usuário.
+   - Retenção determinística por dias, semanas e meses com rotação segura na pasta configurada pelo usuário. O backup mais recente é incondicionalmente preservado contra descarte.
+
+9. **Salvaguarda Pré-Restauração, Preservação de Mídias e Espaço em Disco**:
+   - **Salvaguarda Pré-Restauração**: Antes de aplicar qualquer arquivo de restauração, o sistema cria uma cópia de segurança completa do estado vigente (`.pre-restore.eventrent-backup`) contendo o banco de dados (`.db`, `-wal`, `-shm`), o arquivo de configuração e todos os blobs de mídia.
+   - **Preservação de Mídias Existentes em Rollbacks**: Arquivos de mídia endereçados por hash SHA-256 já existentes em disco com tamanho idêntico não são regravados e são excluídos da lista de rollback caso a restauração seja interrompida, prevenindo que mídias preexistentes legítimas sejam deletadas em caso de falha.
+   - **Validação de Espaço Livre em Disco**: Antes de iniciar o empacotamento do backup ou a extração da restauração, o sistema realiza a checagem de espaço livre na partição de destino via APIs nativas do sistema operacional (`kernel32::GetDiskFreeSpaceExW` no Windows e `libc::statvfs` em plataformas Unix) sem inclusão de novas dependências externas.
+   - **Aviso sobre Ressuscitação de Senhas Antigas**: A restauração substitui integralmente a base SQLite pelo snapshot do backup. Consequentemente, quaisquer alterações de senha, revogações de perfil ou exclusões de usuários realizadas _após_ a data de criação do arquivo de backup serão revertidas para o estado da época. O operador é orientado a revisar os usuários cadastrados e redefinir credenciais imediatamente após a restauração de arquivos antigos.
+
+10. **Roteiro de Fumaça: Teste de Restauração Real de Ponta a Ponta**:
+11. **Cadastro de Registro de Referência**: No aplicativo, cadastre um cliente com nome identificável (ex: `TESTE RESTAURACAO`) e vincule uma imagem ou anexo a um modelo de catálogo.
+12. **Geração do Backup**: Acesse **Aparência & Operação > Backup e Restauração** e clique em **Fazer backup agora**. Confirme que o arquivo foi listado com status íntegro e compatível.
+13. **Simulação de Desastre / Alteração Acidental**: Exclua o cliente cadastrado e remova ou altere o anexo do modelo no catálogo.
+14. **Agendamento Autenticado**: Clique em **Restaurar...** na linha do backup gerado, informe a senha atual do usuário Proprietário e digite `RESTAURAR`.
+15. **Reinicialização da Aplicação**: Feche o aplicativo. Abra-o novamente através do inicializador do sistema (`EventRent.exe` ou `pnpm tauri dev`). Durante a inicialização a frio, o sistema detecta o marcador atômico `restore_pending.json`, valida o hash SHA-256 do arquivo contra adulterações, cria a salvaguarda pré-restauração e extrai o banco e mídias.
+16. **Verificação de Sucesso**: Ao abrir o sistema, verifique que o cliente `TESTE RESTAURACAO` e sua mídia associada reapareceram integralmente restaurados.

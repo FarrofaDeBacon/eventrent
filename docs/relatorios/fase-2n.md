@@ -623,3 +623,10 @@ A suíte completa de validação (`pnpm verify`) foi executada com 100% de suces
    - No modal bloqueante, insira sua senha de login atual e digite a palavra `RESTAURAR` em maiúsculas.
    - Clique em **Confirmar Restauração**. Uma notificação informa que a restauração foi agendada para a próxima inicialização.
    - Feche o aplicativo e abra-o novamente. A inicialização a frio validará o hash SHA-256 do arquivo, gerará o snapshot de segurança do estado atual e restaurará o banco e os arquivos de mídia com sucesso.
+5. **Roteiro de Restauração Real de Ponta a Ponta**:
+   - Cadastre um cliente com nome identificável (ex: `TESTE RESTAURACAO`) e vincule uma imagem a um modelo de equipamento.
+   - Execute **Fazer backup agora** em `/settings/backup` e observe a geração do pacote.
+   - Em seguida, **apague** o cliente `TESTE RESTAURACAO` e a foto vinculada para simular perda de dados.
+   - Agende a restauração do backup informando a senha de login e digitando `RESTAURAR`.
+   - Reinicie o aplicativo (`pnpm tauri dev` ou instalador MSI/NSIS).
+   - Ao abrir a tela inicial e navegar para Clientes e Equipamentos, confirme que o cliente `TESTE RESTAURACAO` e a imagem foram 100% reconstituídos.
