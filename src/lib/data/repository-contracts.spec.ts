@@ -11,6 +11,7 @@ import { TauriVenueRepository } from "./tauri-venue-repository";
 import { TauriCatalogRepository } from "./tauri-catalog-repository";
 import { TauriSettingsRepository } from "./tauri-settings-repository";
 import { TauriBackupRepository } from "./tauri-backup-repository";
+import { TauriInventoryRepository } from "./tauri-inventory-repository";
 
 import { commandReturnSchemas } from "./schemas";
 
@@ -1251,7 +1252,257 @@ describe("R3 / Tarefa 0.3 — Contratos Reais Rust ↔ TypeScript e Cobertura do
     });
   });
 
-  describe("10. R3.4 — Prova de Fluxo de Recuperação com RecoveryKeyModal", () => {
+  describe("10. Repositório de Estoque e Depósitos (TauriInventoryRepository)", () => {
+    let repo: TauriInventoryRepository;
+
+    beforeEach(() => {
+      repo = new TauriInventoryRepository();
+    });
+
+    it("list_warehouses: lista depósitos do tenant", async () => {
+      coveredCommands.add("list_warehouses");
+      const fix = getFixture("list_warehouses");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const res = await repo.listWarehouses(true);
+      expect(
+        commandReturnSchemas["list_warehouses"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("list_warehouses", {
+        includeInactive: true,
+      });
+    });
+
+    it("get_warehouse: obtém detalhes de um depósito", async () => {
+      coveredCommands.add("get_warehouse");
+      const fix = getFixture("get_warehouse");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const res = await repo.getWarehouse("wh_01");
+      expect(commandReturnSchemas["get_warehouse"].safeParse(res).success).toBe(
+        true,
+      );
+      expect(mockedInvoke).toHaveBeenCalledWith("get_warehouse", {
+        id: "wh_01",
+      });
+    });
+
+    it("create_warehouse: cria novo depósito", async () => {
+      coveredCommands.add("create_warehouse");
+      const fix = getFixture("create_warehouse");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const input = {
+        name: "Galpão Secundário",
+        code: "GALPAO-02",
+      };
+      const res = await repo.createWarehouse(input);
+      expect(
+        commandReturnSchemas["create_warehouse"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("create_warehouse", {
+        input,
+      });
+    });
+
+    it("update_warehouse: atualiza dados do depósito", async () => {
+      coveredCommands.add("update_warehouse");
+      const fix = getFixture("update_warehouse");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const input = {
+        name: "Galpão Central Reformado",
+        code: "GALPAO-01",
+      };
+      const res = await repo.updateWarehouse("wh_01", input);
+      expect(
+        commandReturnSchemas["update_warehouse"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("update_warehouse", {
+        id: "wh_01",
+        input,
+      });
+    });
+
+    it("set_default_warehouse: define depósito como padrão", async () => {
+      coveredCommands.add("set_default_warehouse");
+      const fix = getFixture("set_default_warehouse");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      await repo.setDefaultWarehouse("wh_01");
+      expect(mockedInvoke).toHaveBeenCalledWith("set_default_warehouse", {
+        id: "wh_01",
+      });
+    });
+
+    it("delete_warehouse: remove logicamente um depósito", async () => {
+      coveredCommands.add("delete_warehouse");
+      const fix = getFixture("delete_warehouse");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      await repo.deleteWarehouse("wh_01");
+      expect(mockedInvoke).toHaveBeenCalledWith("delete_warehouse", {
+        id: "wh_01",
+      });
+    });
+
+    it("list_equipment_units: lista unidades físicas filtradas", async () => {
+      coveredCommands.add("list_equipment_units");
+      const fix = getFixture("list_equipment_units");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const filter = { equipment_model_id: "mod_01" };
+      const res = await repo.listEquipmentUnits(filter);
+      expect(
+        commandReturnSchemas["list_equipment_units"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("list_equipment_units", {
+        filter,
+      });
+    });
+
+    it("get_equipment_unit: obtém unidade física por id", async () => {
+      coveredCommands.add("get_equipment_unit");
+      const fix = getFixture("get_equipment_unit");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const res = await repo.getEquipmentUnit("unit_01");
+      expect(
+        commandReturnSchemas["get_equipment_unit"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("get_equipment_unit", {
+        id: "unit_01",
+      });
+    });
+
+    it("create_equipment_unit: tomba nova unidade serializada", async () => {
+      coveredCommands.add("create_equipment_unit");
+      const fix = getFixture("create_equipment_unit");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const input = {
+        equipment_model_id: "mod_01",
+        serial_number: "SN-12345",
+      };
+      const res = await repo.createEquipmentUnit(input);
+      expect(
+        commandReturnSchemas["create_equipment_unit"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("create_equipment_unit", {
+        input,
+      });
+    });
+
+    it("update_equipment_unit: atualiza dados da unidade", async () => {
+      coveredCommands.add("update_equipment_unit");
+      const fix = getFixture("update_equipment_unit");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const input = {
+        notes: "Revisado",
+      };
+      const res = await repo.updateEquipmentUnit("unit_01", input);
+      expect(
+        commandReturnSchemas["update_equipment_unit"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("update_equipment_unit", {
+        id: "unit_01",
+        input,
+      });
+    });
+
+    it("delete_equipment_unit: baixa patrimonial da unidade", async () => {
+      coveredCommands.add("delete_equipment_unit");
+      const fix = getFixture("delete_equipment_unit");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      await repo.deleteEquipmentUnit("unit_01");
+      expect(mockedInvoke).toHaveBeenCalledWith("delete_equipment_unit", {
+        id: "unit_01",
+      });
+    });
+
+    it("get_stock_balance: obtém saldo de modelo em depósito", async () => {
+      coveredCommands.add("get_stock_balance");
+      const fix = getFixture("get_stock_balance");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const res = await repo.getStockBalance("wh_01", "mod_01");
+      expect(
+        commandReturnSchemas["get_stock_balance"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("get_stock_balance", {
+        warehouseId: "wh_01",
+        equipmentModelId: "mod_01",
+      });
+    });
+
+    it("list_stock_balances: lista saldos agregados", async () => {
+      coveredCommands.add("list_stock_balances");
+      const fix = getFixture("list_stock_balances");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const res = await repo.listStockBalances("mod_01", "wh_01");
+      expect(
+        commandReturnSchemas["list_stock_balances"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("list_stock_balances", {
+        equipmentModelId: "mod_01",
+        warehouseId: "wh_01",
+      });
+    });
+
+    it("record_stock_movement: registra movimentação no livro-razão", async () => {
+      coveredCommands.add("record_stock_movement");
+      const fix = getFixture("record_stock_movement");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const input = {
+        equipment_model_id: "mod_01",
+        movement_type: "purchase_in" as const,
+        quantity: 5,
+        reason: "Compra",
+      };
+      const res = await repo.recordStockMovement(input);
+      expect(
+        commandReturnSchemas["record_stock_movement"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("record_stock_movement", {
+        input,
+      });
+    });
+
+    it("list_stock_movements: lista movimentações com filtro", async () => {
+      coveredCommands.add("list_stock_movements");
+      const fix = getFixture("list_stock_movements");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const filter = { equipment_model_id: "mod_01" };
+      const res = await repo.listStockMovements(filter);
+      expect(
+        commandReturnSchemas["list_stock_movements"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("list_stock_movements", {
+        filter,
+      });
+    });
+
+    it("attach_unit_media: anexa foto de vistoria ou avaria na unidade", async () => {
+      coveredCommands.add("attach_unit_media");
+      const fix = getFixture("attach_unit_media");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      const input = {
+        equipment_unit_id: "unit_01",
+        blob_id: "blob_01",
+        media_type: "damage_photo" as const,
+        caption: "Foto da avaria",
+      };
+      const res = await repo.attachUnitMedia(input);
+      expect(
+        commandReturnSchemas["attach_unit_media"].safeParse(res).success,
+      ).toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("attach_unit_media", {
+        input,
+      });
+    });
+
+    it("detach_unit_media: desanexa mídia da unidade", async () => {
+      coveredCommands.add("detach_unit_media");
+      const fix = getFixture("detach_unit_media");
+      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
+      await repo.detachUnitMedia("eum_01");
+      expect(mockedInvoke).toHaveBeenCalledWith("detach_unit_media", {
+        id: "eum_01",
+      });
+    });
+  });
+
+  describe("11. R3.4 — Prova de Fluxo de Recuperação com RecoveryKeyModal", () => {
     it("chama RecoveryKeyModal com o resultado do repositório (fixture real) e prova que a chave exibida é a que o Rust devolveu", async () => {
       const authRepo = new TauriAuthRepository();
       const recoverFixture = getFixture("recover_password");
@@ -1286,13 +1537,13 @@ describe("R3 / Tarefa 0.3 — Contratos Reais Rust ↔ TypeScript e Cobertura do
     });
   });
 
-  describe("11. Tarefa 0.3 — Garantia Estrutural: Cobertura Integral dos 70 Comandos IPC", () => {
-    it("FALHA se qualquer comando do registro COMMAND_REGISTRY (70 fixtures) não possuir teste de contrato de repositório", () => {
+  describe("12. Tarefa 0.3 — Garantia Estrutural: Cobertura Integral dos 87 Comandos IPC", () => {
+    it("FALHA se qualquer comando do registro COMMAND_REGISTRY (87 fixtures) não possuir teste de contrato de repositório", () => {
       const allFixtureCommands = Object.keys(fixtureModules)
         .map((p) => p.replace("./fixtures/contracts/", "").replace(".json", ""))
         .sort();
 
-      expect(allFixtureCommands.length).toBe(70);
+      expect(allFixtureCommands.length).toBe(87);
 
       const missingCommands: string[] = [];
       for (const cmd of allFixtureCommands) {
@@ -1306,7 +1557,7 @@ describe("R3 / Tarefa 0.3 — Contratos Reais Rust ↔ TypeScript e Cobertura do
         `Os seguintes comandos estão em COMMAND_REGISTRY / fixtures mas NÃO possuem teste de contrato em repositório: ${missingCommands.join(", ")}`,
       ).toEqual([]);
 
-      expect(coveredCommands.size).toBe(70);
+      expect(coveredCommands.size).toBe(87);
     });
   });
 });

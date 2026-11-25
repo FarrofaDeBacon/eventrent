@@ -293,6 +293,75 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
         name: "choose_backup_file",
         is_public: false,
     },
+    // Comandos de Gestão de Depósitos e Estoque (Fase 2B)
+    CommandDefinition {
+        name: "list_warehouses",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "get_warehouse",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "create_warehouse",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "update_warehouse",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "set_default_warehouse",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "delete_warehouse",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "list_equipment_units",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "get_equipment_unit",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "create_equipment_unit",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "update_equipment_unit",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "delete_equipment_unit",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "get_stock_balance",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "list_stock_balances",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "record_stock_movement",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "list_stock_movements",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "attach_unit_media",
+        is_public: false,
+    },
+    CommandDefinition {
+        name: "detach_unit_media",
+        is_public: false,
+    },
 ];
 
 /// Guarda central de autenticação para comandos protegidos do Tauri.

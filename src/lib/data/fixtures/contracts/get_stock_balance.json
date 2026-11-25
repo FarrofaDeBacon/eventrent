@@ -1,0 +1,20 @@
+{
+  "command": "get_stock_balance",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": {
+    "equipment_model_id": "018f0000-0000-7000-8000-000000000050",
+    "id": "018f0000-0000-7000-8000-000000000082",
+    "quantity_allocated": 0,
+    "quantity_maintenance": 0,
+    "quantity_on_hand": 5,
+    "tenant_id": "018f0000-0000-7000-8000-000000000001",
+    "updated_at": "2026-11-20T10:00:00Z",
+    "warehouse_id": "018f0000-0000-7000-8000-000000000080"
+  },
+  "sample_errors": {
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "NotFound": "Registro não encontrado: O identificador solicitado não existe.",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada."
+  }
+}

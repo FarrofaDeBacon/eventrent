@@ -1,0 +1,30 @@
+{
+  "command": "update_equipment_unit",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": {
+    "acquisition_date": "2026-01-10",
+    "active": true,
+    "created_at": "2026-11-20T10:00:00Z",
+    "created_by": "018f0000-0000-7000-8000-000000000002",
+    "deleted_at": null,
+    "equipment_model_id": "018f0000-0000-7000-8000-000000000050",
+    "id": "018f0000-0000-7000-8000-000000000081",
+    "notes": "Com case rígido e cabos originais",
+    "patrimony_tag": "EQ000001",
+    "physical_condition": "good",
+    "serial_number": "CDJ3K-2026-001",
+    "status": "available",
+    "tenant_id": "018f0000-0000-7000-8000-000000000001",
+    "updated_at": "2026-11-20T10:00:00Z",
+    "warehouse_id": "018f0000-0000-7000-8000-000000000080",
+    "warranty_expires_at": "2027-01-10"
+  },
+  "sample_errors": {
+    "Conflict": "Conflito de registro: Já existe um registro com os dados informados.",
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "NotFound": "Registro não encontrado: O identificador solicitado não existe.",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada.",
+    "Validation": "Erro de validação: Dados de entrada inválidos para a operação."
+  }
+}

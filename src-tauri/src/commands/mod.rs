@@ -3,6 +3,7 @@ pub mod backup;
 pub mod branding;
 pub mod catalog;
 pub mod customers;
+pub mod inventory;
 pub mod media;
 pub mod settings;
 pub mod setup;

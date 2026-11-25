@@ -1,0 +1,21 @@
+{
+  "command": "attach_unit_media",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": {
+    "blob_id": "018f0000-0000-7000-8000-000000000090",
+    "caption": "Pequeno arranhão lateral no chassi",
+    "created_at": "2026-11-20T10:00:00Z",
+    "created_by": "018f0000-0000-7000-8000-000000000002",
+    "equipment_unit_id": "018f0000-0000-7000-8000-000000000081",
+    "id": "018f0000-0000-7000-8000-000000000084",
+    "media_type": "damage_photo",
+    "tenant_id": "018f0000-0000-7000-8000-000000000001"
+  },
+  "sample_errors": {
+    "Conflict": "Conflito de registro: Já existe um registro com os dados informados.",
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada.",
+    "Validation": "Erro de validação: Dados de entrada inválidos para a operação."
+  }
+}

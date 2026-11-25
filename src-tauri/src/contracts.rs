@@ -521,6 +521,92 @@ pub fn build_fixture_for_command(cmd_name: &str) -> Option<ContractFixture> {
             json!("C:\\Backups\\EventRent\\backup-2026-11-23.eventrent-backup"),
             standard_errors_for(false, false, false),
         ),
+        // Comandos de Gestão de Depósitos e Estoque (Fase 2B)
+        "list_warehouses" => (
+            true,
+            json!([sample_warehouse_json()]),
+            standard_errors_for(false, false, false),
+        ),
+        "get_warehouse" => (
+            true,
+            sample_warehouse_json(),
+            standard_errors_for(false, true, false),
+        ),
+        "create_warehouse" => (
+            true,
+            sample_warehouse_json(),
+            standard_errors_for(false, false, true),
+        ),
+        "update_warehouse" => (
+            true,
+            sample_warehouse_json(),
+            standard_errors_for(false, true, true),
+        ),
+        "set_default_warehouse" => (
+            false,
+            serde_json::Value::Null,
+            standard_errors_for(false, true, true),
+        ),
+        "delete_warehouse" => (
+            false,
+            serde_json::Value::Null,
+            standard_errors_for(false, true, true),
+        ),
+        "list_equipment_units" => (
+            true,
+            json!([sample_equipment_unit_details_json()]),
+            standard_errors_for(false, false, false),
+        ),
+        "get_equipment_unit" => (
+            true,
+            sample_equipment_unit_details_json(),
+            standard_errors_for(false, true, false),
+        ),
+        "create_equipment_unit" => (
+            true,
+            sample_equipment_unit_json(),
+            standard_errors_for(false, false, true),
+        ),
+        "update_equipment_unit" => (
+            true,
+            sample_equipment_unit_json(),
+            standard_errors_for(false, true, true),
+        ),
+        "delete_equipment_unit" => (
+            false,
+            serde_json::Value::Null,
+            standard_errors_for(false, true, true),
+        ),
+        "get_stock_balance" => (
+            true,
+            sample_stock_balance_json(),
+            standard_errors_for(false, true, false),
+        ),
+        "list_stock_balances" => (
+            true,
+            json!([sample_stock_balance_json()]),
+            standard_errors_for(false, false, false),
+        ),
+        "record_stock_movement" => (
+            true,
+            sample_stock_movement_json(),
+            standard_errors_for(false, false, true),
+        ),
+        "list_stock_movements" => (
+            true,
+            json!([sample_stock_movement_json()]),
+            standard_errors_for(false, false, false),
+        ),
+        "attach_unit_media" => (
+            true,
+            sample_unit_media_json(),
+            standard_errors_for(false, false, true),
+        ),
+        "detach_unit_media" => (
+            false,
+            serde_json::Value::Null,
+            standard_errors_for(false, true, true),
+        ),
         _ => return None,
     };
 
@@ -759,6 +845,100 @@ fn sample_backup_metadata_view_json() -> serde_json::Value {
         "is_compatible": true,
         "file_count": 4,
         "verified": true
+    })
+}
+
+fn sample_warehouse_json() -> serde_json::Value {
+    json!({
+        "id": "018f0000-0000-7000-8000-000000000080",
+        "tenant_id": "018f0000-0000-7000-8000-000000000001",
+        "name": "Galpão Principal",
+        "code": "GALPAO-01",
+        "description": "Depósito central de equipamentos",
+        "address_line1": "Av. Industrial, 1000",
+        "address_line2": "Galpão 4",
+        "city": "São Paulo",
+        "state": "SP",
+        "postal_code": "01000-000",
+        "is_default": true,
+        "active": true,
+        "created_at": "2026-11-20T10:00:00Z",
+        "updated_at": "2026-11-20T10:00:00Z",
+        "deleted_at": null,
+        "created_by": "018f0000-0000-7000-8000-000000000002"
+    })
+}
+
+fn sample_equipment_unit_json() -> serde_json::Value {
+    json!({
+        "id": "018f0000-0000-7000-8000-000000000081",
+        "tenant_id": "018f0000-0000-7000-8000-000000000001",
+        "equipment_model_id": "018f0000-0000-7000-8000-000000000050",
+        "warehouse_id": "018f0000-0000-7000-8000-000000000080",
+        "patrimony_tag": "EQ000001",
+        "serial_number": "CDJ3K-2026-001",
+        "status": "available",
+        "physical_condition": "good",
+        "notes": "Com case rígido e cabos originais",
+        "acquisition_date": "2026-01-10",
+        "warranty_expires_at": "2027-01-10",
+        "active": true,
+        "created_at": "2026-11-20T10:00:00Z",
+        "updated_at": "2026-11-20T10:00:00Z",
+        "deleted_at": null,
+        "created_by": "018f0000-0000-7000-8000-000000000002"
+    })
+}
+
+fn sample_equipment_unit_details_json() -> serde_json::Value {
+    json!({
+        "unit": sample_equipment_unit_json(),
+        "model_name": "Pioneer CDJ-3000",
+        "warehouse_name": "Galpão Principal",
+        "media": [sample_unit_media_json()]
+    })
+}
+
+fn sample_stock_balance_json() -> serde_json::Value {
+    json!({
+        "id": "018f0000-0000-7000-8000-000000000082",
+        "tenant_id": "018f0000-0000-7000-8000-000000000001",
+        "warehouse_id": "018f0000-0000-7000-8000-000000000080",
+        "equipment_model_id": "018f0000-0000-7000-8000-000000000050",
+        "quantity_on_hand": 5,
+        "quantity_allocated": 0,
+        "quantity_maintenance": 0,
+        "updated_at": "2026-11-20T10:00:00Z"
+    })
+}
+
+fn sample_stock_movement_json() -> serde_json::Value {
+    json!({
+        "id": "018f0000-0000-7000-8000-000000000083",
+        "tenant_id": "018f0000-0000-7000-8000-000000000001",
+        "equipment_model_id": "018f0000-0000-7000-8000-000000000050",
+        "equipment_unit_id": "018f0000-0000-7000-8000-000000000081",
+        "from_warehouse_id": null,
+        "to_warehouse_id": "018f0000-0000-7000-8000-000000000080",
+        "movement_type": "purchase_in",
+        "quantity": 1,
+        "reason": "Compra de novo equipamento",
+        "reference_id": "NF-12345",
+        "performed_by_user_id": "018f0000-0000-7000-8000-000000000002",
+        "created_at": "2026-11-20T10:00:00Z"
+    })
+}
+
+fn sample_unit_media_json() -> serde_json::Value {
+    json!({
+        "id": "018f0000-0000-7000-8000-000000000084",
+        "tenant_id": "018f0000-0000-7000-8000-000000000001",
+        "equipment_unit_id": "018f0000-0000-7000-8000-000000000081",
+        "blob_id": "018f0000-0000-7000-8000-000000000090",
+        "media_type": "damage_photo",
+        "caption": "Pequeno arranhão lateral no chassi",
+        "created_at": "2026-11-20T10:00:00Z",
+        "created_by": "018f0000-0000-7000-8000-000000000002"
     })
 }
 

@@ -1,0 +1,45 @@
+{
+  "command": "list_equipment_units",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": [
+    {
+      "media": [
+        {
+          "blob_id": "018f0000-0000-7000-8000-000000000090",
+          "caption": "Pequeno arranhão lateral no chassi",
+          "created_at": "2026-11-20T10:00:00Z",
+          "created_by": "018f0000-0000-7000-8000-000000000002",
+          "equipment_unit_id": "018f0000-0000-7000-8000-000000000081",
+          "id": "018f0000-0000-7000-8000-000000000084",
+          "media_type": "damage_photo",
+          "tenant_id": "018f0000-0000-7000-8000-000000000001"
+        }
+      ],
+      "model_name": "Pioneer CDJ-3000",
+      "unit": {
+        "acquisition_date": "2026-01-10",
+        "active": true,
+        "created_at": "2026-11-20T10:00:00Z",
+        "created_by": "018f0000-0000-7000-8000-000000000002",
+        "deleted_at": null,
+        "equipment_model_id": "018f0000-0000-7000-8000-000000000050",
+        "id": "018f0000-0000-7000-8000-000000000081",
+        "notes": "Com case rígido e cabos originais",
+        "patrimony_tag": "EQ000001",
+        "physical_condition": "good",
+        "serial_number": "CDJ3K-2026-001",
+        "status": "available",
+        "tenant_id": "018f0000-0000-7000-8000-000000000001",
+        "updated_at": "2026-11-20T10:00:00Z",
+        "warehouse_id": "018f0000-0000-7000-8000-000000000080",
+        "warranty_expires_at": "2027-01-10"
+      },
+      "warehouse_name": "Galpão Principal"
+    }
+  ],
+  "sample_errors": {
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada."
+  }
+}

@@ -603,6 +603,23 @@ pub fn run() {
             commands::backup::schedule_restore,
             commands::backup::choose_backup_folder,
             commands::backup::choose_backup_file,
+            commands::inventory::list_warehouses,
+            commands::inventory::get_warehouse,
+            commands::inventory::create_warehouse,
+            commands::inventory::update_warehouse,
+            commands::inventory::set_default_warehouse,
+            commands::inventory::delete_warehouse,
+            commands::inventory::list_equipment_units,
+            commands::inventory::get_equipment_unit,
+            commands::inventory::create_equipment_unit,
+            commands::inventory::update_equipment_unit,
+            commands::inventory::delete_equipment_unit,
+            commands::inventory::get_stock_balance,
+            commands::inventory::list_stock_balances,
+            commands::inventory::record_stock_movement,
+            commands::inventory::list_stock_movements,
+            commands::inventory::attach_unit_media,
+            commands::inventory::detach_unit_media,
         ])
         .build(tauri::generate_context!());
 
