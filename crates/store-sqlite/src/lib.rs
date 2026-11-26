@@ -47,6 +47,20 @@ pub(crate) fn map_sqlx_err(err: sqlx::Error) -> CoreError {
                             "Registro relacionado não encontrado ou inválido.".to_string(),
                         );
                     }
+                    // SQLite CHECK constraint (275)
+                    "275" => {
+                        return CoreError::Validation(
+                            "Operação viola restrição de integridade ou saldo mínimo de estoque."
+                                .to_string(),
+                        );
+                    }
+                    // SQLite TRIGGER ABORT (1811)
+                    "1811" => {
+                        return CoreError::Validation(format!(
+                            "Operação bloqueada por regra de integridade do banco: {}",
+                            db_err.message()
+                        ));
+                    }
                     _ => {}
                 }
             }
@@ -7400,27 +7414,44 @@ mod tests {
             .unwrap();
         contract_system_roles(&store, &tenant_id).await;
 
-        // 1. Confere se o depósito padrão inicial foi provisionado pela migração
-        let default_wh_count: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM warehouse WHERE tenant_id = ? AND is_default = 1 AND deleted_at IS NULL",
-        )
-        .bind(&tenant_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        // 1. Confere que a migração 0011 é puramente estrutural (não semeia warehouse nem patrimony_seq)
+        let initial_wh_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM warehouse WHERE tenant_id = ?")
+                .bind(&tenant_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(
-            default_wh_count, 1,
-            "Deve existir exatamente 1 depósito padrão após migração"
+            initial_wh_count, 0,
+            "Migração 0011 deve ser puramente DDL sem seed"
         );
 
-        // 2. Confere se a sequência de patrimônio inicial foi provisionada
-        let seq_count: i64 =
+        let initial_seq_count: i64 =
             sqlx::query_scalar("SELECT count(*) FROM equipment_patrimony_seq WHERE tenant_id = ?")
                 .bind(&tenant_id)
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(seq_count, 1, "Sequência de patrimônio deve existir");
+        assert_eq!(
+            initial_seq_count, 0,
+            "Sequência de patrimônio não deve existir antes de uso"
+        );
+
+        // 2. ensure_default_inventory cria o depósito padrão idempotente
+        let default_wh =
+            eventrent_core::ensure_default_inventory(&tenant_id, store.inventory.as_ref())
+                .await
+                .unwrap();
+        assert_eq!(default_wh.name, "Depósito principal");
+        assert_eq!(default_wh.code, "PRINCIPAL");
+        assert!(default_wh.is_default);
+
+        // Chamada idempotente retorna o mesmo depósito
+        let default_wh_again =
+            eventrent_core::ensure_default_inventory(&tenant_id, store.inventory.as_ref())
+                .await
+                .unwrap();
+        assert_eq!(default_wh.id, default_wh_again.id);
 
         // 3. Tentar inserir um segundo depósito padrão deve falhar pelo índice único parcial
         let second_default_err = sqlx::query(
@@ -7545,6 +7576,9 @@ mod tests {
             .await
             .unwrap();
         contract_system_roles(&store, &tenant_id).await;
+        eventrent_core::ensure_default_inventory(&tenant_id, store.inventory.as_ref())
+            .await
+            .unwrap();
 
         let now = Utc::now().to_rfc3339();
 
@@ -7586,7 +7620,7 @@ mod tests {
             .await
             .unwrap()
             .expect("Depósito padrão deve existir");
-        assert_eq!(default_wh.name, "Galpão Principal");
+        assert_eq!(default_wh.name, "Depósito principal");
         assert!(default_wh.is_default);
 
         // Criar segundo depósito
@@ -7881,6 +7915,1077 @@ mod tests {
             model_fin.model.replacement_value_cents,
             Some(450000),
             "Com finance:read, replacement_value_cents deve ser exibido"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_inventory_patrimony_concurrency_no_duplicates_or_gaps() {
+        let pool = init_memory_db().await.unwrap();
+        let store = std::sync::Arc::new(SqliteStore::new(pool).into_bundle());
+        let tenant_id = ensure_default_tenant(store.tenants.as_ref(), store.branding.as_ref())
+            .await
+            .unwrap();
+
+        // Dispara 12 tarefas simultâneas (>= 8 tarefas exigidas por R3a)
+        const CONCURRENT_TASKS: usize = 12;
+        let mut handles = Vec::with_capacity(CONCURRENT_TASKS);
+
+        for _ in 0..CONCURRENT_TASKS {
+            let store_clone = store.clone();
+            let tenant_id_clone = tenant_id.clone();
+            handles.push(tokio::spawn(async move {
+                store_clone
+                    .inventory
+                    .next_patrimony_tag(&tenant_id_clone)
+                    .await
+            }));
+        }
+
+        let mut tags = Vec::with_capacity(CONCURRENT_TASKS);
+        for handle in handles {
+            let res = handle.await.unwrap();
+            assert!(
+                res.is_ok(),
+                "Geração concorrente de patrimônio não deve falhar: {:?}",
+                res.err()
+            );
+            tags.push(res.unwrap());
+        }
+
+        // 1. Confere unicidade absoluta (sem duplicatas)
+        let unique_set: std::collections::HashSet<_> = tags.iter().cloned().collect();
+        assert_eq!(
+            unique_set.len(),
+            CONCURRENT_TASKS,
+            "Todas as tags de patrimônio geradas concorrentemente devem ser únicas"
+        );
+
+        // 2. Confere ausência de lacunas (gaps)
+        let mut numbers: Vec<i64> = tags
+            .iter()
+            .map(|t| {
+                eventrent_core::parse_patrimony_number(t).expect("Tag deve ser formato EQxxxxxx")
+            })
+            .collect();
+        numbers.sort();
+
+        let expected_numbers: Vec<i64> = (1..=(CONCURRENT_TASKS as i64)).collect();
+        assert_eq!(
+            numbers, expected_numbers,
+            "Sequência atômica sob concorrência não pode apresentar lacunas nem saltos"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_inventory_stock_movement_concurrency_ledger_sum_and_no_negative() {
+        use eventrent_core::{
+            CoreServices, RecordStockMovementInput, SessionInfo, StockMovementFilter,
+            StockMovementType,
+        };
+
+        let pool = init_memory_db().await.unwrap();
+        let stores = SqliteStore::new(pool.clone()).into_bundle();
+        let tenant_id = ensure_default_tenant(stores.tenants.as_ref(), stores.branding.as_ref())
+            .await
+            .unwrap();
+        contract_system_roles(&stores, &tenant_id).await;
+
+        let default_wh =
+            eventrent_core::ensure_default_inventory(&tenant_id, stores.inventory.as_ref())
+                .await
+                .unwrap();
+
+        let now = Utc::now().to_rfc3339();
+        let user_id = "usr_stock_op";
+        sqlx::query(
+            "INSERT INTO app_user (id, tenant_id, name, email, password_hash, role_id, active, created_at, updated_at)
+             VALUES (?, ?, 'Estoquista', 'est@local.test', 'hash', (SELECT id FROM role WHERE tenant_id = ? AND slug = 'warehouse'), 1, ?, ?)",
+        )
+        .bind(user_id)
+        .bind(&tenant_id)
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let session = SessionInfo {
+            user_id: user_id.to_string(),
+            tenant_id: tenant_id.clone(),
+            name: "Estoquista".to_string(),
+            email: "est@local.test".to_string(),
+            role_id: "role_est".to_string(),
+            role_name: "Estoque".to_string(),
+            role_slug: "estoque".to_string(),
+            permissions: vec![
+                "catalog:read".to_string(),
+                "warehouse:read".to_string(),
+                "warehouse:operate".to_string(),
+            ],
+            authenticated_at: now.clone(),
+            last_activity_at: now.clone(),
+            inactivity_timeout_minutes: 60,
+            auth_epoch: 1,
+        };
+
+        let services = std::sync::Arc::new(CoreServices::new(stores));
+
+        // Cadastra categoria e modelo com controle por quantidade
+        sqlx::query(
+            "INSERT INTO equipment_category (id, tenant_id, name, name_normalized, created_at, updated_at)
+             VALUES ('cat_cabos', ?, 'Cabos', 'cabos', ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let model_id = "mod_cabo_xlr_10m";
+        sqlx::query(
+            "INSERT INTO equipment_model (id, tenant_id, category_id, name, name_sort, search_text, control_mode, created_at, updated_at)
+             VALUES (?, ?, 'cat_cabos', 'Cabo XLR 10m', 'cabo xlr 10m', 'cabo xlr 10m', 'quantity', ?, ?)",
+        )
+        .bind(model_id)
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 1. Entrada de 10 unidades
+        services
+            .record_stock_movement(
+                &session,
+                &RecordStockMovementInput {
+                    equipment_model_id: model_id.to_string(),
+                    equipment_unit_id: None,
+                    from_warehouse_id: None,
+                    to_warehouse_id: Some(default_wh.id.clone()),
+                    movement_type: StockMovementType::PurchaseIn,
+                    quantity: 10,
+                    reason: "Compra de lote inicial de cabos".to_string(),
+                    reference_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        // 2. Retirada de 9 unidades, restando exatamente 1 unidade no depósito
+        services
+            .record_stock_movement(
+                &session,
+                &RecordStockMovementInput {
+                    equipment_model_id: model_id.to_string(),
+                    equipment_unit_id: None,
+                    from_warehouse_id: Some(default_wh.id.clone()),
+                    to_warehouse_id: None,
+                    movement_type: StockMovementType::RentalOut,
+                    quantity: 9,
+                    reason: "Locação de 9 cabos para festival".to_string(),
+                    reference_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let bal_before = services
+            .get_stock_balance(&session, &default_wh.id, model_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            bal_before.quantity_on_hand, 1,
+            "Deve restar exatamente 1 item"
+        );
+
+        // 3. Concorrência Crítica: 2 saídas simultâneas disputando o ÚLTIMO item
+        let (task1, task2) = tokio::join!(
+            {
+                let s = services.clone();
+                let sess = session.clone();
+                let wh = default_wh.id.clone();
+                async move {
+                    s.record_stock_movement(
+                        &sess,
+                        &RecordStockMovementInput {
+                            equipment_model_id: model_id.to_string(),
+                            equipment_unit_id: None,
+                            from_warehouse_id: Some(wh),
+                            to_warehouse_id: None,
+                            movement_type: StockMovementType::RentalOut,
+                            quantity: 1,
+                            reason: "Saída Concorrente 1 do último item".to_string(),
+                            reference_id: None,
+                        },
+                    )
+                    .await
+                }
+            },
+            {
+                let s = services.clone();
+                let sess = session.clone();
+                let wh = default_wh.id.clone();
+                async move {
+                    s.record_stock_movement(
+                        &sess,
+                        &RecordStockMovementInput {
+                            equipment_model_id: model_id.to_string(),
+                            equipment_unit_id: None,
+                            from_warehouse_id: Some(wh),
+                            to_warehouse_id: None,
+                            movement_type: StockMovementType::RentalOut,
+                            quantity: 1,
+                            reason: "Saída Concorrente 2 do último item".to_string(),
+                            reference_id: None,
+                        },
+                    )
+                    .await
+                }
+            }
+        );
+
+        // Exatamente UMA operação deve vencer e a outra DEVE falhar
+        let outcomes = vec![task1.is_ok(), task2.is_ok()];
+        let successes = outcomes.iter().filter(|&&ok| ok).count();
+        let failures = outcomes.iter().filter(|&&ok| !ok).count();
+        assert_eq!(
+            successes, 1,
+            "Exatamente uma das saídas simultâneas deve ter sucesso"
+        );
+        assert_eq!(
+            failures, 1,
+            "Exatamente uma das saídas simultâneas deve falhar por falta de saldo"
+        );
+
+        // 4. Saldo em mãos NUNCA fica negativo (deve ser exatamente 0)
+        let bal_after = services
+            .get_stock_balance(&session, &default_wh.id, model_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            bal_after.quantity_on_hand, 0,
+            "Saldo final deve ser exatamente 0 (nunca negativo)"
+        );
+
+        // 5. Conciliação com o livro-razão (soma dos movimentos = saldo)
+        let movements = services
+            .list_stock_movements(
+                &session,
+                &StockMovementFilter {
+                    equipment_model_id: Some(model_id.to_string()),
+                    warehouse_id: Some(default_wh.id.clone()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        let mut computed_balance: i64 = 0;
+        for m in &movements {
+            if m.to_warehouse_id.as_deref() == Some(&default_wh.id) {
+                computed_balance += m.quantity;
+            }
+            if m.from_warehouse_id.as_deref() == Some(&default_wh.id) {
+                computed_balance -= m.quantity;
+            }
+        }
+        assert_eq!(
+            computed_balance, bal_after.quantity_on_hand,
+            "A soma algébrica do livro-razão deve ser identicamente igual ao saldo em mãos"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_inventory_triggers_append_only_explicit_update_delete() {
+        let pool = init_memory_db().await.unwrap();
+        let store = SqliteStore::new(pool.clone()).into_bundle();
+        let tenant_id = ensure_default_tenant(store.tenants.as_ref(), store.branding.as_ref())
+            .await
+            .unwrap();
+        contract_system_roles(&store, &tenant_id).await;
+        let default_wh =
+            eventrent_core::ensure_default_inventory(&tenant_id, store.inventory.as_ref())
+                .await
+                .unwrap();
+
+        let now = Utc::now().to_rfc3339();
+        let role_id: String = sqlx::query_scalar("SELECT id FROM role WHERE tenant_id = ? LIMIT 1")
+            .bind(&tenant_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let user_id = "usr_append_only_op";
+        sqlx::query(
+            "INSERT INTO app_user (id, tenant_id, name, email, password_hash, role_id, active, created_at, updated_at)
+             VALUES (?, ?, 'Op Append Only', 'append@local.test', 'hash', ?, 1, ?, ?)",
+        )
+        .bind(user_id)
+        .bind(&tenant_id)
+        .bind(&role_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO equipment_category (id, tenant_id, name, name_normalized, created_at, updated_at)
+             VALUES ('cat_ao', ?, 'Vídeo', 'video', ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO equipment_model (id, tenant_id, category_id, name, name_sort, search_text, control_mode, created_at, updated_at)
+             VALUES ('mod_ao', ?, 'cat_ao', 'Painel LED P3', 'painel led p3', 'painel led p3', 'quantity', ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mov_id = "mov_immutable_001";
+        sqlx::query(
+            "INSERT INTO stock_movement (id, tenant_id, equipment_model_id, to_warehouse_id, movement_type, quantity, reason, performed_by_user_id, created_at)
+             VALUES (?, ?, 'mod_ao', ?, 'purchase_in', 50, 'Lote inicial painéis', ?, ?)",
+        )
+        .bind(mov_id)
+        .bind(&tenant_id)
+        .bind(&default_wh.id)
+        .bind(user_id)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Tentativa explícita de UPDATE: deve falhar com RAISE(ABORT)
+        let update_res = sqlx::query("UPDATE stock_movement SET quantity = 100 WHERE id = ?")
+            .bind(mov_id)
+            .execute(&pool)
+            .await;
+        assert!(
+            update_res.is_err(),
+            "UPDATE em stock_movement deve ser abortado pelo trigger trg_stock_movement_no_update"
+        );
+        let err_msg = format!("{}", update_res.unwrap_err());
+        assert!(
+            err_msg.contains("stock_movement é imutável") || err_msg.contains("append-only"),
+            "Mensagem do erro deve expressar imutabilidade append-only: {err_msg}"
+        );
+
+        // Tentativa explícita de DELETE: deve falhar com RAISE(ABORT)
+        let delete_res = sqlx::query("DELETE FROM stock_movement WHERE id = ?")
+            .bind(mov_id)
+            .execute(&pool)
+            .await;
+        assert!(
+            delete_res.is_err(),
+            "DELETE em stock_movement deve ser abortado pelo trigger trg_stock_movement_no_delete"
+        );
+        let del_err_msg = format!("{}", delete_res.unwrap_err());
+        assert!(
+            del_err_msg.contains("não podem ser excluídos"),
+            "Mensagem do erro deve expressar proibição de exclusão: {del_err_msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_inventory_financial_redaction_across_roles_owner_stock_tech() {
+        use eventrent_core::{
+            CatalogListFilter, ControlMode, CoreServices, CreateEquipmentModelInput, SessionInfo,
+        };
+
+        let pool = init_memory_db().await.unwrap();
+        let stores = SqliteStore::new(pool.clone()).into_bundle();
+        let tenant_id = ensure_default_tenant(stores.tenants.as_ref(), stores.branding.as_ref())
+            .await
+            .unwrap();
+        contract_system_roles(&stores, &tenant_id).await;
+        eventrent_core::ensure_default_inventory(&tenant_id, stores.inventory.as_ref())
+            .await
+            .unwrap();
+
+        let services = CoreServices::new(stores);
+        let now = Utc::now().to_rfc3339();
+
+        // Cadastra categoria
+        sqlx::query(
+            "INSERT INTO equipment_category (id, tenant_id, name, name_normalized, created_at, updated_at)
+             VALUES ('cat_fin_test', ?, 'Som', 'som', ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Provisiona usuários para foreign key de auditoria/criação
+        sqlx::query(
+            "INSERT INTO app_user (id, tenant_id, name, email, password_hash, role_id, active, created_at, updated_at)
+             VALUES ('usr_owner_fin', ?, 'Proprietário', 'owner@local.test', 'hash', (SELECT id FROM role WHERE tenant_id = ? AND slug = 'owner'), 1, ?, ?),
+                    ('usr_stock_fin', ?, 'Estoque', 'stock@local.test', 'hash', (SELECT id FROM role WHERE tenant_id = ? AND slug = 'warehouse'), 1, ?, ?),
+                    ('usr_tech_fin', ?, 'Técnico', 'tech@local.test', 'hash', (SELECT id FROM role WHERE tenant_id = ? AND slug = 'technician'), 1, ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .bind(&tenant_id)
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .bind(&tenant_id)
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 1. Sessão de Proprietário (possui finance:read)
+        let owner_session = SessionInfo {
+            user_id: "usr_owner_fin".to_string(),
+            tenant_id: tenant_id.clone(),
+            name: "Proprietário".to_string(),
+            email: "owner@test.local".to_string(),
+            role_id: "role_owner".to_string(),
+            role_name: "Proprietário".to_string(),
+            role_slug: "proprietario".to_string(),
+            permissions: vec![
+                "catalog:read".to_string(),
+                "catalog:manage".to_string(),
+                "warehouse:read".to_string(),
+                "warehouse:operate".to_string(),
+                "finance:read".to_string(),
+                "finance:manage".to_string(),
+            ],
+            authenticated_at: now.clone(),
+            last_activity_at: now.clone(),
+            inactivity_timeout_minutes: 60,
+            auth_epoch: 1,
+        };
+
+        // 2. Sessão de Estoque (NÃO possui finance:read)
+        let stock_session = SessionInfo {
+            user_id: "usr_stock_fin".to_string(),
+            tenant_id: tenant_id.clone(),
+            name: "Estoque".to_string(),
+            email: "stock@test.local".to_string(),
+            role_id: "role_stock".to_string(),
+            role_name: "Estoque".to_string(),
+            role_slug: "estoque".to_string(),
+            permissions: vec![
+                "catalog:read".to_string(),
+                "catalog:manage".to_string(),
+                "warehouse:read".to_string(),
+                "warehouse:operate".to_string(),
+            ],
+            authenticated_at: now.clone(),
+            last_activity_at: now.clone(),
+            inactivity_timeout_minutes: 60,
+            auth_epoch: 1,
+        };
+
+        // 3. Sessão de Técnico (NÃO possui finance:read)
+        let tech_session = SessionInfo {
+            user_id: "usr_tech_fin".to_string(),
+            tenant_id: tenant_id.clone(),
+            name: "Técnico".to_string(),
+            email: "tech@test.local".to_string(),
+            role_id: "role_tech".to_string(),
+            role_name: "Técnico".to_string(),
+            role_slug: "tecnico".to_string(),
+            permissions: vec!["catalog:read".to_string(), "warehouse:read".to_string()],
+            authenticated_at: now.clone(),
+            last_activity_at: now.clone(),
+            inactivity_timeout_minutes: 60,
+            auth_epoch: 1,
+        };
+
+        // Criação de modelo com valores confidenciais via sessão de Estoque
+        let created_by_stock = services
+            .create_equipment_model(
+                &stock_session,
+                &CreateEquipmentModelInput {
+                    category_id: "cat_fin_test".to_string(),
+                    brand_id: None,
+                    name: "Subwoofer 18 polegadas".to_string(),
+                    model_code: None,
+                    sku: Some("SKU-SUB-18".to_string()),
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: Some(15000),
+                    replacement_value_cents: Some(850000),
+                    cost_price_cents: Some(420000),
+                    active: true,
+                    attribute_values: vec![],
+                },
+            )
+            .await
+            .unwrap();
+
+        // O retorno de create_equipment_model para Estoque já deve vir sanitizado
+        assert_eq!(
+            created_by_stock.model.cost_price_cents, None,
+            "Estoque não deve ver cost_price_cents no retorno de criação"
+        );
+        assert_eq!(
+            created_by_stock.model.replacement_value_cents, None,
+            "Estoque não deve ver replacement_value_cents no retorno de criação"
+        );
+
+        let model_id = &created_by_stock.model.id;
+
+        // A) get_equipment_model
+        let model_owner = services
+            .get_equipment_model(&owner_session, model_id)
+            .await
+            .unwrap();
+        assert_eq!(model_owner.model.cost_price_cents, Some(420000));
+        assert_eq!(model_owner.model.replacement_value_cents, Some(850000));
+
+        let model_stock = services
+            .get_equipment_model(&stock_session, model_id)
+            .await
+            .unwrap();
+        assert_eq!(model_stock.model.cost_price_cents, None);
+        assert_eq!(model_stock.model.replacement_value_cents, None);
+
+        let model_tech = services
+            .get_equipment_model(&tech_session, model_id)
+            .await
+            .unwrap();
+        assert_eq!(model_tech.model.cost_price_cents, None);
+        assert_eq!(model_tech.model.replacement_value_cents, None);
+
+        // B) list_equipment_models
+        let list_owner = services
+            .list_equipment_models(&owner_session, &CatalogListFilter::default())
+            .await
+            .unwrap();
+        let item_owner = list_owner
+            .items
+            .iter()
+            .find(|i| &i.model.id == model_id)
+            .unwrap();
+        assert_eq!(item_owner.model.cost_price_cents, Some(420000));
+        assert_eq!(item_owner.model.replacement_value_cents, Some(850000));
+
+        let list_stock = services
+            .list_equipment_models(&stock_session, &CatalogListFilter::default())
+            .await
+            .unwrap();
+        let item_stock = list_stock
+            .items
+            .iter()
+            .find(|i| &i.model.id == model_id)
+            .unwrap();
+        assert_eq!(item_stock.model.cost_price_cents, None);
+        assert_eq!(item_stock.model.replacement_value_cents, None);
+
+        let list_tech = services
+            .list_equipment_models(&tech_session, &CatalogListFilter::default())
+            .await
+            .unwrap();
+        let item_tech = list_tech
+            .items
+            .iter()
+            .find(|i| &i.model.id == model_id)
+            .unwrap();
+        assert_eq!(item_tech.model.cost_price_cents, None);
+        assert_eq!(item_tech.model.replacement_value_cents, None);
+    }
+
+    #[tokio::test]
+    async fn test_inventory_block_control_mode_alteration_when_units_or_movements_exist() {
+        use eventrent_core::{
+            ControlMode, CoreError, CoreServices, CreateEquipmentModelInput,
+            CreateEquipmentUnitInput, PhysicalCondition, RecordStockMovementInput, SessionInfo,
+            StockMovementType, UpdateEquipmentModelInput,
+        };
+
+        let pool = init_memory_db().await.unwrap();
+        let stores = SqliteStore::new(pool.clone()).into_bundle();
+        let tenant_id = ensure_default_tenant(stores.tenants.as_ref(), stores.branding.as_ref())
+            .await
+            .unwrap();
+        contract_system_roles(&stores, &tenant_id).await;
+        let default_wh =
+            eventrent_core::ensure_default_inventory(&tenant_id, stores.inventory.as_ref())
+                .await
+                .unwrap();
+
+        let services = CoreServices::new(stores);
+        let now = Utc::now().to_rfc3339();
+
+        let session = SessionInfo {
+            user_id: "usr_admin_cat".to_string(),
+            tenant_id: tenant_id.clone(),
+            name: "Admin Catálogo".to_string(),
+            email: "admin@test.local".to_string(),
+            role_id: "role_owner".to_string(),
+            role_name: "Proprietário".to_string(),
+            role_slug: "proprietario".to_string(),
+            permissions: vec![
+                "catalog:read".to_string(),
+                "catalog:manage".to_string(),
+                "warehouse:read".to_string(),
+                "warehouse:operate".to_string(),
+                "finance:read".to_string(),
+            ],
+            authenticated_at: now.clone(),
+            last_activity_at: now.clone(),
+            inactivity_timeout_minutes: 60,
+            auth_epoch: 1,
+        };
+
+        sqlx::query(
+            "INSERT INTO app_user (id, tenant_id, name, email, password_hash, role_id, active, created_at, updated_at)
+             VALUES (?, ?, 'Admin', 'admin@local.test', 'hash', (SELECT id FROM role WHERE tenant_id = ? AND slug = 'owner'), 1, ?, ?)",
+        )
+        .bind("usr_admin_cat")
+        .bind(&tenant_id)
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO equipment_category (id, tenant_id, name, name_normalized, created_at, updated_at)
+             VALUES ('cat_cm_test', ?, 'Estruturas', 'estruturas', ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 1. Cenário A: Modelo com Unidade Física Serializada
+        let model_a = services
+            .create_equipment_model(
+                &session,
+                &CreateEquipmentModelInput {
+                    category_id: "cat_cm_test".to_string(),
+                    brand_id: None,
+                    name: "Praticável Telescópico 2x1m".to_string(),
+                    model_code: None,
+                    sku: Some("SKU-PRAT-01".to_string()),
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: None,
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
+                    active: true,
+                    attribute_values: vec![],
+                },
+            )
+            .await
+            .unwrap();
+
+        services
+            .create_equipment_unit(
+                &session,
+                &CreateEquipmentUnitInput {
+                    equipment_model_id: model_a.model.id.clone(),
+                    warehouse_id: Some(default_wh.id.clone()),
+                    serial_number: Some("SN-PRAT-100".to_string()),
+                    physical_condition: Some(PhysicalCondition::New),
+                    notes: None,
+                    acquisition_date: None,
+                    warranty_expires_at: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Tentativa de alterar control_mode de Serialized para Quantity deve FALHAR
+        let alter_err_a = services
+            .update_equipment_model(
+                &session,
+                &model_a.model.id,
+                &UpdateEquipmentModelInput {
+                    category_id: "cat_cm_test".to_string(),
+                    brand_id: None,
+                    name: "Praticável Telescópico 2x1m".to_string(),
+                    model_code: None,
+                    sku: Some("SKU-PRAT-01".to_string()),
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Quantity,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: None,
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
+                    active: true,
+                    attribute_values: vec![],
+                    expected_updated_at: model_a.model.updated_at.clone(),
+                },
+            )
+            .await;
+        assert!(matches!(alter_err_a, Err(CoreError::Validation(_))));
+
+        // 2. Cenário B: Modelo com Movimentação de Estoque
+        let model_b = services
+            .create_equipment_model(
+                &session,
+                &CreateEquipmentModelInput {
+                    category_id: "cat_cm_test".to_string(),
+                    brand_id: None,
+                    name: "Abraçadeira de Alumínio".to_string(),
+                    model_code: None,
+                    sku: Some("SKU-ABRAC-01".to_string()),
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Quantity,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: None,
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
+                    active: true,
+                    attribute_values: vec![],
+                },
+            )
+            .await
+            .unwrap();
+
+        services
+            .record_stock_movement(
+                &session,
+                &RecordStockMovementInput {
+                    equipment_model_id: model_b.model.id.clone(),
+                    equipment_unit_id: None,
+                    from_warehouse_id: None,
+                    to_warehouse_id: Some(default_wh.id.clone()),
+                    movement_type: StockMovementType::PurchaseIn,
+                    quantity: 100,
+                    reason: "Compra de 100 abraçadeiras".to_string(),
+                    reference_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Tentativa de alterar control_mode de Quantity para Serialized deve FALHAR
+        let alter_err_b = services
+            .update_equipment_model(
+                &session,
+                &model_b.model.id,
+                &UpdateEquipmentModelInput {
+                    category_id: "cat_cm_test".to_string(),
+                    brand_id: None,
+                    name: "Abraçadeira de Alumínio".to_string(),
+                    model_code: None,
+                    sku: Some("SKU-ABRAC-01".to_string()),
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: None,
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
+                    active: true,
+                    attribute_values: vec![],
+                    expected_updated_at: model_b.model.updated_at.clone(),
+                },
+            )
+            .await;
+        assert!(matches!(alter_err_b, Err(CoreError::Validation(_))));
+
+        // 3. Cenário C: Modelo sem Unidades e sem Movimentações
+        let model_c = services
+            .create_equipment_model(
+                &session,
+                &CreateEquipmentModelInput {
+                    category_id: "cat_cm_test".to_string(),
+                    brand_id: None,
+                    name: "Talha Manual 1 Tonelada".to_string(),
+                    model_code: None,
+                    sku: Some("SKU-TALHA-01".to_string()),
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: None,
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
+                    active: true,
+                    attribute_values: vec![],
+                },
+            )
+            .await
+            .unwrap();
+
+        // Alteração permitida com sucesso
+        let updated_c = services
+            .update_equipment_model(
+                &session,
+                &model_c.model.id,
+                &UpdateEquipmentModelInput {
+                    category_id: "cat_cm_test".to_string(),
+                    brand_id: None,
+                    name: "Talha Manual 1 Tonelada".to_string(),
+                    model_code: None,
+                    sku: Some("SKU-TALHA-01".to_string()),
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Quantity,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: None,
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
+                    active: true,
+                    attribute_values: vec![],
+                    expected_updated_at: model_c.model.updated_at.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated_c.model.control_mode, ControlMode::Quantity);
+    }
+
+    #[tokio::test]
+    async fn test_inventory_partial_unique_constraints_and_soft_delete() {
+        let pool = init_memory_db().await.unwrap();
+        let store = SqliteStore::new(pool.clone()).into_bundle();
+        let tenant_id = ensure_default_tenant(store.tenants.as_ref(), store.branding.as_ref())
+            .await
+            .unwrap();
+        contract_system_roles(&store, &tenant_id).await;
+        let default_wh =
+            eventrent_core::ensure_default_inventory(&tenant_id, store.inventory.as_ref())
+                .await
+                .unwrap();
+
+        let now = Utc::now().to_rfc3339();
+
+        // 1. Constraint parcial: warehouse.code único por tenant onde deleted_at IS NULL
+        let wh_code_dup_err = sqlx::query(
+            "INSERT INTO warehouse (id, tenant_id, name, code, is_default, active, created_at, updated_at)
+             VALUES ('wh_dup_code', ?, 'Outro Principal', 'PRINCIPAL', 0, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        )
+        .bind(&tenant_id)
+        .execute(&pool)
+        .await;
+        assert!(
+            wh_code_dup_err.is_err(),
+            "Código de depósito duplicado ativo deve violar idx_warehouse_tenant_code_active"
+        );
+
+        // Soft delete no default permite novo com mesmo código
+        sqlx::query("UPDATE warehouse SET deleted_at = ? WHERE id = ?")
+            .bind(&now)
+            .bind(&default_wh.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let wh_code_after_del = sqlx::query(
+            "INSERT INTO warehouse (id, tenant_id, name, code, is_default, active, created_at, updated_at)
+             VALUES ('wh_dup_code', ?, 'Outro Principal', 'PRINCIPAL', 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        )
+        .bind(&tenant_id)
+        .execute(&pool)
+        .await;
+        assert!(
+            wh_code_after_del.is_ok(),
+            "Após soft delete, mesmo código de depósito deve ser aceito"
+        );
+
+        // Prepara modelo e categoria para testes de unidades
+        sqlx::query(
+            "INSERT INTO equipment_category (id, tenant_id, name, name_normalized, created_at, updated_at)
+             VALUES ('cat_partial_test', ?, 'Luz', 'luz', ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO equipment_model (id, tenant_id, category_id, name, name_sort, search_text, control_mode, created_at, updated_at)
+             VALUES ('mod_m1', ?, 'cat_partial_test', 'Par LED 64', 'par led 64', 'par led 64', 'serialized', ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO equipment_model (id, tenant_id, category_id, name, name_sort, search_text, control_mode, created_at, updated_at)
+             VALUES ('mod_m2', ?, 'cat_partial_test', 'Strobo 1500W', 'strobo 1500w', 'strobo 1500w', 'serialized', ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 2. Constraint parcial: equipment_unit.patrimony_tag único por tenant onde deleted_at IS NULL
+        sqlx::query(
+            "INSERT INTO equipment_unit (id, tenant_id, equipment_model_id, warehouse_id, patrimony_tag, serial_number, created_at, updated_at)
+             VALUES ('u_01', ?, 'mod_m1', 'wh_dup_code', 'EQ999001', 'SN-AAA', ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let dup_tag_err = sqlx::query(
+            "INSERT INTO equipment_unit (id, tenant_id, equipment_model_id, warehouse_id, patrimony_tag, serial_number, created_at, updated_at)
+             VALUES ('u_02', ?, 'mod_m2', 'wh_dup_code', 'EQ999001', 'SN-BBB', ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await;
+        assert!(
+            dup_tag_err.is_err(),
+            "Patrimônio duplicado ativo deve violar idx_equipment_unit_tenant_patrimony_active"
+        );
+
+        // 3. Constraint parcial: equipment_unit (tenant_id, equipment_model_id, serial_number) WHERE serial_number IS NOT NULL AND deleted_at IS NULL
+        // Mesmo modelo com mesmo serial -> FALHA
+        let dup_serial_same_model_err = sqlx::query(
+            "INSERT INTO equipment_unit (id, tenant_id, equipment_model_id, warehouse_id, patrimony_tag, serial_number, created_at, updated_at)
+             VALUES ('u_03', ?, 'mod_m1', 'wh_dup_code', 'EQ999002', 'SN-AAA', ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await;
+        assert!(
+            dup_serial_same_model_err.is_err(),
+            "Número de série duplicado no mesmo modelo deve violar idx_equipment_unit_tenant_model_serial_active"
+        );
+
+        // Modelo DIFERENTE com mesmo serial -> SUCESSO (série é única POR modelo)
+        let dup_serial_diff_model_res = sqlx::query(
+            "INSERT INTO equipment_unit (id, tenant_id, equipment_model_id, warehouse_id, patrimony_tag, serial_number, created_at, updated_at)
+             VALUES ('u_04', ?, 'mod_m2', 'wh_dup_code', 'EQ999003', 'SN-AAA', ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await;
+        assert!(
+            dup_serial_diff_model_res.is_ok(),
+            "Mesmo número de série em modelos diferentes deve ser permitido"
+        );
+
+        // Serial NULL repetido no mesmo modelo -> SUCESSO (índice parcial filtra serial_number IS NOT NULL)
+        let null_serial_1 = sqlx::query(
+            "INSERT INTO equipment_unit (id, tenant_id, equipment_model_id, warehouse_id, patrimony_tag, serial_number, created_at, updated_at)
+             VALUES ('u_05', ?, 'mod_m1', 'wh_dup_code', 'EQ999004', NULL, ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await;
+        assert!(null_serial_1.is_ok());
+
+        let null_serial_2 = sqlx::query(
+            "INSERT INTO equipment_unit (id, tenant_id, equipment_model_id, warehouse_id, patrimony_tag, serial_number, created_at, updated_at)
+             VALUES ('u_06', ?, 'mod_m1', 'wh_dup_code', 'EQ999005', NULL, ?, ?)",
+        )
+        .bind(&tenant_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await;
+        assert!(
+            null_serial_2.is_ok(),
+            "Múltiplas unidades com serial NULL devem ser permitidas"
         );
     }
 }

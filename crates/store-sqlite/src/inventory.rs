@@ -408,17 +408,27 @@ impl InventoryStore for SqliteStore {
     }
 
     async fn next_patrimony_tag(&self, tenant_id: &str) -> Result<String> {
-        let query = sqlx::query(
+        let insert_query = sqlx::query(
             r#"
             INSERT INTO equipment_patrimony_seq (tenant_id, last_number)
-            VALUES (?, 1)
-            ON CONFLICT(tenant_id) DO UPDATE SET last_number = equipment_patrimony_seq.last_number + 1
+            VALUES (?, 0)
+            ON CONFLICT(tenant_id) DO NOTHING
+            "#,
+        )
+        .bind(tenant_id);
+        self.execute(insert_query).await?;
+
+        let update_query = sqlx::query(
+            r#"
+            UPDATE equipment_patrimony_seq
+            SET last_number = last_number + 1
+            WHERE tenant_id = ?
             RETURNING last_number
             "#,
         )
         .bind(tenant_id);
 
-        let row = self.fetch_one(query).await?;
+        let row = self.fetch_one(update_query).await?;
         let last_num: i64 = row.get("last_number");
         Ok(format_patrimony_tag(last_num))
     }

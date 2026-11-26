@@ -715,3 +715,53 @@ impl CoreServices {
         }
     }
 }
+
+/// Garante de forma idempotente a existência do depósito padrão ("Depósito principal", code = "PRINCIPAL")
+/// para um tenant.
+pub async fn ensure_default_inventory(
+    tenant_id: &str,
+    inventory: &dyn crate::store::InventoryStore,
+) -> Result<Warehouse> {
+    let warehouses = inventory.list_warehouses(tenant_id, true).await?;
+    if let Some(default_wh) = warehouses
+        .iter()
+        .find(|w| w.is_default && w.deleted_at.is_none())
+    {
+        return Ok(default_wh.clone());
+    }
+
+    if let Some(wh_principal) = warehouses
+        .iter()
+        .find(|w| w.code == "PRINCIPAL" && w.deleted_at.is_none())
+    {
+        inventory
+            .set_default_warehouse(tenant_id, &wh_principal.id)
+            .await?;
+        let mut wh = wh_principal.clone();
+        wh.is_default = true;
+        return Ok(wh);
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let warehouse = Warehouse {
+        id: Uuid::now_v7().to_string(),
+        tenant_id: tenant_id.to_string(),
+        name: "Depósito principal".to_string(),
+        code: "PRINCIPAL".to_string(),
+        description: Some("Depósito padrão inicial da empresa".to_string()),
+        address_line1: None,
+        address_line2: None,
+        city: None,
+        state: None,
+        postal_code: None,
+        is_default: true,
+        active: true,
+        created_at: now.clone(),
+        updated_at: now,
+        deleted_at: None,
+        created_by: None,
+    };
+
+    inventory.create_warehouse(&warehouse).await?;
+    Ok(warehouse)
+}

@@ -1073,7 +1073,7 @@ impl CoreServices {
         let now_clone = now.clone();
         let model_id_clone = model_id.clone();
 
-        let result = self
+        let mut result = self
             .run_transaction(|stores| {
                 let session = session_clone.clone();
                 let input = input_clone.clone();
@@ -1248,6 +1248,7 @@ impl CoreServices {
             })
             .await?;
 
+        self.sanitize_model_financials(session, &mut result.model);
         Ok(result)
     }
 
@@ -1292,7 +1293,7 @@ impl CoreServices {
         let brand_id_clone = brand_id.clone();
         let now_clone = now.clone();
 
-        let result = self
+        let mut result = self
             .run_transaction(|stores| {
                 let session = session_clone.clone();
                 let id = id_str.clone();
@@ -1314,6 +1315,44 @@ impl CoreServices {
                             "O modelo foi alterado por outra pessoa. Recarregue e tente novamente."
                                 .to_string(),
                         ));
+                    }
+
+                    if existing.control_mode != input.control_mode {
+                        let units = stores
+                            .inventory()
+                            .list_units(
+                                &session.tenant_id,
+                                &crate::domain::inventory::EquipmentUnitFilter {
+                                    equipment_model_id: Some(existing.id.clone()),
+                                    active_only: Some(false),
+                                    ..Default::default()
+                                },
+                            )
+                            .await?;
+                        if !units.is_empty() {
+                            return Err(CoreError::Validation(
+                                "Não é permitido alterar o modo de controle de um modelo que já possui unidades cadastradas."
+                                    .to_string(),
+                            ));
+                        }
+
+                        let movements = stores
+                            .inventory()
+                            .list_stock_movements(
+                                &session.tenant_id,
+                                &crate::domain::inventory::StockMovementFilter {
+                                    equipment_model_id: Some(existing.id.clone()),
+                                    limit: Some(1),
+                                    ..Default::default()
+                                },
+                            )
+                            .await?;
+                        if !movements.is_empty() {
+                            return Err(CoreError::Validation(
+                                "Não é permitido alterar o modo de controle de um modelo que já possui movimentações de estoque registradas."
+                                    .to_string(),
+                            ));
+                        }
                     }
 
                     let categories = stores
@@ -1515,6 +1554,7 @@ impl CoreServices {
             })
             .await?;
 
+        self.sanitize_model_financials(session, &mut result.model);
         Ok(result)
     }
 

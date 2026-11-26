@@ -68,7 +68,7 @@ A estrutura física de armazenamento é modelada na tabela `warehouse`:
 - **Atributos**: `id`, `tenant_id`, `name`, `code`, `description`, `address_line1`, `address_line2`, `city`, `state`, `postal_code`, `is_default`, `is_active`, `created_at`, `updated_at`.
 - **Regra do Depósito Padrão (`is_default`)**:
   - Cada tenant DEVE possuir exatamente **um** depósito padrão.
-  - Ao criar o tenant inicial (migração/bootstrap), o depósito `Galpão Principal` é provisionado com `is_default = 1`.
+  - Ao inicializar o tenant (via rotina idempotente `ensure_default_inventory`), o depósito `Depósito principal` (código `PRINCIPAL`) é provisionado com `is_default = 1`. A migração SQL permanece puramente estrutural (DDL).
   - Ao marcar um depósito como `is_default = 1`, o sistema remove automaticamente a flag de outros depósitos do mesmo tenant dentro de transação atômica.
   - Um índice único parcial SQLite reforça no banco que não pode haver mais de um depósito padrão ativo: `CREATE UNIQUE INDEX idx_warehouse_single_default ON warehouse(tenant_id) WHERE is_default = 1`.
 - **Integridade Referencial na Exclusão**:

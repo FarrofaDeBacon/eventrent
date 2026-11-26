@@ -3,6 +3,8 @@ mod catalog;
 mod inventory;
 mod media;
 
+pub use inventory::ensure_default_inventory;
+
 use crate::domain::{
     build_customer_search_text, build_name_sort, build_venue_name_sort, build_venue_search_text,
     mask_email_for_audit, mask_individual_name_for_audit, normalize_for_search,
@@ -543,6 +545,7 @@ impl CoreServices {
                 let branding = stores.branding().save(&tenant_id, &branding_input).await?;
 
                 ensure_system_roles(&tenant_id, stores.roles(), stores.audit()).await?;
+                ensure_default_inventory(&tenant_id, stores.inventory()).await?;
 
                 let owner_role = stores
                     .roles()

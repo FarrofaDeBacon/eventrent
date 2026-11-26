@@ -5,7 +5,8 @@ pub mod guards;
 
 use chrono::{DateTime, Utc};
 use eventrent_core::{
-    ensure_default_tenant, ensure_system_roles, AppConfig, CoreServices, SessionInfo,
+    ensure_default_inventory, ensure_default_tenant, ensure_system_roles, AppConfig, CoreServices,
+    SessionInfo,
 };
 use eventrent_media_fs::FsMediaStore;
 use eventrent_store_sqlite::{init_db, SqliteStore};
@@ -441,6 +442,16 @@ async fn initialize_app(app_handle: &AppHandle) -> Result<(AppState, PathBuf), (
             log_dir_display.clone(),
         )
     })?;
+
+    ensure_default_inventory(&default_tenant_id, store_bundle.inventory.as_ref())
+        .await
+        .map_err(|e| {
+            tracing::error!("Erro crítico ao garantir inventário padrão: {}", e);
+            (
+                format!("Falha ao inicializar depósito padrão do sistema: {e}"),
+                log_dir_display.clone(),
+            )
+        })?;
 
     tracing::info!(
         "Banco SQLite, tenant padrão ({}) e perfis de sistema verificados com sucesso",

@@ -73,6 +73,10 @@ CREATE UNIQUE INDEX idx_equipment_unit_tenant_patrimony_active
     ON equipment_unit (tenant_id, patrimony_tag)
     WHERE deleted_at IS NULL;
 
+CREATE UNIQUE INDEX idx_equipment_unit_tenant_model_serial_active
+    ON equipment_unit (tenant_id, equipment_model_id, serial_number)
+    WHERE serial_number IS NOT NULL AND deleted_at IS NULL;
+
 CREATE INDEX idx_equipment_unit_tenant_model_status
     ON equipment_unit (tenant_id, equipment_model_id, status)
     WHERE deleted_at IS NULL;
@@ -177,72 +181,3 @@ CREATE TABLE equipment_unit_media (
 CREATE INDEX idx_equipment_unit_media_unit
     ON equipment_unit_media (tenant_id, equipment_unit_id);
 
--- 7. Provisionamento Automático de Depósito Padrão e Sequência para Novos Tenants
-CREATE TRIGGER trg_tenant_create_default_warehouse
-AFTER INSERT ON tenant
-BEGIN
-    INSERT OR IGNORE INTO warehouse (
-        id,
-        tenant_id,
-        name,
-        code,
-        description,
-        is_default,
-        active,
-        created_at,
-        updated_at
-    )
-    VALUES (
-        'wh_' || substr(NEW.id, 1, 8),
-        NEW.id,
-        'Galpão Principal',
-        'PRINCIPAL',
-        'Depósito padrão inicial da empresa',
-        1,
-        1,
-        CURRENT_TIMESTAMP,
-        CURRENT_TIMESTAMP
-    );
-
-    INSERT OR IGNORE INTO equipment_patrimony_seq (
-        tenant_id,
-        last_number
-    )
-    VALUES (
-        NEW.id,
-        0
-    );
-END;
-
--- 8. Provisionamento de Depósito Padrão e Sequência para Tenants Já Existentes
-INSERT OR IGNORE INTO warehouse (
-    id,
-    tenant_id,
-    name,
-    code,
-    description,
-    is_default,
-    active,
-    created_at,
-    updated_at
-)
-SELECT
-    'wh_' || substr(id, 1, 8),
-    id,
-    'Galpão Principal',
-    'PRINCIPAL',
-    'Depósito padrão inicial da empresa',
-    1,
-    1,
-    CURRENT_TIMESTAMP,
-    CURRENT_TIMESTAMP
-FROM tenant;
-
-INSERT OR IGNORE INTO equipment_patrimony_seq (
-    tenant_id,
-    last_number
-)
-SELECT
-    id,
-    0
-FROM tenant;
