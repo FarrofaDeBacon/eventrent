@@ -473,7 +473,7 @@ pub async fn ensure_default_inventory(
         );
 
         // Exatamente UMA operação deve vencer e a outra DEVE falhar
-        let outcomes = vec![task1.is_ok(), task2.is_ok()];
+        let outcomes = [task1.is_ok(), task2.is_ok()];
         let successes = outcomes.iter().filter(|&&ok| ok).count();
         let failures = outcomes.iter().filter(|&&ok| !ok).count();
         assert_eq!(
