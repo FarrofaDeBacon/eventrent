@@ -14,6 +14,7 @@ use crate::domain::catalog::{
     InheritedAttributeDefinition, SuggestedCategoriesResult, UpdateAttributeDefinitionInput,
     UpdateBrandInput, UpdateCategoryInput, UpdateEquipmentModelInput, MAX_ATTRIBUTES_PER_CATEGORY,
 };
+use crate::domain::inventory::can_manage_financials;
 use crate::domain::permission::{PERM_CATALOG_MANAGE, PERM_CATALOG_READ};
 use crate::domain::user::SessionInfo;
 use crate::error::{CoreError, Result};
@@ -1057,6 +1058,15 @@ impl CoreServices {
             input.cost_price_cents,
         )?;
 
+        if (input.replacement_value_cents.is_some() || input.cost_price_cents.is_some())
+            && !can_manage_financials(session)
+        {
+            return Err(CoreError::Forbidden(
+                "Permissão insuficiente para definir valores financeiros do modelo (requer 'finance:manage' ou Proprietário)."
+                    .to_string(),
+            ));
+        }
+
         let brand_id = input
             .brand_id
             .as_deref()
@@ -1278,6 +1288,15 @@ impl CoreServices {
             input.cost_price_cents,
         )?;
 
+        if (input.replacement_value_cents.is_some() || input.cost_price_cents.is_some())
+            && !can_manage_financials(session)
+        {
+            return Err(CoreError::Forbidden(
+                "Permissão insuficiente para definir valores financeiros do modelo (requer 'finance:manage' ou Proprietário)."
+                    .to_string(),
+            ));
+        }
+
         let brand_id = input
             .brand_id
             .as_deref()
@@ -1350,6 +1369,17 @@ impl CoreServices {
                         if !movements.is_empty() {
                             return Err(CoreError::Validation(
                                 "Não é permitido alterar o modo de controle de um modelo que já possui movimentações de estoque registradas."
+                                    .to_string(),
+                            ));
+                        }
+
+                        let balances = stores
+                            .inventory()
+                            .list_stock_balances_by_model(&session.tenant_id, &existing.id)
+                            .await?;
+                        if balances.iter().any(|b| b.quantity_on_hand > 0 || b.quantity_maintenance > 0) {
+                            return Err(CoreError::Validation(
+                                "Não é permitido alterar o modo de controle de um modelo que possui saldo de estoque."
                                     .to_string(),
                             ));
                         }

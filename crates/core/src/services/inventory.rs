@@ -1,8 +1,9 @@
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use crate::domain::catalog::ControlMode;
 use crate::domain::inventory::*;
-use crate::domain::permission::{PERM_FINANCE_READ, PERM_WAREHOUSE_OPERATE, PERM_WAREHOUSE_READ};
+use crate::domain::permission::{PERM_INVENTORY_MANAGE, PERM_INVENTORY_READ};
 use crate::domain::user::SessionInfo;
 use crate::error::{CoreError, Result};
 use crate::services::CoreServices;
@@ -17,7 +18,7 @@ impl CoreServices {
         session: &SessionInfo,
         include_inactive: bool,
     ) -> Result<Vec<Warehouse>> {
-        self.check_session_and_permission(session, PERM_WAREHOUSE_READ)?;
+        self.check_session_and_permission(session, PERM_INVENTORY_READ)?;
         self.stores
             .inventory
             .list_warehouses(&session.tenant_id, include_inactive)
@@ -25,7 +26,7 @@ impl CoreServices {
     }
 
     pub async fn get_warehouse(&self, session: &SessionInfo, id: &str) -> Result<Warehouse> {
-        self.check_session_and_permission(session, PERM_WAREHOUSE_READ)?;
+        self.check_session_and_permission(session, PERM_INVENTORY_READ)?;
         self.stores
             .inventory
             .find_warehouse_by_id(&session.tenant_id, id)
@@ -38,15 +39,16 @@ impl CoreServices {
         session: &SessionInfo,
         input: &CreateWarehouseInput,
     ) -> Result<Warehouse> {
-        self.check_session_and_permission(session, PERM_WAREHOUSE_OPERATE)?;
+        self.check_session_and_permission(session, PERM_INVENTORY_MANAGE)?;
         validate_warehouse_input(&input.name, &input.code)?;
 
         let now = Utc::now().to_rfc3339();
+        let code = input.code.trim().to_uppercase();
         let warehouse = Warehouse {
             id: Uuid::now_v7().to_string(),
             tenant_id: session.tenant_id.clone(),
             name: input.name.trim().to_string(),
-            code: input.code.trim().to_uppercase(),
+            code: code.clone(),
             description: input.description.as_ref().map(|d| d.trim().to_string()),
             address_line1: input.address_line1.as_ref().map(|a| a.trim().to_string()),
             address_line2: input.address_line2.as_ref().map(|a| a.trim().to_string()),
@@ -67,6 +69,19 @@ impl CoreServices {
             let session = session_clone.clone();
             let wh = wh_clone.clone();
             Box::pin(async move {
+                if let Some(existing) = stores
+                    .inventory()
+                    .find_warehouse_by_code(&session.tenant_id, &wh.code)
+                    .await?
+                {
+                    if existing.deleted_at.is_none() {
+                        return Err(CoreError::Conflict(format!(
+                            "Já existe um depósito com o código '{}'.",
+                            wh.code
+                        )));
+                    }
+                }
+
                 if wh.is_default {
                     stores
                         .inventory()
@@ -88,54 +103,93 @@ impl CoreServices {
         id: &str,
         input: &UpdateWarehouseInput,
     ) -> Result<Warehouse> {
-        self.check_session_and_permission(session, PERM_WAREHOUSE_OPERATE)?;
+        self.check_session_and_permission(session, PERM_INVENTORY_MANAGE)?;
         validate_warehouse_input(&input.name, &input.code)?;
 
-        let mut wh = self.get_warehouse(session, id).await?;
-        wh.name = input.name.trim().to_string();
-        wh.code = input.code.trim().to_uppercase();
-        wh.description = input.description.as_ref().map(|d| d.trim().to_string());
-        wh.address_line1 = input.address_line1.as_ref().map(|a| a.trim().to_string());
-        wh.address_line2 = input.address_line2.as_ref().map(|a| a.trim().to_string());
-        wh.city = input.city.as_ref().map(|c| c.trim().to_string());
-        wh.state = input.state.as_ref().map(|s| s.trim().to_uppercase());
-        wh.postal_code = input.postal_code.as_ref().map(|p| p.trim().to_string());
-        if let Some(act) = input.active {
-            wh.active = act;
-        }
-        wh.updated_at = Utc::now().to_rfc3339();
+        let session_clone = session.clone();
+        let target_id = id.to_string();
+        let input_clone = input.clone();
 
-        let wh_clone = wh.clone();
         self.run_transaction(|stores| {
-            let wh = wh_clone.clone();
+            let session = session_clone.clone();
+            let id = target_id.clone();
+            let inp = input_clone.clone();
             Box::pin(async move {
-                stores.inventory().update_warehouse(&wh).await?;
-                Ok(())
+                let existing = stores
+                    .inventory()
+                    .find_warehouse_by_id(&session.tenant_id, &id)
+                    .await?
+                    .ok_or_else(|| CoreError::NotFound(format!("Depósito '{id}' não encontrado.")))?;
+
+                if existing.updated_at != inp.expected_updated_at {
+                    return Err(CoreError::Conflict(
+                        "O depósito foi modificado por outro usuário. Recarregue os dados e tente novamente."
+                            .to_string(),
+                    ));
+                }
+
+                let new_code = inp.code.trim().to_uppercase();
+                if new_code != existing.code {
+                    if let Some(other) = stores
+                        .inventory()
+                        .find_warehouse_by_code(&session.tenant_id, &new_code)
+                        .await?
+                    {
+                        if other.id != existing.id && other.deleted_at.is_none() {
+                            return Err(CoreError::Conflict(format!(
+                                "Já existe outro depósito com o código '{new_code}'."
+                            )));
+                        }
+                    }
+                }
+
+                let mut updated = existing;
+                updated.name = inp.name.trim().to_string();
+                updated.code = new_code;
+                updated.description = inp.description.as_ref().map(|d| d.trim().to_string());
+                updated.address_line1 = inp.address_line1.as_ref().map(|a| a.trim().to_string());
+                updated.address_line2 = inp.address_line2.as_ref().map(|a| a.trim().to_string());
+                updated.city = inp.city.as_ref().map(|c| c.trim().to_string());
+                updated.state = inp.state.as_ref().map(|s| s.trim().to_uppercase());
+                updated.postal_code = inp.postal_code.as_ref().map(|p| p.trim().to_string());
+                if let Some(act) = inp.active {
+                    updated.active = act;
+                }
+                updated.updated_at = Utc::now().to_rfc3339();
+
+                stores.inventory().update_warehouse(&updated).await?;
+                Ok(updated)
             })
         })
-        .await?;
-
-        Ok(wh)
+        .await
     }
 
     pub async fn set_default_warehouse(&self, session: &SessionInfo, id: &str) -> Result<()> {
-        self.check_session_and_permission(session, PERM_WAREHOUSE_OPERATE)?;
-        let wh = self.get_warehouse(session, id).await?;
-        if !wh.active {
-            return Err(CoreError::Validation(
-                "Um depósito inativo não pode ser definido como padrão.".to_string(),
-            ));
-        }
-
-        let tenant_id = session.tenant_id.clone();
+        self.check_session_and_permission(session, PERM_INVENTORY_MANAGE)?;
+        let session_clone = session.clone();
         let target_id = id.to_string();
+
         self.run_transaction(|stores| {
-            let t_id = tenant_id.clone();
+            let session = session_clone.clone();
             let wh_id = target_id.clone();
             Box::pin(async move {
+                let wh = stores
+                    .inventory()
+                    .find_warehouse_by_id(&session.tenant_id, &wh_id)
+                    .await?
+                    .ok_or_else(|| {
+                        CoreError::NotFound(format!("Depósito '{wh_id}' não encontrado."))
+                    })?;
+
+                if !wh.active {
+                    return Err(CoreError::Validation(
+                        "Um depósito inativo não pode ser definido como padrão.".to_string(),
+                    ));
+                }
+
                 stores
                     .inventory()
-                    .set_default_warehouse(&t_id, &wh_id)
+                    .set_default_warehouse(&session.tenant_id, &wh_id)
                     .await
             })
         })
@@ -143,36 +197,64 @@ impl CoreServices {
     }
 
     pub async fn delete_warehouse(&self, session: &SessionInfo, id: &str) -> Result<()> {
-        self.check_session_and_permission(session, PERM_WAREHOUSE_OPERATE)?;
-        let wh = self.get_warehouse(session, id).await?;
-        if wh.is_default {
-            return Err(CoreError::Validation(
-                "O depósito padrão do tenant não pode ser excluído.".to_string(),
-            ));
-        }
+        self.check_session_and_permission(session, PERM_INVENTORY_MANAGE)?;
+        let session_clone = session.clone();
+        let target_id = id.to_string();
 
-        // Verifica se há saldos ativos ou unidades alocadas no depósito
-        let balances = self
-            .stores
-            .inventory
-            .list_stock_balances_by_warehouse(&session.tenant_id, id)
-            .await?;
-        let total_items: i64 = balances
-            .iter()
-            .map(|b| b.quantity_on_hand + b.quantity_allocated + b.quantity_maintenance)
-            .sum();
-        if total_items > 0 {
-            return Err(CoreError::Conflict(
-                "Não é possível excluir depósito com itens ou unidades em estoque. Efetue transferência prévia ou inative-o.".to_string(),
-            ));
-        }
-
-        let tenant_id = session.tenant_id.clone();
-        let wh_id = id.to_string();
         self.run_transaction(|stores| {
-            let t_id = tenant_id.clone();
-            let w_id = wh_id.clone();
-            Box::pin(async move { stores.inventory().delete_warehouse(&t_id, &w_id).await })
+            let session = session_clone.clone();
+            let wh_id = target_id.clone();
+            Box::pin(async move {
+                let wh = stores
+                    .inventory()
+                    .find_warehouse_by_id(&session.tenant_id, &wh_id)
+                    .await?
+                    .ok_or_else(|| CoreError::NotFound(format!("Depósito '{wh_id}' não encontrado.")))?;
+
+                if wh.is_default {
+                    return Err(CoreError::Validation(
+                        "O depósito padrão do tenant não pode ser excluído.".to_string(),
+                    ));
+                }
+
+                let balances = stores
+                    .inventory()
+                    .list_stock_balances_by_warehouse(&session.tenant_id, &wh_id)
+                    .await?;
+                let total_items: i64 = balances
+                    .iter()
+                    .map(|b| b.quantity_on_hand + b.quantity_maintenance)
+                    .sum();
+                if total_items > 0 {
+                    return Err(CoreError::Conflict(
+                        "Não é possível excluir depósito com itens em estoque. Efetue transferência prévia ou inative-o."
+                            .to_string(),
+                    ));
+                }
+
+                let units = stores
+                    .inventory()
+                    .list_units(
+                        &session.tenant_id,
+                        &EquipmentUnitFilter {
+                            warehouse_id: Some(wh_id.clone()),
+                            active_only: Some(true),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+                if !units.is_empty() {
+                    return Err(CoreError::Conflict(
+                        "Não é possível excluir depósito com unidades físicas associadas."
+                            .to_string(),
+                    ));
+                }
+
+                stores
+                    .inventory()
+                    .delete_warehouse(&session.tenant_id, &wh_id)
+                    .await
+            })
         })
         .await
     }
@@ -185,47 +267,19 @@ impl CoreServices {
         &self,
         session: &SessionInfo,
         filter: &EquipmentUnitFilter,
-    ) -> Result<Vec<EquipmentUnitDetails>> {
-        self.check_session_and_permission(session, PERM_WAREHOUSE_READ)?;
-        let units = self
+    ) -> Result<EquipmentUnitListPage> {
+        self.check_session_and_permission(session, PERM_INVENTORY_READ)?;
+        let mut page = self
             .stores
             .inventory
-            .list_units(&session.tenant_id, filter)
+            .list_unit_details(&session.tenant_id, filter)
             .await?;
-        let mut result = Vec::with_capacity(units.len());
 
-        for unit in units {
-            let model_name = self
-                .stores
-                .catalog
-                .find_model_by_id(&session.tenant_id, &unit.equipment_model_id)
-                .await?
-                .map(|m| m.name)
-                .unwrap_or_else(|| "Modelo desconhecido".to_string());
-
-            let warehouse_name = self
-                .stores
-                .inventory
-                .find_warehouse_by_id(&session.tenant_id, &unit.warehouse_id)
-                .await?
-                .map(|w| w.name)
-                .unwrap_or_else(|| "Depósito desconhecido".to_string());
-
-            let media = self
-                .stores
-                .inventory
-                .list_unit_media(&session.tenant_id, &unit.id)
-                .await?;
-
-            result.push(EquipmentUnitDetails {
-                unit,
-                model_name,
-                warehouse_name,
-                media,
-            });
+        for item in &mut page.items {
+            sanitize_unit_financials(&mut item.unit, session);
         }
 
-        Ok(result)
+        Ok(page)
     }
 
     pub async fn get_equipment_unit(
@@ -233,20 +287,22 @@ impl CoreServices {
         session: &SessionInfo,
         id: &str,
     ) -> Result<EquipmentUnitDetails> {
-        self.check_session_and_permission(session, PERM_WAREHOUSE_READ)?;
-        let unit = self
+        self.check_session_and_permission(session, PERM_INVENTORY_READ)?;
+        let mut unit = self
             .stores
             .inventory
             .find_unit_by_id(&session.tenant_id, id)
             .await?
             .ok_or_else(|| CoreError::NotFound(format!("Unidade física '{id}' não encontrada.")))?;
 
-        let model_name = self
+        let model = self
             .stores
             .catalog
             .find_model_by_id(&session.tenant_id, &unit.equipment_model_id)
-            .await?
-            .map(|m| m.name)
+            .await?;
+        let model_name = model
+            .as_ref()
+            .map(|m| m.name.clone())
             .unwrap_or_else(|| "Modelo desconhecido".to_string());
 
         let warehouse_name = self
@@ -257,17 +313,13 @@ impl CoreServices {
             .map(|w| w.name)
             .unwrap_or_else(|| "Depósito desconhecido".to_string());
 
-        let media = self
-            .stores
-            .inventory
-            .list_unit_media(&session.tenant_id, &unit.id)
-            .await?;
+        sanitize_unit_financials(&mut unit, session);
 
         Ok(EquipmentUnitDetails {
             unit,
             model_name,
             warehouse_name,
-            media,
+            model_thumbnail_url: None,
         })
     }
 
@@ -276,101 +328,185 @@ impl CoreServices {
         session: &SessionInfo,
         input: &CreateEquipmentUnitInput,
     ) -> Result<EquipmentUnit> {
-        self.check_session_and_permission(session, PERM_WAREHOUSE_OPERATE)?;
+        self.check_session_and_permission(session, PERM_INVENTORY_MANAGE)?;
+        let origin = input.origin.unwrap_or(UnitOrigin::Own);
         validate_equipment_unit_input(
             &input.equipment_model_id,
             input.serial_number.as_deref(),
             input.notes.as_deref(),
+            origin,
+            input.supplier_id.as_deref(),
+            input.return_by.as_deref(),
+            input.acquisition_cost_cents,
+            input.location_note.as_deref(),
+            input.invoice_number.as_deref(),
         )?;
 
-        // Valida se o modelo existe e se é serializado
-        let model = self
-            .stores
-            .catalog
-            .find_model_by_id(&session.tenant_id, &input.equipment_model_id)
-            .await?
-            .ok_or_else(|| {
-                CoreError::NotFound("Modelo de equipamento não encontrado.".to_string())
-            })?;
+        validate_financial_mutation_permissions(
+            session,
+            input.acquisition_cost_cents,
+            input.supplier_id.as_deref(),
+            input.invoice_number.as_deref(),
+        )?;
 
-        if model.control_mode != crate::domain::catalog::ControlMode::Serialized {
-            return Err(CoreError::Validation(
-                "Apenas modelos configurados com modo de controle 'serialized' podem possuir unidades físicas individuais.".to_string(),
-            ));
+        if origin == UnitOrigin::ThirdParty {
+            let sup_empty = input
+                .supplier_id
+                .as_ref()
+                .map(|s| s.trim().is_empty())
+                .unwrap_or(true);
+            let ret_empty = input
+                .return_by
+                .as_ref()
+                .map(|s| s.trim().is_empty())
+                .unwrap_or(true);
+            if sup_empty || ret_empty {
+                return Err(CoreError::Validation(
+                    "Unidades de terceiros exigem obrigatoriamente o fornecedor e a data prevista de devolução."
+                        .to_string(),
+                ));
+            }
         }
 
-        // Determina o depósito destino (informado ou padrão)
-        let warehouse_id = match &input.warehouse_id {
-            Some(wid) => wid.clone(),
-            None => {
-                let def = self
-                    .stores
-                    .inventory
-                    .get_default_warehouse(&session.tenant_id)
-                    .await?
-                    .ok_or_else(|| {
-                        CoreError::Configuration("Nenhum depósito padrão configurado.".to_string())
-                    })?;
-                def.id
-            }
-        };
+        let session_clone = session.clone();
+        let input_clone = input.clone();
 
-        // Garante próximo patrimônio sequencial único atômico
-        let patrimony_tag = self
-            .stores
-            .inventory
-            .next_patrimony_tag(&session.tenant_id)
-            .await?;
-        let now = Utc::now().to_rfc3339();
-        let unit_id = Uuid::now_v7().to_string();
+        let mut unit = self
+            .run_transaction(|stores| {
+                let session = session_clone.clone();
+                let inp = input_clone.clone();
+                Box::pin(async move {
+                    let model = stores
+                        .catalog()
+                        .find_model_by_id(&session.tenant_id, &inp.equipment_model_id)
+                        .await?
+                        .ok_or_else(|| {
+                            CoreError::NotFound("Modelo de equipamento não encontrado.".to_string())
+                        })?;
 
-        let unit = EquipmentUnit {
-            id: unit_id.clone(),
-            tenant_id: session.tenant_id.clone(),
-            equipment_model_id: input.equipment_model_id.clone(),
-            warehouse_id: warehouse_id.clone(),
-            patrimony_tag: patrimony_tag.clone(),
-            serial_number: input.serial_number.as_ref().map(|s| s.trim().to_string()),
-            status: UnitStatus::Available,
-            physical_condition: input.physical_condition.unwrap_or(PhysicalCondition::Good),
-            notes: input.notes.as_ref().map(|n| n.trim().to_string()),
-            acquisition_date: input.acquisition_date.clone(),
-            warranty_expires_at: input.warranty_expires_at.clone(),
-            active: true,
-            created_at: now.clone(),
-            updated_at: now.clone(),
-            deleted_at: None,
-            created_by: Some(session.user_id.clone()),
-        };
+                    if model.deleted_at.is_some() || !model.active {
+                        return Err(CoreError::Validation(
+                            "Modelo inativo ou excluído não pode receber novas unidades."
+                                .to_string(),
+                        ));
+                    }
 
-        let movement = StockMovement {
-            id: Uuid::now_v7().to_string(),
-            tenant_id: session.tenant_id.clone(),
-            equipment_model_id: input.equipment_model_id.clone(),
-            equipment_unit_id: Some(unit_id),
-            from_warehouse_id: None,
-            to_warehouse_id: Some(warehouse_id),
-            movement_type: StockMovementType::PurchaseIn,
-            quantity: 1,
-            reason: format!("Entrada e tombamento de unidade patrimonial {patrimony_tag}"),
-            reference_id: None,
-            performed_by_user_id: session.user_id.clone(),
-            created_at: now,
-        };
+                    if model.control_mode != ControlMode::Serialized {
+                        return Err(CoreError::Validation(
+                            "Apenas modelos serializados podem possuir unidades físicas."
+                                .to_string(),
+                        ));
+                    }
 
-        let unit_clone = unit.clone();
-        let mov_clone = movement.clone();
-        self.run_transaction(|stores| {
-            let u = unit_clone.clone();
-            let m = mov_clone.clone();
-            Box::pin(async move {
-                stores.inventory().create_unit(&u).await?;
-                stores.inventory().record_stock_movement(&m).await?;
-                Ok(())
+                    let warehouse_id = match &inp.warehouse_id {
+                        Some(wid) => {
+                            let wh = stores
+                                .inventory()
+                                .find_warehouse_by_id(&session.tenant_id, wid)
+                                .await?
+                                .ok_or_else(|| {
+                                    CoreError::NotFound(format!("Depósito '{wid}' não encontrado."))
+                                })?;
+                            if !wh.active || wh.deleted_at.is_some() {
+                                return Err(CoreError::Validation(
+                                    "Depósito selecionado está inativo ou excluído.".to_string(),
+                                ));
+                            }
+                            wid.clone()
+                        }
+                        None => {
+                            let def = stores
+                                .inventory()
+                                .get_default_warehouse(&session.tenant_id)
+                                .await?
+                                .ok_or_else(|| {
+                                    CoreError::Configuration(
+                                        "Nenhum depósito padrão configurado.".to_string(),
+                                    )
+                                })?;
+                            def.id
+                        }
+                    };
+
+                    if let Some(ref sid) = inp.supplier_id {
+                        if !sid.trim().is_empty() {
+                            let sup = stores
+                                .customers()
+                                .find_by_id(&session.tenant_id, sid)
+                                .await?;
+                            let is_sup = sup
+                                .as_ref()
+                                .map(|c| c.customer.is_supplier)
+                                .unwrap_or(false);
+                            if !is_sup {
+                                return Err(CoreError::NotFound(
+                                    "Fornecedor informado não encontrado ou inválido.".to_string(),
+                                ));
+                            }
+                        }
+                    }
+
+                    let patrimony_tag = stores
+                        .inventory()
+                        .next_patrimony_tag(&session.tenant_id)
+                        .await?;
+                    let now = Utc::now().to_rfc3339();
+                    let unit_id = Uuid::now_v7().to_string();
+
+                    let unit = EquipmentUnit {
+                        id: unit_id.clone(),
+                        tenant_id: session.tenant_id.clone(),
+                        equipment_model_id: inp.equipment_model_id.clone(),
+                        warehouse_id: warehouse_id.clone(),
+                        patrimony_tag: patrimony_tag.clone(),
+                        serial_number: inp.serial_number.as_ref().map(|s| s.trim().to_string()),
+                        status: UnitStatus::Available,
+                        physical_condition: inp
+                            .physical_condition
+                            .unwrap_or(PhysicalCondition::Good),
+                        notes: inp.notes.as_ref().map(|n| n.trim().to_string()),
+                        acquisition_date: inp.acquisition_date.clone(),
+                        warranty_expires_at: inp.warranty_expires_at.clone(),
+                        acquisition_cost_cents: inp.acquisition_cost_cents,
+                        supplier_id: inp.supplier_id.as_ref().map(|s| s.trim().to_string()),
+                        invoice_number: inp.invoice_number.as_ref().map(|i| i.trim().to_string()),
+                        origin,
+                        return_by: inp.return_by.clone(),
+                        usage_hours: inp.usage_hours.unwrap_or(0).max(0),
+                        location_note: inp.location_note.as_ref().map(|l| l.trim().to_string()),
+                        active: true,
+                        created_at: now.clone(),
+                        updated_at: now.clone(),
+                        deleted_at: None,
+                        created_by: Some(session.user_id.clone()),
+                    };
+
+                    let movement = StockMovement {
+                        id: Uuid::now_v7().to_string(),
+                        tenant_id: session.tenant_id.clone(),
+                        equipment_model_id: inp.equipment_model_id.clone(),
+                        equipment_unit_id: Some(unit_id),
+                        from_warehouse_id: None,
+                        to_warehouse_id: Some(warehouse_id),
+                        movement_type: StockMovementType::PurchaseIn,
+                        quantity: 1,
+                        reason: format!(
+                            "Entrada e tombamento de unidade patrimonial {patrimony_tag}"
+                        ),
+                        reference_id: None,
+                        performed_by_user_id: session.user_id.clone(),
+                        created_at: now,
+                    };
+
+                    stores.inventory().create_unit(&unit).await?;
+                    stores.inventory().record_stock_movement(&movement).await?;
+
+                    Ok(unit)
+                })
             })
-        })
-        .await?;
+            .await?;
 
+        sanitize_unit_financials(&mut unit, session);
         Ok(unit)
     }
 
@@ -380,153 +516,361 @@ impl CoreServices {
         id: &str,
         input: &UpdateEquipmentUnitInput,
     ) -> Result<EquipmentUnit> {
-        self.check_session_and_permission(session, PERM_WAREHOUSE_OPERATE)?;
+        self.check_session_and_permission(session, PERM_INVENTORY_MANAGE)?;
+
+        validate_financial_mutation_permissions(
+            session,
+            input.acquisition_cost_cents,
+            input.supplier_id.as_deref(),
+            input.invoice_number.as_deref(),
+        )?;
+
+        let session_clone = session.clone();
+        let target_id = id.to_string();
+        let input_clone = input.clone();
+
         let mut unit = self
-            .stores
-            .inventory
-            .find_unit_by_id(&session.tenant_id, id)
-            .await?
-            .ok_or_else(|| CoreError::NotFound(format!("Unidade '{id}' não encontrada.")))?;
+            .run_transaction(|stores| {
+                let session = session_clone.clone();
+                let uid = target_id.clone();
+                let inp = input_clone.clone();
+                Box::pin(async move {
+                    let existing = stores
+                        .inventory()
+                        .find_unit_by_id(&session.tenant_id, &uid)
+                        .await?
+                        .ok_or_else(|| CoreError::NotFound(format!("Unidade '{uid}' não encontrada.")))?;
 
-        let old_warehouse_id = unit.warehouse_id.clone();
-        let old_status = unit.status;
+                    if existing.updated_at != inp.expected_updated_at {
+                        return Err(CoreError::Conflict(
+                            "A unidade física foi alterada por outro usuário. Recarregue os dados e tente novamente."
+                                .to_string(),
+                        ));
+                    }
 
-        if let Some(ref wid) = input.warehouse_id {
-            unit.warehouse_id = wid.clone();
-        }
-        if let Some(ref sn) = input.serial_number {
-            unit.serial_number = Some(sn.trim().to_string());
-        }
-        if let Some(st) = input.status {
-            unit.status = st;
-        }
-        if let Some(pc) = input.physical_condition {
-            unit.physical_condition = pc;
-        }
-        if let Some(ref n) = input.notes {
-            unit.notes = Some(n.trim().to_string());
-        }
-        if let Some(ref ad) = input.acquisition_date {
-            unit.acquisition_date = Some(ad.clone());
-        }
-        if let Some(ref we) = input.warranty_expires_at {
-            unit.warranty_expires_at = Some(we.clone());
-        }
-        if let Some(act) = input.active {
-            unit.active = act;
-        }
-        unit.updated_at = Utc::now().to_rfc3339();
+                    let old_warehouse_id = existing.warehouse_id.clone();
+                    let old_status = existing.status;
+                    let target_status = inp.status.unwrap_or(old_status);
 
-        // Se houve alteração de depósito ou status, registrar movimentação
-        let mut optional_movement: Option<StockMovement> = None;
-        if unit.warehouse_id != old_warehouse_id {
-            optional_movement = Some(StockMovement {
-                id: Uuid::now_v7().to_string(),
-                tenant_id: session.tenant_id.clone(),
-                equipment_model_id: unit.equipment_model_id.clone(),
-                equipment_unit_id: Some(unit.id.clone()),
-                from_warehouse_id: Some(old_warehouse_id),
-                to_warehouse_id: Some(unit.warehouse_id.clone()),
-                movement_type: StockMovementType::TransferOut,
-                quantity: 1,
-                reason: format!("Transferência física da unidade {}", unit.patrimony_tag),
-                reference_id: None,
-                performed_by_user_id: session.user_id.clone(),
-                created_at: Utc::now().to_rfc3339(),
-            });
-        } else if unit.status != old_status {
-            let (m_type, reason) = match unit.status {
-                UnitStatus::Maintenance => (
-                    StockMovementType::MaintenanceOut,
-                    format!("Envio para manutenção da unidade {}", unit.patrimony_tag),
-                ),
-                UnitStatus::Available if old_status == UnitStatus::Maintenance => (
-                    StockMovementType::MaintenanceIn,
-                    format!("Retorno de manutenção da unidade {}", unit.patrimony_tag),
-                ),
-                UnitStatus::Damaged => (
-                    StockMovementType::LossOut,
-                    format!("Registro de avaria na unidade {}", unit.patrimony_tag),
-                ),
-                UnitStatus::Lost => (
-                    StockMovementType::LossOut,
-                    format!("Extravio/Perda da unidade {}", unit.patrimony_tag),
-                ),
-                _ => (
-                    StockMovementType::Adjustment,
-                    format!("Mudança de status operacional para {:?}", unit.status),
-                ),
-            };
+                    validate_status_transition(
+                        old_status,
+                        target_status,
+                        inp.status_change_reason.as_deref(),
+                    )?;
 
-            optional_movement = Some(StockMovement {
-                id: Uuid::now_v7().to_string(),
-                tenant_id: session.tenant_id.clone(),
-                equipment_model_id: unit.equipment_model_id.clone(),
-                equipment_unit_id: Some(unit.id.clone()),
-                from_warehouse_id: Some(unit.warehouse_id.clone()),
-                to_warehouse_id: None,
-                movement_type: m_type,
-                quantity: 1,
-                reason,
-                reference_id: None,
-                performed_by_user_id: session.user_id.clone(),
-                created_at: Utc::now().to_rfc3339(),
-            });
-        }
+                    let new_warehouse_id = match &inp.warehouse_id {
+                        Some(wid) => {
+                            if wid != &old_warehouse_id {
+                                let wh = stores
+                                    .inventory()
+                                    .find_warehouse_by_id(&session.tenant_id, wid)
+                                    .await?
+                                    .ok_or_else(|| {
+                                        CoreError::NotFound(format!("Depósito '{wid}' não encontrado."))
+                                    })?;
+                                if !wh.active || wh.deleted_at.is_some() {
+                                    return Err(CoreError::Validation(
+                                        "Depósito de destino inválido ou inativo.".to_string(),
+                                    ));
+                                }
+                            }
+                            wid.clone()
+                        }
+                        None => old_warehouse_id.clone(),
+                    };
 
-        let unit_clone = unit.clone();
-        self.run_transaction(|stores| {
-            let u = unit_clone.clone();
-            let opt_m = optional_movement.clone();
-            Box::pin(async move {
-                stores.inventory().update_unit(&u).await?;
-                if let Some(ref m) = opt_m {
-                    stores.inventory().record_stock_movement(m).await?;
-                }
-                Ok(())
+                    let target_origin = inp.origin.unwrap_or(existing.origin);
+                    let target_supplier = inp
+                        .supplier_id
+                        .as_ref()
+                        .map(|s| s.trim().to_string())
+                        .or_else(|| existing.supplier_id.clone());
+                    let target_return_by = inp.return_by.clone().or_else(|| existing.return_by.clone());
+
+                    if let Some(ref sid) = target_supplier {
+                        if !sid.trim().is_empty() {
+                            let sup = stores.customers().find_by_id(&session.tenant_id, sid).await?;
+                            let is_sup = sup.as_ref().map(|c| c.customer.is_supplier).unwrap_or(false);
+                            if !is_sup {
+                                return Err(CoreError::NotFound(
+                                    "Fornecedor informado não encontrado ou inválido.".to_string(),
+                                ));
+                            }
+                        }
+                    }
+
+                    if target_origin == UnitOrigin::ThirdParty {
+                        let sup_empty = target_supplier
+                            .as_ref()
+                            .map(|s| s.trim().is_empty())
+                            .unwrap_or(true);
+                        let ret_empty = target_return_by
+                            .as_ref()
+                            .map(|s| s.trim().is_empty())
+                            .unwrap_or(true);
+                        if sup_empty || ret_empty {
+                            return Err(CoreError::Validation(
+                                "Unidades de terceiros exigem obrigatoriamente o fornecedor e a data prevista de devolução."
+                                    .to_string(),
+                            ));
+                        }
+                    }
+
+                    let now = Utc::now().to_rfc3339();
+                    let mut updated = existing;
+                    updated.warehouse_id = new_warehouse_id.clone();
+                    if let Some(ref sn) = inp.serial_number {
+                        updated.serial_number = Some(sn.trim().to_string());
+                    }
+                    updated.status = target_status;
+                    if let Some(pc) = inp.physical_condition {
+                        updated.physical_condition = pc;
+                    }
+                    if let Some(ref n) = inp.notes {
+                        updated.notes = Some(n.trim().to_string());
+                    }
+                    if let Some(ref ad) = inp.acquisition_date {
+                        updated.acquisition_date = Some(ad.clone());
+                    }
+                    if let Some(ref we) = inp.warranty_expires_at {
+                        updated.warranty_expires_at = Some(we.clone());
+                    }
+                    if let Some(c) = inp.acquisition_cost_cents {
+                        updated.acquisition_cost_cents = Some(c);
+                    }
+                    updated.supplier_id = target_supplier;
+                    if let Some(ref inv) = inp.invoice_number {
+                        updated.invoice_number = Some(inv.trim().to_string());
+                    }
+                    updated.origin = target_origin;
+                    updated.return_by = target_return_by;
+                    if let Some(h) = inp.usage_hours {
+                        updated.usage_hours = h.max(0);
+                    }
+                    if let Some(ref l) = inp.location_note {
+                        updated.location_note = Some(l.trim().to_string());
+                    }
+                    if let Some(act) = inp.active {
+                        updated.active = act;
+                    }
+                    updated.updated_at = now.clone();
+
+                    stores.inventory().update_unit(&updated).await?;
+
+                    // R3: Tratamento de movimentos separados na mesma transação
+                    let warehouse_changed = new_warehouse_id != old_warehouse_id;
+                    let status_changed = target_status != old_status;
+
+                    if warehouse_changed {
+                        let transfer_mov = StockMovement {
+                            id: Uuid::now_v7().to_string(),
+                            tenant_id: session.tenant_id.clone(),
+                            equipment_model_id: updated.equipment_model_id.clone(),
+                            equipment_unit_id: Some(updated.id.clone()),
+                            from_warehouse_id: Some(old_warehouse_id.clone()),
+                            to_warehouse_id: Some(new_warehouse_id.clone()),
+                            movement_type: StockMovementType::TransferOut,
+                            quantity: 1,
+                            reason: format!(
+                                "Transferência física da unidade {}",
+                                updated.patrimony_tag
+                            ),
+                            reference_id: None,
+                            performed_by_user_id: session.user_id.clone(),
+                            created_at: now.clone(),
+                        };
+                        stores.inventory().record_stock_movement(&transfer_mov).await?;
+                    }
+
+                    if status_changed {
+                        let (m_type, default_reason) = match target_status {
+                            UnitStatus::Lost => (
+                                StockMovementType::LossOut,
+                                format!("Extravio/Perda da unidade {}", updated.patrimony_tag),
+                            ),
+                            _ => (
+                                StockMovementType::StatusChange,
+                                format!(
+                                    "Alteração de status da unidade {} de {:?} para {:?}",
+                                    updated.patrimony_tag, old_status, target_status
+                                ),
+                            ),
+                        };
+
+                        let final_reason = inp
+                            .status_change_reason
+                            .as_ref()
+                            .filter(|r| !r.trim().is_empty())
+                            .cloned()
+                            .unwrap_or(default_reason);
+
+                        let status_mov = StockMovement {
+                            id: Uuid::now_v7().to_string(),
+                            tenant_id: session.tenant_id.clone(),
+                            equipment_model_id: updated.equipment_model_id.clone(),
+                            equipment_unit_id: Some(updated.id.clone()),
+                            from_warehouse_id: Some(new_warehouse_id),
+                            to_warehouse_id: None,
+                            movement_type: m_type,
+                            quantity: 1,
+                            reason: final_reason,
+                            reference_id: None,
+                            performed_by_user_id: session.user_id.clone(),
+                            created_at: now,
+                        };
+                        stores.inventory().record_stock_movement(&status_mov).await?;
+                    }
+
+                    Ok(updated)
+                })
             })
-        })
-        .await?;
+            .await?;
 
+        sanitize_unit_financials(&mut unit, session);
+        Ok(unit)
+    }
+
+    pub async fn decommission_equipment_unit(
+        &self,
+        session: &SessionInfo,
+        id: &str,
+        input: &DecommissionEquipmentUnitInput,
+    ) -> Result<EquipmentUnit> {
+        self.check_session_and_permission(session, PERM_INVENTORY_MANAGE)?;
+
+        let reason_trimmed = input.reason.trim();
+        if reason_trimmed.is_empty() {
+            return Err(CoreError::Validation(
+                "Motivo obrigatório para baixa patrimonial da unidade.".to_string(),
+            ));
+        }
+
+        let session_clone = session.clone();
+        let target_id = id.to_string();
+        let input_clone = input.clone();
+
+        let mut unit = self
+            .run_transaction(|stores| {
+                let session = session_clone.clone();
+                let uid = target_id.clone();
+                let inp = input_clone.clone();
+                Box::pin(async move {
+                    let existing = stores
+                        .inventory()
+                        .find_unit_by_id(&session.tenant_id, &uid)
+                        .await?
+                        .ok_or_else(|| CoreError::NotFound(format!("Unidade '{uid}' não encontrada.")))?;
+
+                    if existing.updated_at != inp.expected_updated_at {
+                        return Err(CoreError::Conflict(
+                            "A unidade física foi alterada por outro usuário. Recarregue os dados e tente novamente."
+                                .to_string(),
+                        ));
+                    }
+
+                    if existing.status == UnitStatus::Decommissioned {
+                        return Err(CoreError::Conflict(
+                            "A unidade patrimonial já se encontra baixada.".to_string(),
+                        ));
+                    }
+
+                    let now = Utc::now().to_rfc3339();
+                    let mut updated = existing;
+                    updated.status = UnitStatus::Decommissioned;
+                    updated.active = false;
+                    updated.updated_at = now.clone();
+
+                    stores.inventory().update_unit(&updated).await?;
+
+                    let decommission_mov = StockMovement {
+                        id: Uuid::now_v7().to_string(),
+                        tenant_id: session.tenant_id.clone(),
+                        equipment_model_id: updated.equipment_model_id.clone(),
+                        equipment_unit_id: Some(updated.id.clone()),
+                        from_warehouse_id: Some(updated.warehouse_id.clone()),
+                        to_warehouse_id: None,
+                        movement_type: StockMovementType::DecommissionOut,
+                        quantity: 1,
+                        reason: format!(
+                            "Baixa patrimonial definitiva: {}",
+                            inp.reason.trim()
+                        ),
+                        reference_id: None,
+                        performed_by_user_id: session.user_id.clone(),
+                        created_at: now,
+                    };
+                    stores.inventory().record_stock_movement(&decommission_mov).await?;
+
+                    Ok(updated)
+                })
+            })
+            .await?;
+
+        sanitize_unit_financials(&mut unit, session);
         Ok(unit)
     }
 
     pub async fn delete_equipment_unit(&self, session: &SessionInfo, id: &str) -> Result<()> {
-        self.check_session_and_permission(session, PERM_WAREHOUSE_OPERATE)?;
-        let unit = self
-            .stores
-            .inventory
-            .find_unit_by_id(&session.tenant_id, id)
-            .await?
-            .ok_or_else(|| CoreError::NotFound(format!("Unidade '{id}' não encontrada.")))?;
-
-        let tenant_id = session.tenant_id.clone();
-        let u_id = id.to_string();
-        let movement = StockMovement {
-            id: Uuid::now_v7().to_string(),
-            tenant_id: session.tenant_id.clone(),
-            equipment_model_id: unit.equipment_model_id.clone(),
-            equipment_unit_id: Some(unit.id.clone()),
-            from_warehouse_id: Some(unit.warehouse_id.clone()),
-            to_warehouse_id: None,
-            movement_type: StockMovementType::LossOut,
-            quantity: 1,
-            reason: format!(
-                "Baixa patrimonial definitiva da unidade {}",
-                unit.patrimony_tag
-            ),
-            reference_id: None,
-            performed_by_user_id: session.user_id.clone(),
-            created_at: Utc::now().to_rfc3339(),
-        };
+        self.check_session_and_permission(session, PERM_INVENTORY_MANAGE)?;
+        let session_clone = session.clone();
+        let target_id = id.to_string();
 
         self.run_transaction(|stores| {
-            let t = tenant_id.clone();
-            let u = u_id.clone();
-            let m = movement.clone();
+            let session = session_clone.clone();
+            let uid = target_id.clone();
             Box::pin(async move {
-                stores.inventory().delete_unit(&t, &u).await?;
-                stores.inventory().record_stock_movement(&m).await?;
+                let unit = stores
+                    .inventory()
+                    .find_unit_by_id(&session.tenant_id, &uid)
+                    .await?
+                    .ok_or_else(|| CoreError::NotFound(format!("Unidade '{uid}' não encontrada.")))?;
+
+                // R4: Exclusão permitida apenas se criada por engano há menos de 24 horas
+                let created_dt = DateTime::parse_from_rfc3339(&unit.created_at)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .map_err(|e| CoreError::Internal(format!("Data de criação inválida: {e}")))?;
+                let now = Utc::now();
+                let hours_elapsed = now.signed_duration_since(created_dt).num_hours();
+                if hours_elapsed >= 24 {
+                    return Err(CoreError::Conflict(
+                        "Unidades criadas há mais de 24 horas não podem ser excluídas; efetue a baixa patrimonial (decommission)."
+                            .to_string(),
+                    ));
+                }
+
+                // R4: Não pode ter movimentações além da entrada inicial de tombamento
+                let mov_count = stores
+                    .inventory()
+                    .count_unit_movements(&session.tenant_id, &uid)
+                    .await?;
+                if mov_count > 1 {
+                    return Err(CoreError::Conflict(
+                        "Unidades com movimentações além do tombamento inicial não podem ser excluídas; efetue a baixa patrimonial (decommission)."
+                            .to_string(),
+                    ));
+                }
+
+                // Reverte saldo físico decorrente da entrada inicial
+                let reverse_mov = StockMovement {
+                    id: Uuid::now_v7().to_string(),
+                    tenant_id: session.tenant_id.clone(),
+                    equipment_model_id: unit.equipment_model_id.clone(),
+                    equipment_unit_id: Some(unit.id.clone()),
+                    from_warehouse_id: Some(unit.warehouse_id.clone()),
+                    to_warehouse_id: None,
+                    movement_type: StockMovementType::LossOut,
+                    quantity: 1,
+                    reason: format!(
+                        "Exclusão por engano de cadastro recente (<24h) da unidade {}",
+                        unit.patrimony_tag
+                    ),
+                    reference_id: None,
+                    performed_by_user_id: session.user_id.clone(),
+                    created_at: Utc::now().to_rfc3339(),
+                };
+                stores.inventory().record_stock_movement(&reverse_mov).await?;
+                stores.inventory().delete_unit(&session.tenant_id, &uid).await?;
+
                 Ok(())
             })
         })
@@ -543,7 +887,7 @@ impl CoreServices {
         warehouse_id: &str,
         equipment_model_id: &str,
     ) -> Result<StockBalance> {
-        self.check_session_and_permission(session, PERM_WAREHOUSE_READ)?;
+        self.check_session_and_permission(session, PERM_INVENTORY_READ)?;
         let balance = self
             .stores
             .inventory
@@ -556,8 +900,8 @@ impl CoreServices {
             warehouse_id: warehouse_id.to_string(),
             equipment_model_id: equipment_model_id.to_string(),
             quantity_on_hand: 0,
-            quantity_allocated: 0,
             quantity_maintenance: 0,
+            min_quantity: 0,
             updated_at: Utc::now().to_rfc3339(),
         }))
     }
@@ -568,7 +912,16 @@ impl CoreServices {
         equipment_model_id: Option<&str>,
         warehouse_id: Option<&str>,
     ) -> Result<Vec<StockBalance>> {
-        self.check_session_and_permission(session, PERM_WAREHOUSE_READ)?;
+        self.check_session_and_permission(session, PERM_INVENTORY_READ)?;
+
+        // R7: Exigir ao menos modelo ou depósito
+        if equipment_model_id.is_none() && warehouse_id.is_none() {
+            return Err(CoreError::Validation(
+                "Informe ao menos o modelo ou o depósito para consultar saldos de estoque."
+                    .to_string(),
+            ));
+        }
+
         if let Some(mid) = equipment_model_id {
             self.stores
                 .inventory
@@ -580,20 +933,7 @@ impl CoreServices {
                 .list_stock_balances_by_warehouse(&session.tenant_id, wid)
                 .await
         } else {
-            // Se nenhum filtro, traz todos do depósito padrão
-            let def_wh = self
-                .stores
-                .inventory
-                .get_default_warehouse(&session.tenant_id)
-                .await?;
-            if let Some(wh) = def_wh {
-                self.stores
-                    .inventory
-                    .list_stock_balances_by_warehouse(&session.tenant_id, &wh.id)
-                    .await
-            } else {
-                Ok(vec![])
-            }
+            Ok(vec![])
         }
     }
 
@@ -602,7 +942,7 @@ impl CoreServices {
         session: &SessionInfo,
         input: &RecordStockMovementInput,
     ) -> Result<StockMovement> {
-        self.check_session_and_permission(session, PERM_WAREHOUSE_OPERATE)?;
+        self.check_session_and_permission(session, PERM_INVENTORY_MANAGE)?;
         validate_stock_movement_input(
             &input.equipment_model_id,
             input.quantity,
@@ -612,30 +952,106 @@ impl CoreServices {
             input.movement_type,
         )?;
 
-        let now = Utc::now().to_rfc3339();
-        let movement = StockMovement {
-            id: Uuid::now_v7().to_string(),
-            tenant_id: session.tenant_id.clone(),
-            equipment_model_id: input.equipment_model_id.clone(),
-            equipment_unit_id: input.equipment_unit_id.clone(),
-            from_warehouse_id: input.from_warehouse_id.clone(),
-            to_warehouse_id: input.to_warehouse_id.clone(),
-            movement_type: input.movement_type,
-            quantity: input.quantity,
-            reason: input.reason.trim().to_string(),
-            reference_id: input.reference_id.clone(),
-            performed_by_user_id: session.user_id.clone(),
-            created_at: now,
-        };
+        let session_clone = session.clone();
+        let input_clone = input.clone();
 
-        let mov_clone = movement.clone();
         self.run_transaction(|stores| {
-            let m = mov_clone.clone();
-            Box::pin(async move { stores.inventory().record_stock_movement(&m).await })
-        })
-        .await?;
+            let session = session_clone.clone();
+            let inp = input_clone.clone();
+            Box::pin(async move {
+                let model = stores
+                    .catalog()
+                    .find_model_by_id(&session.tenant_id, &inp.equipment_model_id)
+                    .await?
+                    .ok_or_else(|| {
+                        CoreError::NotFound("Modelo de equipamento não encontrado.".to_string())
+                    })?;
 
-        Ok(movement)
+                if model.deleted_at.is_some() || !model.active {
+                    return Err(CoreError::Validation(
+                        "Modelo inativo ou excluído não pode receber movimentações de estoque."
+                            .to_string(),
+                    ));
+                }
+
+                // R2: Validação de compatibilidade de control_mode
+                if let Some(ref uid) = inp.equipment_unit_id {
+                    if model.control_mode != ControlMode::Serialized {
+                        return Err(CoreError::Validation(
+                            "Movimentações com unidade física informada exigem modelo serializado."
+                                .to_string(),
+                        ));
+                    }
+                    let unit = stores
+                        .inventory()
+                        .find_unit_by_id(&session.tenant_id, uid)
+                        .await?
+                        .ok_or_else(|| {
+                            CoreError::NotFound("Unidade física não encontrada.".to_string())
+                        })?;
+                    if unit.equipment_model_id != model.id {
+                        return Err(CoreError::Validation(
+                            "A unidade informada não pertence ao modelo especificado.".to_string(),
+                        ));
+                    }
+                } else if model.control_mode == ControlMode::Serialized {
+                    return Err(CoreError::Validation(
+                        "Modelos serializados exigem a identificação da unidade física em suas movimentações."
+                            .to_string(),
+                    ));
+                }
+
+                if let Some(ref from_wh) = inp.from_warehouse_id {
+                    let wh = stores
+                        .inventory()
+                        .find_warehouse_by_id(&session.tenant_id, from_wh)
+                        .await?
+                        .ok_or_else(|| {
+                            CoreError::NotFound("Depósito de origem não encontrado.".to_string())
+                        })?;
+                    if !wh.active || wh.deleted_at.is_some() {
+                        return Err(CoreError::Validation(
+                            "Depósito de origem está inativo ou excluído.".to_string(),
+                        ));
+                    }
+                }
+
+                if let Some(ref to_wh) = inp.to_warehouse_id {
+                    let wh = stores
+                        .inventory()
+                        .find_warehouse_by_id(&session.tenant_id, to_wh)
+                        .await?
+                        .ok_or_else(|| {
+                            CoreError::NotFound("Depósito de destino não encontrado.".to_string())
+                        })?;
+                    if !wh.active || wh.deleted_at.is_some() {
+                        return Err(CoreError::Validation(
+                            "Depósito de destino está inativo ou excluído.".to_string(),
+                        ));
+                    }
+                }
+
+                let now = Utc::now().to_rfc3339();
+                let movement = StockMovement {
+                    id: Uuid::now_v7().to_string(),
+                    tenant_id: session.tenant_id.clone(),
+                    equipment_model_id: inp.equipment_model_id.clone(),
+                    equipment_unit_id: inp.equipment_unit_id.clone(),
+                    from_warehouse_id: inp.from_warehouse_id.clone(),
+                    to_warehouse_id: inp.to_warehouse_id.clone(),
+                    movement_type: inp.movement_type,
+                    quantity: inp.quantity,
+                    reason: inp.reason.trim().to_string(),
+                    reference_id: inp.reference_id.clone(),
+                    performed_by_user_id: session.user_id.clone(),
+                    created_at: now,
+                };
+
+                stores.inventory().record_stock_movement(&movement).await?;
+                Ok(movement)
+            })
+        })
+        .await
     }
 
     pub async fn list_stock_movements(
@@ -643,7 +1059,7 @@ impl CoreServices {
         session: &SessionInfo,
         filter: &StockMovementFilter,
     ) -> Result<Vec<StockMovement>> {
-        self.check_session_and_permission(session, PERM_WAREHOUSE_READ)?;
+        self.check_session_and_permission(session, PERM_INVENTORY_READ)?;
         self.stores
             .inventory
             .list_stock_movements(&session.tenant_id, filter)
@@ -651,57 +1067,7 @@ impl CoreServices {
     }
 
     // ==========================================
-    // 4. MÍDIAS DA UNIDADE FÍSICA (Unit Media)
-    // ==========================================
-
-    pub async fn attach_unit_media(
-        &self,
-        session: &SessionInfo,
-        input: &AttachUnitMediaInput,
-    ) -> Result<EquipmentUnitMedia> {
-        self.check_session_and_permission(session, PERM_WAREHOUSE_OPERATE)?;
-        let unit = self
-            .stores
-            .inventory
-            .find_unit_by_id(&session.tenant_id, &input.equipment_unit_id)
-            .await?
-            .ok_or_else(|| CoreError::NotFound("Unidade física não encontrada.".to_string()))?;
-
-        let media = EquipmentUnitMedia {
-            id: Uuid::now_v7().to_string(),
-            tenant_id: session.tenant_id.clone(),
-            equipment_unit_id: unit.id,
-            blob_id: input.blob_id.clone(),
-            media_type: input.media_type,
-            caption: input.caption.as_ref().map(|c| c.trim().to_string()),
-            created_at: Utc::now().to_rfc3339(),
-            created_by: Some(session.user_id.clone()),
-        };
-
-        let media_clone = media.clone();
-        self.run_transaction(|stores| {
-            let m = media_clone.clone();
-            Box::pin(async move { stores.inventory().attach_unit_media(&m).await })
-        })
-        .await?;
-
-        Ok(media)
-    }
-
-    pub async fn detach_unit_media(&self, session: &SessionInfo, media_id: &str) -> Result<()> {
-        self.check_session_and_permission(session, PERM_WAREHOUSE_OPERATE)?;
-        let tenant_id = session.tenant_id.clone();
-        let m_id = media_id.to_string();
-        self.run_transaction(|stores| {
-            let t = tenant_id.clone();
-            let m = m_id.clone();
-            Box::pin(async move { stores.inventory().detach_unit_media(&t, &m).await })
-        })
-        .await
-    }
-
-    // ==========================================
-    // 5. SANITIZAÇÃO DE DADOS FINANCEIROS
+    // 4. SANITIZAÇÃO DE DADOS FINANCEIROS
     // ==========================================
 
     pub fn sanitize_model_financials(
@@ -709,7 +1075,7 @@ impl CoreServices {
         session: &SessionInfo,
         model: &mut crate::domain::catalog::EquipmentModel,
     ) {
-        if !session.has_permission(PERM_FINANCE_READ) {
+        if !can_view_financials(session) {
             model.cost_price_cents = None;
             model.replacement_value_cents = None;
         }

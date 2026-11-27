@@ -5691,8 +5691,8 @@ mod tests {
                     requires_case: true,
                     units_per_case: Some(1),
                     daily_rate_cents: Some(35_000),
-                    replacement_value_cents: Some(1_800_000),
-                    cost_price_cents: Some(1_200_000),
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
                     active: true,
                     attribute_values: vec![
                         AttributeValueInput {
@@ -5837,8 +5837,8 @@ mod tests {
                     requires_case: true,
                     units_per_case: Some(1),
                     daily_rate_cents: Some(35_000),
-                    replacement_value_cents: Some(1_800_000),
-                    cost_price_cents: Some(1_200_000),
+                    replacement_value_cents: None,
+                    cost_price_cents: None,
                     active: true,
                     attribute_values: vec![
                         AttributeValueInput {
@@ -6032,8 +6032,8 @@ mod tests {
                         requires_case: true,
                         units_per_case: Some(1),
                         daily_rate_cents: Some(35_000 + i),
-                        replacement_value_cents: Some(1_800_000),
-                        cost_price_cents: Some(1_200_000),
+                        replacement_value_cents: None,
+                        cost_price_cents: None,
                         active: true,
                         attribute_values: vec![
                             AttributeValueInput {
@@ -7564,10 +7564,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_store_inventory_operations_crud_ledger_and_media() {
+    async fn test_store_inventory_operations_crud_ledger() {
         use eventrent_core::{
-            CoreServices, EquipmentUnit, EquipmentUnitMedia, PhysicalCondition, SessionInfo,
-            StockMovement, StockMovementType, UnitMediaType, UnitStatus, Warehouse,
+            CoreServices, EquipmentUnit, PhysicalCondition, SessionInfo, StockMovement,
+            StockMovementType, UnitOrigin, UnitStatus, Warehouse,
         };
 
         let pool = init_memory_db().await.unwrap();
@@ -7728,6 +7728,13 @@ mod tests {
             notes: Some("Em perfeito estado".to_string()),
             acquisition_date: Some("2026-01-15".to_string()),
             warranty_expires_at: None,
+            acquisition_cost_cents: Some(150000),
+            supplier_id: None,
+            invoice_number: Some("NF-12345".to_string()),
+            origin: UnitOrigin::Own,
+            return_by: None,
+            usage_hours: 0,
+            location_note: Some("Prateleira A1".to_string()),
             active: true,
             created_at: now.clone(),
             updated_at: now.clone(),
@@ -7754,45 +7761,7 @@ mod tests {
         unit1_mut.notes = Some("Revisado".to_string());
         store.inventory.update_unit(&unit1_mut).await.unwrap();
 
-        // 5. Mídias de Unidade Física
-        let media_id = Uuid::now_v7().to_string();
-        let unit_media = EquipmentUnitMedia {
-            id: media_id.clone(),
-            tenant_id: tenant_id.clone(),
-            equipment_unit_id: unit1_id.clone(),
-            blob_id: "blob_test_001".to_string(),
-            media_type: UnitMediaType::DamagePhoto,
-            caption: Some("Foto da lente frontal".to_string()),
-            created_at: now.clone(),
-            created_by: Some(user_id.to_string()),
-        };
-        store
-            .inventory
-            .attach_unit_media(&unit_media)
-            .await
-            .unwrap();
-
-        let medias = store
-            .inventory
-            .list_unit_media(&tenant_id, &unit1_id)
-            .await
-            .unwrap();
-        assert_eq!(medias.len(), 1);
-        assert_eq!(medias[0].media_type, UnitMediaType::DamagePhoto);
-
-        store
-            .inventory
-            .detach_unit_media(&tenant_id, &media_id)
-            .await
-            .unwrap();
-        let medias_after = store
-            .inventory
-            .list_unit_media(&tenant_id, &unit1_id)
-            .await
-            .unwrap();
-        assert_eq!(medias_after.len(), 0);
-
-        // 6. Livro-Razão e Movimentações de Estoque
+        // 5. Livro-Razão e Movimentações de Estoque
         let mov1 = StockMovement {
             id: Uuid::now_v7().to_string(),
             tenant_id: tenant_id.clone(),
@@ -8022,6 +7991,8 @@ mod tests {
                 "catalog:read".to_string(),
                 "warehouse:read".to_string(),
                 "warehouse:operate".to_string(),
+                "inventory:read".to_string(),
+                "inventory:manage".to_string(),
             ],
             authenticated_at: now.clone(),
             last_activity_at: now.clone(),
@@ -8083,9 +8054,9 @@ mod tests {
                     equipment_unit_id: None,
                     from_warehouse_id: Some(default_wh.id.clone()),
                     to_warehouse_id: None,
-                    movement_type: StockMovementType::RentalOut,
+                    movement_type: StockMovementType::LossOut,
                     quantity: 9,
-                    reason: "Locação de 9 cabos para festival".to_string(),
+                    reason: "Baixa de 9 cabos para descarte".to_string(),
                     reference_id: None,
                 },
             )
@@ -8115,7 +8086,7 @@ mod tests {
                             equipment_unit_id: None,
                             from_warehouse_id: Some(wh),
                             to_warehouse_id: None,
-                            movement_type: StockMovementType::RentalOut,
+                            movement_type: StockMovementType::LossOut,
                             quantity: 1,
                             reason: "Saída Concorrente 1 do último item".to_string(),
                             reference_id: None,
@@ -8136,7 +8107,7 @@ mod tests {
                             equipment_unit_id: None,
                             from_warehouse_id: Some(wh),
                             to_warehouse_id: None,
-                            movement_type: StockMovementType::RentalOut,
+                            movement_type: StockMovementType::LossOut,
                             quantity: 1,
                             reason: "Saída Concorrente 2 do último item".to_string(),
                             reference_id: None,
@@ -8366,6 +8337,8 @@ mod tests {
                 "catalog:manage".to_string(),
                 "warehouse:read".to_string(),
                 "warehouse:operate".to_string(),
+                "inventory:read".to_string(),
+                "inventory:manage".to_string(),
                 "finance:read".to_string(),
                 "finance:manage".to_string(),
             ],
@@ -8389,6 +8362,8 @@ mod tests {
                 "catalog:manage".to_string(),
                 "warehouse:read".to_string(),
                 "warehouse:operate".to_string(),
+                "inventory:read".to_string(),
+                "inventory:manage".to_string(),
             ],
             authenticated_at: now.clone(),
             last_activity_at: now.clone(),
@@ -8405,17 +8380,57 @@ mod tests {
             role_id: "role_tech".to_string(),
             role_name: "Técnico".to_string(),
             role_slug: "tecnico".to_string(),
-            permissions: vec!["catalog:read".to_string(), "warehouse:read".to_string()],
+            permissions: vec![
+                "catalog:read".to_string(),
+                "warehouse:read".to_string(),
+                "inventory:read".to_string(),
+            ],
             authenticated_at: now.clone(),
             last_activity_at: now.clone(),
             inactivity_timeout_minutes: 60,
             auth_epoch: 1,
         };
 
-        // Criação de modelo com valores confidenciais via sessão de Estoque
-        let created_by_stock = services
+        // 1. Tentativa de criação de modelo com valores confidenciais via sessão de Estoque DEVE FALHAR (Forbidden)
+        let forbidden_stock = services
             .create_equipment_model(
                 &stock_session,
+                &CreateEquipmentModelInput {
+                    category_id: "cat_fin_test".to_string(),
+                    brand_id: None,
+                    name: "Subwoofer 18 polegadas".to_string(),
+                    model_code: None,
+                    sku: Some("SKU-SUB-18".to_string()),
+                    ean: None,
+                    ncm: None,
+                    description: None,
+                    control_mode: ControlMode::Serialized,
+                    weight_kg: None,
+                    length_cm: None,
+                    width_cm: None,
+                    height_cm: None,
+                    power_watts: None,
+                    voltage: None,
+                    amperage: None,
+                    requires_case: false,
+                    units_per_case: None,
+                    daily_rate_cents: Some(15000),
+                    replacement_value_cents: Some(850000),
+                    cost_price_cents: Some(420000),
+                    active: true,
+                    attribute_values: vec![],
+                },
+            )
+            .await;
+        assert!(
+            matches!(forbidden_stock, Err(CoreError::Forbidden(_))),
+            "Estoque não pode definir campos financeiros no modelo"
+        );
+
+        // 2. Criação legítima pelo Proprietário com valores confidenciais
+        let created_by_owner = services
+            .create_equipment_model(
+                &owner_session,
                 &CreateEquipmentModelInput {
                     category_id: "cat_fin_test".to_string(),
                     brand_id: None,
@@ -8445,17 +8460,18 @@ mod tests {
             .await
             .unwrap();
 
-        // O retorno de create_equipment_model para Estoque já deve vir sanitizado
         assert_eq!(
-            created_by_stock.model.cost_price_cents, None,
-            "Estoque não deve ver cost_price_cents no retorno de criação"
+            created_by_owner.model.cost_price_cents,
+            Some(420000),
+            "Proprietário deve ver cost_price_cents no retorno de criação"
         );
         assert_eq!(
-            created_by_stock.model.replacement_value_cents, None,
-            "Estoque não deve ver replacement_value_cents no retorno de criação"
+            created_by_owner.model.replacement_value_cents,
+            Some(850000),
+            "Proprietário deve ver replacement_value_cents no retorno de criação"
         );
 
-        let model_id = &created_by_stock.model.id;
+        let model_id = &created_by_owner.model.id;
 
         // A) get_equipment_model
         let model_owner = services
@@ -8552,6 +8568,8 @@ mod tests {
                 "catalog:manage".to_string(),
                 "warehouse:read".to_string(),
                 "warehouse:operate".to_string(),
+                "inventory:read".to_string(),
+                "inventory:manage".to_string(),
                 "finance:read".to_string(),
             ],
             authenticated_at: now.clone(),
@@ -8628,6 +8646,13 @@ mod tests {
                     notes: None,
                     acquisition_date: None,
                     warranty_expires_at: None,
+                    acquisition_cost_cents: None,
+                    supplier_id: None,
+                    invoice_number: None,
+                    origin: None,
+                    return_by: None,
+                    usage_hours: None,
+                    location_note: None,
                 },
             )
             .await

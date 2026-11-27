@@ -3131,7 +3131,17 @@ mod unit_tests {
             ) -> crate::error::Result<Vec<crate::domain::EquipmentUnit>> {
                 unreachable!()
             }
+            async fn list_unit_details(
+                &self,
+                _: &str,
+                _: &crate::domain::EquipmentUnitFilter,
+            ) -> crate::error::Result<crate::domain::EquipmentUnitListPage> {
+                unreachable!()
+            }
             async fn next_patrimony_tag(&self, _: &str) -> crate::error::Result<String> {
+                unreachable!()
+            }
+            async fn count_unit_movements(&self, _: &str, _: &str) -> crate::error::Result<i64> {
                 unreachable!()
             }
             async fn delete_unit(&self, _: &str, _: &str) -> crate::error::Result<()> {
@@ -3170,22 +3180,6 @@ mod unit_tests {
                 _: &str,
                 _: &crate::domain::StockMovementFilter,
             ) -> crate::error::Result<Vec<crate::domain::StockMovement>> {
-                unreachable!()
-            }
-            async fn attach_unit_media(
-                &self,
-                _: &crate::domain::EquipmentUnitMedia,
-            ) -> crate::error::Result<()> {
-                unreachable!()
-            }
-            async fn detach_unit_media(&self, _: &str, _: &str) -> crate::error::Result<()> {
-                unreachable!()
-            }
-            async fn list_unit_media(
-                &self,
-                _: &str,
-                _: &str,
-            ) -> crate::error::Result<Vec<crate::domain::EquipmentUnitMedia>> {
                 unreachable!()
             }
         }

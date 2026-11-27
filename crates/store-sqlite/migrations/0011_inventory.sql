@@ -52,11 +52,18 @@ CREATE TABLE equipment_unit (
     warehouse_id TEXT NOT NULL,
     patrimony_tag TEXT NOT NULL,
     serial_number TEXT,
-    status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available', 'allocated', 'in_transit', 'maintenance', 'damaged', 'lost', 'retired')),
+    status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available', 'maintenance', 'damaged', 'lost', 'decommissioned')),
     physical_condition TEXT NOT NULL DEFAULT 'good' CHECK (physical_condition IN ('new', 'good', 'fair', 'poor', 'damaged')),
     notes TEXT,
     acquisition_date TEXT,
     warranty_expires_at TEXT,
+    acquisition_cost_cents INTEGER CHECK (acquisition_cost_cents IS NULL OR acquisition_cost_cents >= 0),
+    supplier_id TEXT,
+    invoice_number TEXT,
+    origin TEXT NOT NULL DEFAULT 'own' CHECK (origin IN ('own', 'third_party')),
+    return_by TEXT,
+    usage_hours INTEGER NOT NULL DEFAULT 0 CHECK (usage_hours >= 0),
+    location_note TEXT,
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -65,6 +72,7 @@ CREATE TABLE equipment_unit (
     FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE,
     FOREIGN KEY (tenant_id, equipment_model_id) REFERENCES equipment_model(tenant_id, id) ON DELETE RESTRICT,
     FOREIGN KEY (tenant_id, warehouse_id) REFERENCES warehouse(tenant_id, id) ON DELETE RESTRICT,
+    FOREIGN KEY (tenant_id, supplier_id) REFERENCES customer(tenant_id, id) ON DELETE SET NULL,
     FOREIGN KEY (created_by) REFERENCES app_user(id) ON DELETE SET NULL,
     UNIQUE (tenant_id, id)
 );
@@ -92,8 +100,8 @@ CREATE TABLE stock_balance (
     warehouse_id TEXT NOT NULL,
     equipment_model_id TEXT NOT NULL,
     quantity_on_hand INTEGER NOT NULL DEFAULT 0,
-    quantity_allocated INTEGER NOT NULL DEFAULT 0,
     quantity_maintenance INTEGER NOT NULL DEFAULT 0,
+    min_quantity INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE,
     FOREIGN KEY (tenant_id, warehouse_id) REFERENCES warehouse(tenant_id, id) ON DELETE RESTRICT,
@@ -101,8 +109,8 @@ CREATE TABLE stock_balance (
     UNIQUE (tenant_id, id),
     CONSTRAINT chk_stock_balance_positive CHECK (
         quantity_on_hand >= 0 AND
-        quantity_allocated >= 0 AND
-        quantity_maintenance >= 0
+        quantity_maintenance >= 0 AND
+        min_quantity >= 0
     )
 );
 
@@ -120,12 +128,11 @@ CREATE TABLE stock_movement (
     movement_type TEXT NOT NULL CHECK (movement_type IN (
         'purchase_in',
         'return_in',
-        'rental_out',
         'transfer_out',
         'transfer_in',
-        'maintenance_out',
-        'maintenance_in',
+        'status_change',
         'loss_out',
+        'decommission_out',
         'adjustment'
     )),
     quantity INTEGER NOT NULL CHECK (quantity > 0),
@@ -160,24 +167,3 @@ BEFORE DELETE ON stock_movement
 BEGIN
     SELECT RAISE(ABORT, 'Operação proibida: registros de stock_movement não podem ser excluídos');
 END;
-
--- 6. Mídias Vinculadas a Unidades Físicas (equipment_unit_media)
-CREATE TABLE equipment_unit_media (
-    id TEXT PRIMARY KEY NOT NULL,
-    tenant_id TEXT NOT NULL,
-    equipment_unit_id TEXT NOT NULL,
-    blob_id TEXT NOT NULL,
-    media_type TEXT NOT NULL CHECK (media_type IN ('damage_photo', 'inspection_photo', 'serial_photo', 'invoice_doc')),
-    caption TEXT,
-    created_at TEXT NOT NULL,
-    created_by TEXT,
-    FOREIGN KEY (tenant_id) REFERENCES tenant(id) ON DELETE CASCADE,
-    FOREIGN KEY (tenant_id, equipment_unit_id) REFERENCES equipment_unit(tenant_id, id) ON DELETE CASCADE,
-    FOREIGN KEY (tenant_id, blob_id) REFERENCES media_blob(tenant_id, id) ON DELETE RESTRICT,
-    FOREIGN KEY (created_by) REFERENCES app_user(id) ON DELETE SET NULL,
-    UNIQUE (tenant_id, id)
-);
-
-CREATE INDEX idx_equipment_unit_media_unit
-    ON equipment_unit_media (tenant_id, equipment_unit_id);
-

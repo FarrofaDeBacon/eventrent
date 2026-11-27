@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use eventrent_core::{
-    format_patrimony_tag, CoreError, EquipmentUnit, EquipmentUnitFilter, EquipmentUnitMedia,
-    InventoryStore, PhysicalCondition, Result, StockBalance, StockMovement, StockMovementFilter,
-    StockMovementType, UnitMediaType, UnitStatus, Warehouse,
+    format_patrimony_tag, CoreError, EquipmentUnit, EquipmentUnitDetails, EquipmentUnitFilter,
+    EquipmentUnitListPage, InventoryStore, PhysicalCondition, Result, StockBalance, StockMovement,
+    StockMovementFilter, StockMovementType, UnitOrigin, UnitStatus, Warehouse,
 };
 use sqlx::{QueryBuilder, Row, Sqlite};
 use uuid::Uuid;
@@ -36,6 +36,8 @@ fn parse_equipment_unit_row(row: &sqlx::sqlite::SqliteRow) -> Result<EquipmentUn
     let status = UnitStatus::parse(&status_raw)?;
     let condition_raw: String = row.get("physical_condition");
     let physical_condition = PhysicalCondition::parse(&condition_raw)?;
+    let origin_raw: String = row.get("origin");
+    let origin = UnitOrigin::parse(&origin_raw)?;
 
     Ok(EquipmentUnit {
         id: row.get("id"),
@@ -49,6 +51,13 @@ fn parse_equipment_unit_row(row: &sqlx::sqlite::SqliteRow) -> Result<EquipmentUn
         notes: row.get("notes"),
         acquisition_date: row.get("acquisition_date"),
         warranty_expires_at: row.get("warranty_expires_at"),
+        acquisition_cost_cents: row.get("acquisition_cost_cents"),
+        supplier_id: row.get("supplier_id"),
+        invoice_number: row.get("invoice_number"),
+        origin,
+        return_by: row.get("return_by"),
+        usage_hours: row.get("usage_hours"),
+        location_note: row.get("location_note"),
         active: row.get::<i64, _>("active") != 0,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
@@ -64,8 +73,8 @@ fn parse_stock_balance_row(row: &sqlx::sqlite::SqliteRow) -> StockBalance {
         warehouse_id: row.get("warehouse_id"),
         equipment_model_id: row.get("equipment_model_id"),
         quantity_on_hand: row.get("quantity_on_hand"),
-        quantity_allocated: row.get("quantity_allocated"),
         quantity_maintenance: row.get("quantity_maintenance"),
+        min_quantity: row.get("min_quantity"),
         updated_at: row.get("updated_at"),
     }
 }
@@ -87,22 +96,6 @@ fn parse_stock_movement_row(row: &sqlx::sqlite::SqliteRow) -> Result<StockMoveme
         reference_id: row.get("reference_id"),
         performed_by_user_id: row.get("performed_by_user_id"),
         created_at: row.get("created_at"),
-    })
-}
-
-fn parse_unit_media_row(row: &sqlx::sqlite::SqliteRow) -> Result<EquipmentUnitMedia> {
-    let media_type_raw: String = row.get("media_type");
-    let media_type = UnitMediaType::parse(&media_type_raw)?;
-
-    Ok(EquipmentUnitMedia {
-        id: row.get("id"),
-        tenant_id: row.get("tenant_id"),
-        equipment_unit_id: row.get("equipment_unit_id"),
-        blob_id: row.get("blob_id"),
-        media_type,
-        caption: row.get("caption"),
-        created_at: row.get("created_at"),
-        created_by: row.get("created_by"),
     })
 }
 
@@ -277,8 +270,9 @@ impl InventoryStore for SqliteStore {
             INSERT INTO equipment_unit (
                 id, tenant_id, equipment_model_id, warehouse_id, patrimony_tag, serial_number,
                 status, physical_condition, notes, acquisition_date, warranty_expires_at,
-                active, created_at, updated_at, deleted_at, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                acquisition_cost_cents, supplier_id, invoice_number, origin, return_by,
+                usage_hours, location_note, active, created_at, updated_at, deleted_at, created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&unit.id)
@@ -292,6 +286,13 @@ impl InventoryStore for SqliteStore {
         .bind(&unit.notes)
         .bind(&unit.acquisition_date)
         .bind(&unit.warranty_expires_at)
+        .bind(unit.acquisition_cost_cents)
+        .bind(&unit.supplier_id)
+        .bind(&unit.invoice_number)
+        .bind(unit.origin.as_str())
+        .bind(&unit.return_by)
+        .bind(unit.usage_hours)
+        .bind(&unit.location_note)
         .bind(if unit.active { 1i64 } else { 0i64 })
         .bind(&unit.created_at)
         .bind(&unit.updated_at)
@@ -306,7 +307,10 @@ impl InventoryStore for SqliteStore {
             r#"
             UPDATE equipment_unit
             SET warehouse_id = ?, serial_number = ?, status = ?, physical_condition = ?,
-                notes = ?, acquisition_date = ?, warranty_expires_at = ?, active = ?, updated_at = ?
+                notes = ?, acquisition_date = ?, warranty_expires_at = ?,
+                acquisition_cost_cents = ?, supplier_id = ?, invoice_number = ?,
+                origin = ?, return_by = ?, usage_hours = ?, location_note = ?,
+                active = ?, updated_at = ?
             WHERE tenant_id = ? AND id = ? AND deleted_at IS NULL
             "#,
         )
@@ -317,6 +321,13 @@ impl InventoryStore for SqliteStore {
         .bind(&unit.notes)
         .bind(&unit.acquisition_date)
         .bind(&unit.warranty_expires_at)
+        .bind(unit.acquisition_cost_cents)
+        .bind(&unit.supplier_id)
+        .bind(&unit.invoice_number)
+        .bind(unit.origin.as_str())
+        .bind(&unit.return_by)
+        .bind(unit.usage_hours)
+        .bind(&unit.location_note)
         .bind(if unit.active { 1i64 } else { 0i64 })
         .bind(&unit.updated_at)
         .bind(&unit.tenant_id)
@@ -405,6 +416,116 @@ impl InventoryStore for SqliteStore {
             list.push(parse_equipment_unit_row(r)?);
         }
         Ok(list)
+    }
+
+    async fn list_unit_details(
+        &self,
+        tenant_id: &str,
+        filter: &EquipmentUnitFilter,
+    ) -> Result<EquipmentUnitListPage> {
+        let limit = filter.limit.unwrap_or(50).clamp(1, 100);
+        let mut qb = QueryBuilder::<Sqlite>::new(
+            r#"
+            SELECT u.id, u.tenant_id, u.equipment_model_id, u.warehouse_id, u.patrimony_tag, u.serial_number,
+                   u.status, u.physical_condition, u.notes, u.acquisition_date, u.warranty_expires_at,
+                   u.acquisition_cost_cents, u.supplier_id, u.invoice_number, u.origin, u.return_by,
+                   u.usage_hours, u.location_note, u.active, u.created_at, u.updated_at, u.deleted_at, u.created_by,
+                   m.name AS model_name,
+                   w.name AS warehouse_name,
+                   COALESCE(ma.thumb_blob_id, ma.blob_id) AS primary_thumb_blob_id
+            FROM equipment_unit u
+            INNER JOIN equipment_model m ON m.tenant_id = u.tenant_id AND m.id = u.equipment_model_id
+            INNER JOIN warehouse w ON w.tenant_id = u.tenant_id AND w.id = u.warehouse_id
+            LEFT JOIN equipment_model_media emm
+                ON emm.tenant_id = m.tenant_id AND emm.model_id = m.id
+               AND emm.is_primary = 1 AND emm.deleted_at IS NULL
+            LEFT JOIN media_asset ma
+                ON ma.tenant_id = emm.tenant_id AND ma.id = emm.asset_id AND ma.deleted_at IS NULL
+            WHERE u.tenant_id = 
+            "#,
+        );
+        qb.push_bind(tenant_id);
+        qb.push(" AND u.deleted_at IS NULL ");
+
+        if let Some(ref mid) = filter.equipment_model_id {
+            qb.push(" AND u.equipment_model_id = ").push_bind(mid);
+        }
+        if let Some(ref wid) = filter.warehouse_id {
+            qb.push(" AND u.warehouse_id = ").push_bind(wid);
+        }
+        if let Some(st) = filter.status {
+            qb.push(" AND u.status = ").push_bind(st.as_str());
+        }
+        if let Some(true) = filter.active_only {
+            qb.push(" AND u.active = 1 ");
+        }
+
+        // R7: Busca com suporte a até 8 termos em 100 caracteres
+        if let Some(ref s) = filter.search {
+            let s_trimmed: String = s.chars().take(100).collect();
+            let terms: Vec<&str> = s_trimmed.split_whitespace().take(8).collect();
+            for term in terms {
+                let pattern = format!("%{}%", term.to_uppercase());
+                qb.push(" AND (u.patrimony_tag LIKE ");
+                qb.push_bind(pattern.clone());
+                qb.push(" OR u.serial_number LIKE ");
+                qb.push_bind(pattern.clone());
+                qb.push(" OR UPPER(m.name) LIKE ");
+                qb.push_bind(pattern);
+                qb.push(") ");
+            }
+        }
+
+        // Paginação estável por cursor
+        if let Some(ref cur) = filter.cursor {
+            qb.push(" AND u.patrimony_tag > ").push_bind(cur.clone());
+        }
+
+        qb.push(" ORDER BY u.patrimony_tag ASC LIMIT ");
+        qb.push_bind((limit + 1) as i64);
+
+        let query = qb.build();
+        let rows = self.fetch_all(query).await?;
+        let has_more = rows.len() > limit;
+        let take_count = if has_more { limit } else { rows.len() };
+
+        let mut items = Vec::with_capacity(take_count);
+        for row in rows.iter().take(take_count) {
+            let unit = parse_equipment_unit_row(row)?;
+            let model_name: String = row.get("model_name");
+            let warehouse_name: String = row.get("warehouse_name");
+            let model_thumbnail_url: Option<String> = row.get("primary_thumb_blob_id");
+
+            items.push(EquipmentUnitDetails {
+                unit,
+                model_name,
+                warehouse_name,
+                model_thumbnail_url,
+            });
+        }
+
+        let next_cursor = if has_more {
+            items.last().map(|i| i.unit.patrimony_tag.clone())
+        } else {
+            None
+        };
+
+        Ok(EquipmentUnitListPage {
+            items,
+            next_cursor,
+            has_more,
+        })
+    }
+
+    async fn count_unit_movements(&self, tenant_id: &str, unit_id: &str) -> Result<i64> {
+        let query = sqlx::query(
+            "SELECT COUNT(*) AS cnt FROM stock_movement WHERE tenant_id = ? AND equipment_unit_id = ?",
+        )
+        .bind(tenant_id)
+        .bind(unit_id);
+
+        let row = self.fetch_one(query).await?;
+        Ok(row.get("cnt"))
     }
 
     async fn next_patrimony_tag(&self, tenant_id: &str) -> Result<String> {
@@ -533,10 +654,9 @@ impl InventoryStore for SqliteStore {
         // A) Origem (subtração)
         if let Some(ref from_wh) = movement.from_warehouse_id {
             let sb_id = Uuid::now_v7().to_string();
-            // Garante linha existente
             let q_upsert = sqlx::query(
                 r#"
-                INSERT INTO stock_balance (id, tenant_id, warehouse_id, equipment_model_id, quantity_on_hand, quantity_allocated, quantity_maintenance, updated_at)
+                INSERT INTO stock_balance (id, tenant_id, warehouse_id, equipment_model_id, quantity_on_hand, quantity_maintenance, min_quantity, updated_at)
                 VALUES (?, ?, ?, ?, 0, 0, 0, ?)
                 ON CONFLICT(tenant_id, warehouse_id, equipment_model_id) DO NOTHING
                 "#,
@@ -549,23 +669,25 @@ impl InventoryStore for SqliteStore {
             self.execute(q_upsert).await?;
 
             let (col_adj, delta) = match movement.movement_type {
-                StockMovementType::RentalOut => ("quantity_on_hand", -movement.quantity),
-                StockMovementType::MaintenanceOut => ("quantity_on_hand", -movement.quantity),
-                StockMovementType::LossOut => ("quantity_on_hand", -movement.quantity),
-                StockMovementType::TransferOut => ("quantity_on_hand", -movement.quantity),
+                StockMovementType::TransferOut
+                | StockMovementType::LossOut
+                | StockMovementType::DecommissionOut => ("quantity_on_hand", -movement.quantity),
+                StockMovementType::StatusChange => ("quantity_on_hand", 0),
                 StockMovementType::Adjustment => ("quantity_on_hand", -movement.quantity),
                 _ => ("quantity_on_hand", -movement.quantity),
             };
 
-            let q_update_from = format!(
-                "UPDATE stock_balance SET {col_adj} = {col_adj} + ({delta}), updated_at = ? WHERE tenant_id = ? AND warehouse_id = ? AND equipment_model_id = ?"
-            );
-            let q_adj = sqlx::query(&q_update_from)
-                .bind(&now)
-                .bind(&movement.tenant_id)
-                .bind(from_wh)
-                .bind(&movement.equipment_model_id);
-            self.execute(q_adj).await?;
+            if delta != 0 {
+                let q_update_from = format!(
+                    "UPDATE stock_balance SET {col_adj} = {col_adj} + ({delta}), updated_at = ? WHERE tenant_id = ? AND warehouse_id = ? AND equipment_model_id = ?"
+                );
+                let q_adj = sqlx::query(&q_update_from)
+                    .bind(&now)
+                    .bind(&movement.tenant_id)
+                    .bind(from_wh)
+                    .bind(&movement.equipment_model_id);
+                self.execute(q_adj).await?;
+            }
         }
 
         // B) Destino (adição)
@@ -573,7 +695,7 @@ impl InventoryStore for SqliteStore {
             let sb_id = Uuid::now_v7().to_string();
             let q_upsert = sqlx::query(
                 r#"
-                INSERT INTO stock_balance (id, tenant_id, warehouse_id, equipment_model_id, quantity_on_hand, quantity_allocated, quantity_maintenance, updated_at)
+                INSERT INTO stock_balance (id, tenant_id, warehouse_id, equipment_model_id, quantity_on_hand, quantity_maintenance, min_quantity, updated_at)
                 VALUES (?, ?, ?, ?, 0, 0, 0, ?)
                 ON CONFLICT(tenant_id, warehouse_id, equipment_model_id) DO NOTHING
                 "#,
@@ -586,23 +708,25 @@ impl InventoryStore for SqliteStore {
             self.execute(q_upsert).await?;
 
             let (col_adj, delta) = match movement.movement_type {
-                StockMovementType::PurchaseIn => ("quantity_on_hand", movement.quantity),
-                StockMovementType::ReturnIn => ("quantity_on_hand", movement.quantity),
-                StockMovementType::TransferIn => ("quantity_on_hand", movement.quantity),
-                StockMovementType::MaintenanceIn => ("quantity_on_hand", movement.quantity),
+                StockMovementType::PurchaseIn
+                | StockMovementType::ReturnIn
+                | StockMovementType::TransferIn => ("quantity_on_hand", movement.quantity),
+                StockMovementType::StatusChange => ("quantity_on_hand", 0),
                 StockMovementType::Adjustment => ("quantity_on_hand", movement.quantity),
                 _ => ("quantity_on_hand", movement.quantity),
             };
 
-            let q_update_to = format!(
-                "UPDATE stock_balance SET {col_adj} = {col_adj} + ({delta}), updated_at = ? WHERE tenant_id = ? AND warehouse_id = ? AND equipment_model_id = ?"
-            );
-            let q_adj = sqlx::query(&q_update_to)
-                .bind(&now)
-                .bind(&movement.tenant_id)
-                .bind(to_wh)
-                .bind(&movement.equipment_model_id);
-            self.execute(q_adj).await?;
+            if delta != 0 {
+                let q_update_to = format!(
+                    "UPDATE stock_balance SET {col_adj} = {col_adj} + ({delta}), updated_at = ? WHERE tenant_id = ? AND warehouse_id = ? AND equipment_model_id = ?"
+                );
+                let q_adj = sqlx::query(&q_update_to)
+                    .bind(&now)
+                    .bind(&movement.tenant_id)
+                    .bind(to_wh)
+                    .bind(&movement.equipment_model_id);
+                self.execute(q_adj).await?;
+            }
         }
 
         Ok(())
@@ -639,61 +763,6 @@ impl InventoryStore for SqliteStore {
         let mut list = Vec::with_capacity(rows.len());
         for r in &rows {
             list.push(parse_stock_movement_row(r)?);
-        }
-        Ok(list)
-    }
-
-    // ==========================================
-    // 4. UNIT MEDIA
-    // ==========================================
-
-    async fn attach_unit_media(&self, media: &EquipmentUnitMedia) -> Result<()> {
-        let query = sqlx::query(
-            r#"
-            INSERT INTO equipment_unit_media (
-                id, tenant_id, equipment_unit_id, blob_id, media_type, caption, created_at, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&media.id)
-        .bind(&media.tenant_id)
-        .bind(&media.equipment_unit_id)
-        .bind(&media.blob_id)
-        .bind(media.media_type.as_str())
-        .bind(&media.caption)
-        .bind(&media.created_at)
-        .bind(&media.created_by);
-
-        self.execute(query).await.map(|_| ())
-    }
-
-    async fn detach_unit_media(&self, tenant_id: &str, id: &str) -> Result<()> {
-        let query = sqlx::query("DELETE FROM equipment_unit_media WHERE tenant_id = ? AND id = ?")
-            .bind(tenant_id)
-            .bind(id);
-
-        let rows = self.execute(query).await?;
-        if rows.rows_affected() == 0 {
-            return Err(CoreError::NotFound(format!("Mídia '{id}' não encontrada.")));
-        }
-        Ok(())
-    }
-
-    async fn list_unit_media(
-        &self,
-        tenant_id: &str,
-        unit_id: &str,
-    ) -> Result<Vec<EquipmentUnitMedia>> {
-        let query = sqlx::query(
-            "SELECT * FROM equipment_unit_media WHERE tenant_id = ? AND equipment_unit_id = ? ORDER BY created_at ASC",
-        )
-        .bind(tenant_id)
-        .bind(unit_id);
-
-        let rows = self.fetch_all(query).await?;
-        let mut list = Vec::with_capacity(rows.len());
-        for r in &rows {
-            list.push(parse_unit_media_row(r)?);
         }
         Ok(list)
     }

@@ -511,7 +511,13 @@ pub trait InventoryStore: Send + Sync {
         tenant_id: &str,
         filter: &EquipmentUnitFilter,
     ) -> Result<Vec<EquipmentUnit>>;
+    async fn list_unit_details(
+        &self,
+        tenant_id: &str,
+        filter: &EquipmentUnitFilter,
+    ) -> Result<EquipmentUnitListPage>;
     async fn next_patrimony_tag(&self, tenant_id: &str) -> Result<String>;
+    async fn count_unit_movements(&self, tenant_id: &str, unit_id: &str) -> Result<i64>;
     async fn delete_unit(&self, tenant_id: &str, id: &str) -> Result<()>;
 
     // Estoque & Saldos (Stock & Balances)
@@ -537,15 +543,6 @@ pub trait InventoryStore: Send + Sync {
         tenant_id: &str,
         filter: &StockMovementFilter,
     ) -> Result<Vec<StockMovement>>;
-
-    // Mídias da Unidade Física (Unit Media)
-    async fn attach_unit_media(&self, media: &EquipmentUnitMedia) -> Result<()>;
-    async fn detach_unit_media(&self, tenant_id: &str, id: &str) -> Result<()>;
-    async fn list_unit_media(
-        &self,
-        tenant_id: &str,
-        unit_id: &str,
-    ) -> Result<Vec<EquipmentUnitMedia>>;
 }
 
 #[derive(Default)]

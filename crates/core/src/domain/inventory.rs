@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::domain::user::SessionInfo;
 use crate::error::{CoreError, Result};
 
 pub const MAX_WAREHOUSE_NAME_LEN: usize = 120;
@@ -8,43 +9,66 @@ pub const MAX_SERIAL_NUMBER_LEN: usize = 80;
 pub const MAX_PATRIMONY_TAG_LEN: usize = 30;
 pub const MAX_NOTES_LEN: usize = 2000;
 pub const MAX_REASON_LEN: usize = 500;
+pub const MAX_LOCATION_NOTE_LEN: usize = 250;
+pub const MAX_INVOICE_NUMBER_LEN: usize = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UnitStatus {
     Available,
-    Allocated,
-    InTransit,
     Maintenance,
     Damaged,
     Lost,
-    Retired,
+    Decommissioned,
 }
 
 impl UnitStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Available => "available",
-            Self::Allocated => "allocated",
-            Self::InTransit => "in_transit",
             Self::Maintenance => "maintenance",
             Self::Damaged => "damaged",
             Self::Lost => "lost",
-            Self::Retired => "retired",
+            Self::Decommissioned => "decommissioned",
         }
     }
 
     pub fn parse(raw: &str) -> Result<Self> {
         match raw.trim().to_lowercase().as_str() {
             "available" => Ok(Self::Available),
-            "allocated" => Ok(Self::Allocated),
-            "in_transit" => Ok(Self::InTransit),
             "maintenance" => Ok(Self::Maintenance),
             "damaged" => Ok(Self::Damaged),
             "lost" => Ok(Self::Lost),
-            "retired" => Ok(Self::Retired),
+            "decommissioned" => Ok(Self::Decommissioned),
             other => Err(CoreError::Validation(format!(
-                "Status de unidade inválido: '{other}'. Valores permitidos: available, allocated, in_transit, maintenance, damaged, lost, retired."
+                "Status de unidade inválido: '{other}'. Valores permitidos: available, maintenance, damaged, lost, decommissioned."
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum UnitOrigin {
+    #[default]
+    Own,
+    ThirdParty,
+}
+
+impl UnitOrigin {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Own => "own",
+            Self::ThirdParty => "third_party",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Result<Self> {
+        match raw.trim().to_lowercase().as_str() {
+            "own" => Ok(Self::Own),
+            "third_party" => Ok(Self::ThirdParty),
+            other => Err(CoreError::Validation(format!(
+                "Origem de unidade inválida: '{other}'. Valores permitidos: own, third_party."
             ))),
         }
     }
@@ -90,12 +114,11 @@ impl PhysicalCondition {
 pub enum StockMovementType {
     PurchaseIn,
     ReturnIn,
-    RentalOut,
     TransferOut,
     TransferIn,
-    MaintenanceOut,
-    MaintenanceIn,
+    StatusChange,
     LossOut,
+    DecommissionOut,
     Adjustment,
 }
 
@@ -104,12 +127,11 @@ impl StockMovementType {
         match self {
             Self::PurchaseIn => "purchase_in",
             Self::ReturnIn => "return_in",
-            Self::RentalOut => "rental_out",
             Self::TransferOut => "transfer_out",
             Self::TransferIn => "transfer_in",
-            Self::MaintenanceOut => "maintenance_out",
-            Self::MaintenanceIn => "maintenance_in",
+            Self::StatusChange => "status_change",
             Self::LossOut => "loss_out",
+            Self::DecommissionOut => "decommission_out",
             Self::Adjustment => "adjustment",
         }
     }
@@ -118,47 +140,14 @@ impl StockMovementType {
         match raw.trim().to_lowercase().as_str() {
             "purchase_in" => Ok(Self::PurchaseIn),
             "return_in" => Ok(Self::ReturnIn),
-            "rental_out" => Ok(Self::RentalOut),
             "transfer_out" => Ok(Self::TransferOut),
             "transfer_in" => Ok(Self::TransferIn),
-            "maintenance_out" => Ok(Self::MaintenanceOut),
-            "maintenance_in" => Ok(Self::MaintenanceIn),
+            "status_change" => Ok(Self::StatusChange),
             "loss_out" => Ok(Self::LossOut),
+            "decommission_out" => Ok(Self::DecommissionOut),
             "adjustment" => Ok(Self::Adjustment),
             other => Err(CoreError::Validation(format!(
                 "Tipo de movimentação de estoque inválido: '{other}'."
-            ))),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum UnitMediaType {
-    DamagePhoto,
-    InspectionPhoto,
-    SerialPhoto,
-    InvoiceDoc,
-}
-
-impl UnitMediaType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::DamagePhoto => "damage_photo",
-            Self::InspectionPhoto => "inspection_photo",
-            Self::SerialPhoto => "serial_photo",
-            Self::InvoiceDoc => "invoice_doc",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Result<Self> {
-        match raw.trim().to_lowercase().as_str() {
-            "damage_photo" => Ok(Self::DamagePhoto),
-            "inspection_photo" => Ok(Self::InspectionPhoto),
-            "serial_photo" => Ok(Self::SerialPhoto),
-            "invoice_doc" => Ok(Self::InvoiceDoc),
-            other => Err(CoreError::Validation(format!(
-                "Tipo de mídia de unidade física inválido: '{other}'."
             ))),
         }
     }
@@ -210,6 +199,13 @@ pub struct EquipmentUnit {
     pub notes: Option<String>,
     pub acquisition_date: Option<String>,
     pub warranty_expires_at: Option<String>,
+    pub acquisition_cost_cents: Option<i64>,
+    pub supplier_id: Option<String>,
+    pub invoice_number: Option<String>,
+    pub origin: UnitOrigin,
+    pub return_by: Option<String>,
+    pub usage_hours: i64,
+    pub location_note: Option<String>,
     pub active: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -224,8 +220,8 @@ pub struct StockBalance {
     pub warehouse_id: String,
     pub equipment_model_id: String,
     pub quantity_on_hand: i64,
-    pub quantity_allocated: i64,
     pub quantity_maintenance: i64,
+    pub min_quantity: i64,
     pub updated_at: String,
 }
 
@@ -246,18 +242,6 @@ pub struct StockMovement {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EquipmentUnitMedia {
-    pub id: String,
-    pub tenant_id: String,
-    pub equipment_unit_id: String,
-    pub blob_id: String,
-    pub media_type: UnitMediaType,
-    pub caption: Option<String>,
-    pub created_at: String,
-    pub created_by: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateWarehouseInput {
     pub name: String,
     pub code: String,
@@ -272,6 +256,7 @@ pub struct CreateWarehouseInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateWarehouseInput {
+    pub expected_updated_at: String,
     pub name: String,
     pub code: String,
     pub description: Option<String>,
@@ -292,10 +277,18 @@ pub struct CreateEquipmentUnitInput {
     pub notes: Option<String>,
     pub acquisition_date: Option<String>,
     pub warranty_expires_at: Option<String>,
+    pub acquisition_cost_cents: Option<i64>,
+    pub supplier_id: Option<String>,
+    pub invoice_number: Option<String>,
+    pub origin: Option<UnitOrigin>,
+    pub return_by: Option<String>,
+    pub usage_hours: Option<i64>,
+    pub location_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateEquipmentUnitInput {
+    pub expected_updated_at: String,
     pub warehouse_id: Option<String>,
     pub serial_number: Option<String>,
     pub status: Option<UnitStatus>,
@@ -303,7 +296,21 @@ pub struct UpdateEquipmentUnitInput {
     pub notes: Option<String>,
     pub acquisition_date: Option<String>,
     pub warranty_expires_at: Option<String>,
+    pub acquisition_cost_cents: Option<i64>,
+    pub supplier_id: Option<String>,
+    pub invoice_number: Option<String>,
+    pub origin: Option<UnitOrigin>,
+    pub return_by: Option<String>,
+    pub usage_hours: Option<i64>,
+    pub location_note: Option<String>,
     pub active: Option<bool>,
+    pub status_change_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecommissionEquipmentUnitInput {
+    pub expected_updated_at: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -318,20 +325,14 @@ pub struct RecordStockMovementInput {
     pub reference_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AttachUnitMediaInput {
-    pub equipment_unit_id: String,
-    pub blob_id: String,
-    pub media_type: UnitMediaType,
-    pub caption: Option<String>,
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EquipmentUnitFilter {
     pub equipment_model_id: Option<String>,
     pub warehouse_id: Option<String>,
     pub status: Option<UnitStatus>,
     pub search: Option<String>,
+    pub cursor: Option<String>,
+    pub limit: Option<usize>,
     pub active_only: Option<bool>,
 }
 
@@ -349,7 +350,84 @@ pub struct EquipmentUnitDetails {
     pub unit: EquipmentUnit,
     pub model_name: String,
     pub warehouse_name: String,
-    pub media: Vec<EquipmentUnitMedia>,
+    pub model_thumbnail_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EquipmentUnitListPage {
+    pub items: Vec<EquipmentUnitDetails>,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+}
+
+// ==========================================
+// REDAÇÃO FINANCEIRA CENTRALIZADA (R5)
+// ==========================================
+
+pub fn can_view_financials(session: &SessionInfo) -> bool {
+    session.role_slug == "owner" || session.has_permission("finance:read")
+}
+
+pub fn can_manage_financials(session: &SessionInfo) -> bool {
+    session.role_slug == "owner" || session.has_permission("finance:manage")
+}
+
+pub fn sanitize_unit_financials(unit: &mut EquipmentUnit, session: &SessionInfo) {
+    if !can_view_financials(session) {
+        unit.acquisition_cost_cents = None;
+        unit.supplier_id = None;
+        unit.invoice_number = None;
+    }
+}
+
+pub fn validate_financial_mutation_permissions(
+    session: &SessionInfo,
+    cost: Option<i64>,
+    supplier_id: Option<&str>,
+    invoice_number: Option<&str>,
+) -> Result<()> {
+    if !can_manage_financials(session) {
+        let has_cost = cost.is_some();
+        let has_supplier = supplier_id.map(|s| !s.trim().is_empty()).unwrap_or(false);
+        let has_invoice = invoice_number
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        if has_cost || has_supplier || has_invoice {
+            return Err(CoreError::Forbidden(
+                "Permissão insuficiente para alterar campos financeiros da unidade (requer 'finance:manage' ou Proprietário).".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+// ==========================================
+// TRANSIÇÃO DE ESTADOS DA UNIDADE (R3)
+// ==========================================
+
+pub fn validate_status_transition(
+    current: UnitStatus,
+    next: UnitStatus,
+    reason: Option<&str>,
+) -> Result<()> {
+    if current == next {
+        return Ok(());
+    }
+    if current == UnitStatus::Decommissioned {
+        return Err(CoreError::Conflict(
+            "Unidade baixada (decommissioned) é terminal e não pode ter seu status alterado."
+                .to_string(),
+        ));
+    }
+    if current == UnitStatus::Lost && next == UnitStatus::Available {
+        let r = reason.unwrap_or("").trim();
+        if r.is_empty() {
+            return Err(CoreError::Validation(
+                "Reativação de unidade com status 'lost' para 'available' exige justificativa obrigatória.".to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub fn validate_warehouse_input(name: &str, code: &str) -> Result<()> {
@@ -378,10 +456,17 @@ pub fn validate_warehouse_input(name: &str, code: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn validate_equipment_unit_input(
     model_id: &str,
     serial_number: Option<&str>,
     notes: Option<&str>,
+    origin: UnitOrigin,
+    supplier_id: Option<&str>,
+    return_by: Option<&str>,
+    cost: Option<i64>,
+    location_note: Option<&str>,
+    invoice_number: Option<&str>,
 ) -> Result<()> {
     if model_id.trim().is_empty() {
         return Err(CoreError::Validation(
@@ -400,6 +485,43 @@ pub fn validate_equipment_unit_input(
             return Err(CoreError::Validation(format!(
                 "Observações não podem exceder {MAX_NOTES_LEN} caracteres."
             )));
+        }
+    }
+    if let Some(c) = cost {
+        if c < 0 {
+            return Err(CoreError::Validation(
+                "Custo de aquisição não pode ser negativo.".to_string(),
+            ));
+        }
+    }
+    if let Some(loc) = location_note {
+        if loc.trim().len() > MAX_LOCATION_NOTE_LEN {
+            return Err(CoreError::Validation(format!(
+                "Nota de localização não pode exceder {MAX_LOCATION_NOTE_LEN} caracteres."
+            )));
+        }
+    }
+    if let Some(inv) = invoice_number {
+        if inv.trim().len() > MAX_INVOICE_NUMBER_LEN {
+            return Err(CoreError::Validation(format!(
+                "Número da nota fiscal não pode exceder {MAX_INVOICE_NUMBER_LEN} caracteres."
+            )));
+        }
+    }
+    if origin == UnitOrigin::ThirdParty {
+        let has_supplier = supplier_id.map(|s| !s.trim().is_empty()).unwrap_or(false);
+        if !has_supplier {
+            return Err(CoreError::Validation(
+                "Unidade de terceiro (third_party) exige vincular fornecedor (supplier_id)."
+                    .to_string(),
+            ));
+        }
+        let has_return = return_by.map(|r| !r.trim().is_empty()).unwrap_or(false);
+        if !has_return {
+            return Err(CoreError::Validation(
+                "Unidade de terceiro (third_party) exige data limite de devolução (return_by)."
+                    .to_string(),
+            ));
         }
     }
     Ok(())
@@ -456,31 +578,10 @@ pub fn validate_stock_movement_input(
                 ));
             }
         }
-        StockMovementType::RentalOut => {
-            if from_wh.is_none() {
-                return Err(CoreError::Validation(
-                    "Saída para locação exige depósito de origem.".to_string(),
-                ));
-            }
-        }
         StockMovementType::ReturnIn => {
             if to_wh.is_none() {
                 return Err(CoreError::Validation(
-                    "Retorno de locação exige depósito de destino.".to_string(),
-                ));
-            }
-        }
-        StockMovementType::MaintenanceOut => {
-            if from_wh.is_none() {
-                return Err(CoreError::Validation(
-                    "Envio para manutenção exige depósito de origem.".to_string(),
-                ));
-            }
-        }
-        StockMovementType::MaintenanceIn => {
-            if to_wh.is_none() {
-                return Err(CoreError::Validation(
-                    "Retorno de manutenção exige depósito de destino.".to_string(),
+                    "Retorno de locação ou terceiros exige depósito de destino.".to_string(),
                 ));
             }
         }
@@ -490,6 +591,16 @@ pub fn validate_stock_movement_input(
                     "Baixa por perda/extravio exige depósito de origem.".to_string(),
                 ));
             }
+        }
+        StockMovementType::DecommissionOut => {
+            if from_wh.is_none() {
+                return Err(CoreError::Validation(
+                    "Baixa por descarte/sucateamento exige depósito de origem.".to_string(),
+                ));
+            }
+        }
+        StockMovementType::StatusChange => {
+            // Mudança de status não exige transferência entre depósitos diferentes
         }
         StockMovementType::Adjustment => {
             if from_wh.is_none() && to_wh.is_none() {
@@ -526,46 +637,58 @@ mod tests {
             UnitStatus::Available
         );
         assert_eq!(
-            UnitStatus::parse("allocated").unwrap(),
-            UnitStatus::Allocated
-        );
-        assert_eq!(
-            UnitStatus::parse("in_transit").unwrap(),
-            UnitStatus::InTransit
-        );
-        assert_eq!(
             UnitStatus::parse("maintenance").unwrap(),
             UnitStatus::Maintenance
         );
         assert_eq!(UnitStatus::parse("damaged").unwrap(), UnitStatus::Damaged);
         assert_eq!(UnitStatus::parse("lost").unwrap(), UnitStatus::Lost);
-        assert_eq!(UnitStatus::parse("retired").unwrap(), UnitStatus::Retired);
-        assert!(UnitStatus::parse("invalid_status").is_err());
+        assert_eq!(
+            UnitStatus::parse("decommissioned").unwrap(),
+            UnitStatus::Decommissioned
+        );
+        assert!(UnitStatus::parse("allocated").is_err());
+        assert!(UnitStatus::parse("in_transit").is_err());
+        assert!(UnitStatus::parse("retired").is_err());
     }
 
     #[test]
-    fn test_physical_condition_parsing() {
+    fn test_unit_origin_parsing() {
+        assert_eq!(UnitOrigin::parse("own").unwrap(), UnitOrigin::Own);
         assert_eq!(
-            PhysicalCondition::parse("new").unwrap(),
-            PhysicalCondition::New
+            UnitOrigin::parse("third_party").unwrap(),
+            UnitOrigin::ThirdParty
         );
-        assert_eq!(
-            PhysicalCondition::parse("good").unwrap(),
-            PhysicalCondition::Good
+        assert!(UnitOrigin::parse("invalid").is_err());
+    }
+
+    #[test]
+    fn test_status_transitions() {
+        assert!(
+            validate_status_transition(UnitStatus::Available, UnitStatus::Maintenance, None)
+                .is_ok()
         );
-        assert_eq!(
-            PhysicalCondition::parse("fair").unwrap(),
-            PhysicalCondition::Fair
+        assert!(
+            validate_status_transition(UnitStatus::Maintenance, UnitStatus::Available, None)
+                .is_ok()
         );
-        assert_eq!(
-            PhysicalCondition::parse("poor").unwrap(),
-            PhysicalCondition::Poor
+        // Decommissioned é terminal
+        assert!(validate_status_transition(
+            UnitStatus::Decommissioned,
+            UnitStatus::Available,
+            None
+        )
+        .is_err());
+        // Lost para Available exige justificativa
+        assert!(validate_status_transition(UnitStatus::Lost, UnitStatus::Available, None).is_err());
+        assert!(
+            validate_status_transition(UnitStatus::Lost, UnitStatus::Available, Some("")).is_err()
         );
-        assert_eq!(
-            PhysicalCondition::parse("damaged").unwrap(),
-            PhysicalCondition::Damaged
-        );
-        assert!(PhysicalCondition::parse("broken").is_err());
+        assert!(validate_status_transition(
+            UnitStatus::Lost,
+            UnitStatus::Available,
+            Some("Achado")
+        )
+        .is_ok());
     }
 
     #[test]
