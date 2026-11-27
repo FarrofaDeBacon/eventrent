@@ -8,6 +8,7 @@ export * from "./venues";
 export * from "./catalog";
 export * from "./settings";
 export * from "./backup";
+export * from "./inventory";
 
 import {
   AppStatusSchema,
@@ -41,6 +42,14 @@ import {
   VerifyBackupResultSchema,
   RestorePendingMarkerSchema,
 } from "./backup";
+import {
+  WarehouseSchema,
+  EquipmentUnitSchema,
+  EquipmentUnitDetailsSchema,
+  EquipmentUnitListPageSchema,
+  StockBalanceSchema,
+  StockMovementSchema,
+} from "./inventory";
 
 /**
  * Registro de schemas de retorno em runtime para todos os comandos IPC do Tauri.
@@ -145,4 +154,22 @@ export const commandReturnSchemas: Record<string, z.ZodTypeAny> = {
   schedule_restore: RestorePendingMarkerSchema,
   choose_backup_folder: z.string().nullable(),
   choose_backup_file: z.string().nullable(),
+
+  // Inventory & Warehouses (ADR-0018)
+  list_warehouses: z.array(WarehouseSchema),
+  get_warehouse: WarehouseSchema,
+  create_warehouse: WarehouseSchema,
+  update_warehouse: WarehouseSchema,
+  set_default_warehouse: z.void(),
+  delete_warehouse: z.void(),
+  list_equipment_units: EquipmentUnitListPageSchema,
+  get_equipment_unit: EquipmentUnitDetailsSchema,
+  create_equipment_unit: EquipmentUnitSchema,
+  update_equipment_unit: EquipmentUnitSchema,
+  decommission_equipment_unit: EquipmentUnitSchema,
+  delete_equipment_unit: z.void(),
+  get_stock_balance: StockBalanceSchema,
+  list_stock_balances: z.array(StockBalanceSchema),
+  record_stock_movement: StockMovementSchema,
+  list_stock_movements: z.array(StockMovementSchema),
 };

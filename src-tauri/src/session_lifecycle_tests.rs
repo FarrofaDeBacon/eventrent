@@ -934,3 +934,461 @@ async fn test_backup_commands_rbac_technician_and_commercial_forbidden_and_owner
         "schedule_restore com senha correta do proprietário deve ser autorizado com sucesso"
     );
 }
+
+#[tokio::test]
+async fn test_inventory_permissions_enforced_at_core_level_and_financial_masking() {
+    let (app_state, _guard, tenant_id, owner_session, _db_path) = setup_real_app_state().await;
+
+    // 1. Cria usuário Técnico
+    let tech_role = app_state
+        .services
+        .stores
+        .roles
+        .find_by_slug(&tenant_id, "technician")
+        .await
+        .unwrap()
+        .expect("Papel technician deve existir");
+
+    let _tech_user = app_state
+        .services
+        .create_user(
+            &owner_session,
+            &CreateUserInput {
+                name: "Técnico Silva".to_string(),
+                email: "tecnico_inv@real.local".to_string(),
+                password: "SenhaTech123!".to_string(),
+                role_id: tech_role.id,
+            },
+        )
+        .await
+        .unwrap();
+
+    let tech_session = app_state
+        .services
+        .login(
+            &tenant_id,
+            &LoginInput {
+                email: "tecnico_inv@real.local".to_string(),
+                password: "SenhaTech123!".to_string(),
+            },
+            &LoginPolicy::default(),
+            30,
+        )
+        .await
+        .unwrap();
+
+    // 2. Cria usuário Comercial
+    let comm_role = app_state
+        .services
+        .stores
+        .roles
+        .find_by_slug(&tenant_id, "commercial")
+        .await
+        .unwrap()
+        .expect("Papel commercial deve existir");
+
+    let _comm_user = app_state
+        .services
+        .create_user(
+            &owner_session,
+            &CreateUserInput {
+                name: "Comercial Santos".to_string(),
+                email: "comercial_inv@real.local".to_string(),
+                password: "SenhaComm123!".to_string(),
+                role_id: comm_role.id,
+            },
+        )
+        .await
+        .unwrap();
+
+    let comm_session = app_state
+        .services
+        .login(
+            &tenant_id,
+            &LoginInput {
+                email: "comercial_inv@real.local".to_string(),
+                password: "SenhaComm123!".to_string(),
+            },
+            &LoginPolicy::default(),
+            30,
+        )
+        .await
+        .unwrap();
+
+    // 2.1 Cria usuário Estoque (warehouse)
+    let wh_role = app_state
+        .services
+        .stores
+        .roles
+        .find_by_slug(&tenant_id, "warehouse")
+        .await
+        .unwrap()
+        .expect("Papel warehouse deve existir");
+
+    let _wh_user = app_state
+        .services
+        .create_user(
+            &owner_session,
+            &CreateUserInput {
+                name: "Estoquista Oliveira".to_string(),
+                email: "estoque_inv@real.local".to_string(),
+                password: "SenhaEstoque123!".to_string(),
+                role_id: wh_role.id,
+            },
+        )
+        .await
+        .unwrap();
+
+    let wh_session = app_state
+        .services
+        .login(
+            &tenant_id,
+            &LoginInput {
+                email: "estoque_inv@real.local".to_string(),
+                password: "SenhaEstoque123!".to_string(),
+            },
+            &LoginPolicy::default(),
+            30,
+        )
+        .await
+        .unwrap();
+
+    // 2.2 Cria usuário Financeiro (finance)
+    let fin_role = app_state
+        .services
+        .stores
+        .roles
+        .find_by_slug(&tenant_id, "finance")
+        .await
+        .unwrap()
+        .expect("Papel finance deve existir");
+
+    let _fin_user = app_state
+        .services
+        .create_user(
+            &owner_session,
+            &CreateUserInput {
+                name: "Financeiro Costa".to_string(),
+                email: "financeiro_inv@real.local".to_string(),
+                password: "SenhaFinanceiro123!".to_string(),
+                role_id: fin_role.id,
+            },
+        )
+        .await
+        .unwrap();
+
+    let fin_session = app_state
+        .services
+        .login(
+            &tenant_id,
+            &LoginInput {
+                email: "financeiro_inv@real.local".to_string(),
+                password: "SenhaFinanceiro123!".to_string(),
+            },
+            &LoginPolicy::default(),
+            30,
+        )
+        .await
+        .unwrap();
+
+    // 3. Validação R1: Leitura permitida para Comercial e Técnico
+    let comm_warehouses = app_state
+        .services
+        .list_warehouses(&comm_session, false)
+        .await;
+    assert!(
+        comm_warehouses.is_ok(),
+        "Comercial com inventory:read deve poder listar depósitos"
+    );
+
+    let tech_warehouses = app_state
+        .services
+        .list_warehouses(&tech_session, false)
+        .await;
+    assert!(
+        tech_warehouses.is_ok(),
+        "Técnico com inventory:read deve poder listar depósitos"
+    );
+
+    // 3.1 Mutações PROIBIDAS (Forbidden) para Comercial e Técnico (sem inventory:manage)
+    let create_wh_input = eventrent_core::domain::inventory::CreateWarehouseInput {
+        name: "Depósito Proibido".to_string(),
+        code: "PROIB-01".to_string(),
+        description: None,
+        address_line1: None,
+        address_line2: None,
+        city: None,
+        state: None,
+        postal_code: None,
+        is_default: None,
+    };
+
+    assert!(
+        matches!(
+            app_state
+                .services
+                .create_warehouse(&comm_session, &create_wh_input)
+                .await,
+            Err(CoreError::Forbidden(_))
+        ),
+        "Comercial não deve poder criar depósitos"
+    );
+
+    assert!(
+        matches!(
+            app_state
+                .services
+                .create_warehouse(&tech_session, &create_wh_input)
+                .await,
+            Err(CoreError::Forbidden(_))
+        ),
+        "Técnico não deve poder criar depósitos (requer inventory:manage)"
+    );
+
+    // 4. Estoque cria depósito com sucesso (possui inventory:manage)
+    let wh_created = app_state
+        .services
+        .create_warehouse(
+            &wh_session,
+            &eventrent_core::domain::inventory::CreateWarehouseInput {
+                name: "Galpão Operacional".to_string(),
+                code: "GALP-OPER".to_string(),
+                description: Some("Criado pelo estoquista".to_string()),
+                address_line1: None,
+                address_line2: None,
+                city: Some("São Paulo".to_string()),
+                state: Some("SP".to_string()),
+                postal_code: None,
+                is_default: Some(false),
+            },
+        )
+        .await
+        .expect("Estoque com inventory:manage deve conseguir criar depósito");
+
+    // 5. Cadastro de modelo com valores financeiros (Proprietário)
+    let category = app_state
+        .services
+        .create_category(
+            &owner_session,
+            &eventrent_core::CreateCategoryInput {
+                parent_id: None,
+                name: "Áudio".to_string(),
+                description: None,
+                sort_order: 1,
+                active: true,
+            },
+        )
+        .await
+        .expect("Proprietário deve conseguir cadastrar categoria");
+
+    let cat_input = eventrent_core::CreateEquipmentModelInput {
+        category_id: category.id,
+        brand_id: None,
+        name: "Microfone Shure SM58".to_string(),
+        model_code: None,
+        sku: None,
+        ean: None,
+        ncm: None,
+        description: None,
+        control_mode: eventrent_core::ControlMode::Serialized,
+        weight_kg: None,
+        length_cm: None,
+        width_cm: None,
+        height_cm: None,
+        power_watts: None,
+        voltage: None,
+        amperage: None,
+        requires_case: false,
+        units_per_case: None,
+        daily_rate_cents: Some(5000),
+        replacement_value_cents: Some(120000),
+        cost_price_cents: Some(85000),
+        active: true,
+        attribute_values: vec![],
+    };
+
+    let model = app_state
+        .services
+        .create_equipment_model(&owner_session, &cat_input)
+        .await
+        .expect("Proprietário deve conseguir cadastrar modelo");
+
+    // 6. Teste R1: Técnico tenta criar unidade física -> Forbidden!
+    let unit_create_input = eventrent_core::domain::inventory::CreateEquipmentUnitInput {
+        equipment_model_id: model.model.id.clone(),
+        warehouse_id: Some(wh_created.id.clone()),
+        serial_number: Some("SHURE-SN-999".to_string()),
+        physical_condition: Some(eventrent_core::domain::inventory::PhysicalCondition::New),
+        notes: Some("Unidade nova na caixa".to_string()),
+        acquisition_date: None,
+        warranty_expires_at: None,
+        acquisition_cost_cents: Some(85000),
+        supplier_id: None,
+        invoice_number: Some("NF-9999".to_string()),
+        origin: None,
+        return_by: None,
+        usage_hours: None,
+        location_note: None,
+    };
+
+    assert!(
+        matches!(
+            app_state
+                .services
+                .create_equipment_unit(&tech_session, &unit_create_input)
+                .await,
+            Err(CoreError::Forbidden(_))
+        ),
+        "Técnico deve receber Forbidden ao tentar criar unidade física"
+    );
+
+    // 7. Estoque cria unidade física com sucesso
+    // (Nota: Estoque sem finance:manage não pode definir acquisition_cost_cents)
+    let unit_create_wh = eventrent_core::domain::inventory::CreateEquipmentUnitInput {
+        acquisition_cost_cents: None,
+        invoice_number: None,
+        ..unit_create_input.clone()
+    };
+    let unit = app_state
+        .services
+        .create_equipment_unit(&wh_session, &unit_create_wh)
+        .await
+        .expect("Estoquista deve conseguir tombar unidade física");
+
+    assert_eq!(unit.patrimony_tag, "EQ000001");
+
+    // 8. Técnico tenta mutações na unidade criada -> Forbidden em todas!
+    let update_inp = eventrent_core::domain::inventory::UpdateEquipmentUnitInput {
+        expected_updated_at: unit.updated_at.clone(),
+        warehouse_id: None,
+        serial_number: Some("SHURE-SN-EDIT".to_string()),
+        status: Some(eventrent_core::domain::inventory::UnitStatus::Maintenance),
+        physical_condition: None,
+        notes: None,
+        acquisition_date: None,
+        warranty_expires_at: None,
+        acquisition_cost_cents: None,
+        supplier_id: None,
+        invoice_number: None,
+        origin: None,
+        return_by: None,
+        usage_hours: None,
+        location_note: None,
+        active: None,
+        status_change_reason: Some("Manutenção preventiva".to_string()),
+    };
+    assert!(
+        matches!(
+            app_state
+                .services
+                .update_equipment_unit(&tech_session, &unit.id, &update_inp)
+                .await,
+            Err(CoreError::Forbidden(_))
+        ),
+        "Técnico deve receber Forbidden em update_equipment_unit"
+    );
+
+    let decommission_inp = eventrent_core::domain::inventory::DecommissionEquipmentUnitInput {
+        expected_updated_at: unit.updated_at.clone(),
+        reason: "Baixa não autorizada".to_string(),
+    };
+    assert!(
+        matches!(
+            app_state
+                .services
+                .decommission_equipment_unit(&tech_session, &unit.id, &decommission_inp)
+                .await,
+            Err(CoreError::Forbidden(_))
+        ),
+        "Técnico deve receber Forbidden em decommission_equipment_unit"
+    );
+
+    let mov_inp = eventrent_core::domain::inventory::RecordStockMovementInput {
+        equipment_model_id: model.model.id.clone(),
+        equipment_unit_id: Some(unit.id.clone()),
+        from_warehouse_id: Some(wh_created.id.clone()),
+        to_warehouse_id: None,
+        movement_type: eventrent_core::domain::inventory::StockMovementType::LossOut,
+        quantity: 1,
+        reason: "Perda declarada por técnico".to_string(),
+        reference_id: None,
+    };
+    assert!(
+        matches!(
+            app_state
+                .services
+                .record_stock_movement(&tech_session, &mov_inp)
+                .await,
+            Err(CoreError::Forbidden(_))
+        ),
+        "Técnico deve receber Forbidden em record_stock_movement"
+    );
+
+    // 9. Técnico e Estoque conseguem LER unidades físicas
+    let units_tech = app_state
+        .services
+        .list_equipment_units(&tech_session, &Default::default())
+        .await;
+    assert!(
+        units_tech.is_ok(),
+        "Técnico deve conseguir ler list_equipment_units"
+    );
+    let units_tech = units_tech.unwrap();
+    assert_eq!(units_tech.items.len(), 1);
+
+    // 10. Teste R5 de Redação Financeira em todas as saídas
+    // Proprietário -> dados financeiros presentes no modelo
+    let owner_m = app_state
+        .services
+        .get_equipment_model(&owner_session, &model.model.id)
+        .await
+        .unwrap();
+    assert_eq!(owner_m.model.cost_price_cents, Some(85000));
+    assert_eq!(owner_m.model.replacement_value_cents, Some(120000));
+
+    // Financeiro -> dados financeiros presentes no modelo
+    let fin_m = app_state
+        .services
+        .get_equipment_model(&fin_session, &model.model.id)
+        .await
+        .unwrap();
+    assert_eq!(fin_m.model.cost_price_cents, Some(85000));
+    assert_eq!(fin_m.model.replacement_value_cents, Some(120000));
+
+    // Técnico -> dados financeiros mascarados (None)
+    let tech_m = app_state
+        .services
+        .get_equipment_model(&tech_session, &model.model.id)
+        .await
+        .unwrap();
+    assert_eq!(tech_m.model.cost_price_cents, None);
+    assert_eq!(tech_m.model.replacement_value_cents, None);
+
+    // Estoquista -> dados financeiros mascarados (None)
+    let wh_m = app_state
+        .services
+        .get_equipment_model(&wh_session, &model.model.id)
+        .await
+        .unwrap();
+    assert_eq!(wh_m.model.cost_price_cents, None);
+    assert_eq!(wh_m.model.replacement_value_cents, None);
+
+    // R5: Varredura de serialização JSON para Técnico e Estoquista (não pode conter os números)
+    let tech_m_json = serde_json::to_string(&tech_m).unwrap();
+    assert!(
+        !tech_m_json.contains("85000") && !tech_m_json.contains("120000"),
+        "JSON serializado para técnico não pode expor valores financeiros"
+    );
+
+    let wh_m_json = serde_json::to_string(&wh_m).unwrap();
+    assert!(
+        !wh_m_json.contains("85000") && !wh_m_json.contains("120000"),
+        "JSON serializado para estoquista não pode expor valores financeiros"
+    );
+
+    let tech_u_json = serde_json::to_string(&units_tech).unwrap();
+    assert!(
+        !tech_u_json.contains("85000"),
+        "JSON serializado de unidades para técnico não pode expor custo de aquisição"
+    );
+}

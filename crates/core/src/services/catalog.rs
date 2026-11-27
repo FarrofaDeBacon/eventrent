@@ -14,6 +14,7 @@ use crate::domain::catalog::{
     InheritedAttributeDefinition, SuggestedCategoriesResult, UpdateAttributeDefinitionInput,
     UpdateBrandInput, UpdateCategoryInput, UpdateEquipmentModelInput, MAX_ATTRIBUTES_PER_CATEGORY,
 };
+use crate::domain::inventory::can_manage_financials;
 use crate::domain::permission::{PERM_CATALOG_MANAGE, PERM_CATALOG_READ};
 use crate::domain::user::SessionInfo;
 use crate::error::{CoreError, Result};
@@ -960,10 +961,17 @@ impl CoreServices {
             None
         };
 
-        self.stores
+        let mut result = self
+            .stores
             .catalog
             .list_models(&session.tenant_id, filter, descendant_ids.as_deref())
-            .await
+            .await?;
+
+        for item in &mut result.items {
+            self.sanitize_model_financials(session, &mut item.model);
+        }
+
+        Ok(result)
     }
 
     pub async fn get_equipment_model(
@@ -972,7 +980,7 @@ impl CoreServices {
         id: &str,
     ) -> Result<EquipmentModelWithDetails> {
         self.check_session_and_permission(session, PERM_CATALOG_READ)?;
-        let model = self
+        let mut model = self
             .stores
             .catalog
             .find_model_by_id(&session.tenant_id, id)
@@ -980,6 +988,7 @@ impl CoreServices {
             .ok_or_else(|| {
                 CoreError::NotFound("Modelo de equipamento não encontrado.".to_string())
             })?;
+        self.sanitize_model_financials(session, &mut model);
 
         let categories = self
             .stores
@@ -1049,6 +1058,15 @@ impl CoreServices {
             input.cost_price_cents,
         )?;
 
+        if (input.replacement_value_cents.is_some() || input.cost_price_cents.is_some())
+            && !can_manage_financials(session)
+        {
+            return Err(CoreError::Forbidden(
+                "Permissão insuficiente para definir valores financeiros do modelo (requer 'finance:manage' ou Proprietário)."
+                    .to_string(),
+            ));
+        }
+
         let brand_id = input
             .brand_id
             .as_deref()
@@ -1065,7 +1083,7 @@ impl CoreServices {
         let now_clone = now.clone();
         let model_id_clone = model_id.clone();
 
-        let result = self
+        let mut result = self
             .run_transaction(|stores| {
                 let session = session_clone.clone();
                 let input = input_clone.clone();
@@ -1240,6 +1258,7 @@ impl CoreServices {
             })
             .await?;
 
+        self.sanitize_model_financials(session, &mut result.model);
         Ok(result)
     }
 
@@ -1269,6 +1288,15 @@ impl CoreServices {
             input.cost_price_cents,
         )?;
 
+        if (input.replacement_value_cents.is_some() || input.cost_price_cents.is_some())
+            && !can_manage_financials(session)
+        {
+            return Err(CoreError::Forbidden(
+                "Permissão insuficiente para definir valores financeiros do modelo (requer 'finance:manage' ou Proprietário)."
+                    .to_string(),
+            ));
+        }
+
         let brand_id = input
             .brand_id
             .as_deref()
@@ -1284,7 +1312,7 @@ impl CoreServices {
         let brand_id_clone = brand_id.clone();
         let now_clone = now.clone();
 
-        let result = self
+        let mut result = self
             .run_transaction(|stores| {
                 let session = session_clone.clone();
                 let id = id_str.clone();
@@ -1306,6 +1334,55 @@ impl CoreServices {
                             "O modelo foi alterado por outra pessoa. Recarregue e tente novamente."
                                 .to_string(),
                         ));
+                    }
+
+                    if existing.control_mode != input.control_mode {
+                        let units = stores
+                            .inventory()
+                            .list_units(
+                                &session.tenant_id,
+                                &crate::domain::inventory::EquipmentUnitFilter {
+                                    equipment_model_id: Some(existing.id.clone()),
+                                    active_only: Some(false),
+                                    ..Default::default()
+                                },
+                            )
+                            .await?;
+                        if !units.is_empty() {
+                            return Err(CoreError::Validation(
+                                "Não é permitido alterar o modo de controle de um modelo que já possui unidades cadastradas."
+                                    .to_string(),
+                            ));
+                        }
+
+                        let movements = stores
+                            .inventory()
+                            .list_stock_movements(
+                                &session.tenant_id,
+                                &crate::domain::inventory::StockMovementFilter {
+                                    equipment_model_id: Some(existing.id.clone()),
+                                    limit: Some(1),
+                                    ..Default::default()
+                                },
+                            )
+                            .await?;
+                        if !movements.is_empty() {
+                            return Err(CoreError::Validation(
+                                "Não é permitido alterar o modo de controle de um modelo que já possui movimentações de estoque registradas."
+                                    .to_string(),
+                            ));
+                        }
+
+                        let balances = stores
+                            .inventory()
+                            .list_stock_balances_by_model(&session.tenant_id, &existing.id)
+                            .await?;
+                        if balances.iter().any(|b| b.quantity_on_hand > 0 || b.quantity_maintenance > 0) {
+                            return Err(CoreError::Validation(
+                                "Não é permitido alterar o modo de controle de um modelo que possui saldo de estoque."
+                                    .to_string(),
+                            ));
+                        }
                     }
 
                     let categories = stores
@@ -1507,6 +1584,7 @@ impl CoreServices {
             })
             .await?;
 
+        self.sanitize_model_financials(session, &mut result.model);
         Ok(result)
     }
 

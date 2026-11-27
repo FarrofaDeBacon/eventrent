@@ -6,6 +6,8 @@ export const BackupSettingsSchema = z.object({
   retention_daily: z.number().int().nonnegative(),
   retention_weekly: z.number().int().nonnegative(),
   retention_monthly: z.number().int().nonnegative(),
+  last_attempt_at: z.string().nullable().optional(),
+  last_success_at: z.string().nullable().optional(),
   last_backup_at: z.string().nullable(),
   last_backup_status: z.string().nullable(),
   last_backup_error: z.string().nullable(),
@@ -36,6 +38,7 @@ export const BackupManifestSchema = z.object({
   database_integrity_checked: z.boolean(),
   files: z.array(BackupFileEntrySchema),
   table_counts: z.record(z.string(), z.number().int()),
+  skipped_media_files: z.number().int().nonnegative().default(0),
 });
 export type BackupManifest = z.infer<typeof BackupManifestSchema>;
 
@@ -49,6 +52,7 @@ export const BackupMetadataViewSchema = z.object({
   is_compatible: z.boolean(),
   file_count: z.number().int().nonnegative(),
   verified: z.boolean(),
+  skipped_media_files: z.number().int().nonnegative().default(0),
 });
 export type BackupMetadataView = z.infer<typeof BackupMetadataViewSchema>;
 

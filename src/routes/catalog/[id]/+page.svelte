@@ -3,6 +3,7 @@
   import { page } from "$app/state";
   import {
     ArrowLeft,
+    Boxes,
     FileText,
     Image as ImageIcon,
     Power,
@@ -11,6 +12,7 @@
   } from "lucide-svelte";
   import { toast } from "svelte-sonner";
   import CatalogModelForm from "$lib/components/catalog-model-form.svelte";
+  import CatalogModelInventory from "$lib/components/catalog-model-inventory.svelte";
   import CatalogModelMedia from "$lib/components/catalog-model-media.svelte";
   import {
     appSession,
@@ -33,7 +35,9 @@
   let loading = $state(true);
   let submitting = $state(false);
   let loadError = $state<string | null>(null);
-  let activeTab = $state<"details" | "photos" | "documents">("details");
+  let activeTab = $state<"details" | "photos" | "documents" | "inventory">(
+    "details",
+  );
 
   async function loadModel() {
     if (!modelId) return;
@@ -93,10 +97,11 @@
   }
 
   function handleTabKeydown(e: KeyboardEvent) {
-    const order: Array<"details" | "photos" | "documents"> = [
+    const order: Array<"details" | "photos" | "documents" | "inventory"> = [
       "details",
       "photos",
       "documents",
+      "inventory",
     ];
     const idx = order.indexOf(activeTab);
     if (e.key === "ArrowRight") {
@@ -218,6 +223,23 @@
         <FileText class="h-4 w-4" />
         Documentos
       </button>
+
+      <button
+        type="button"
+        role="tab"
+        aria-selected={activeTab === "inventory"}
+        data-testid="tab-model-inventory"
+        onclick={() => {
+          activeTab = "inventory";
+        }}
+        class="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors {activeTab ===
+        'inventory'
+          ? 'bg-primary text-primary-foreground shadow-xs'
+          : 'text-muted-foreground hover:bg-muted hover:text-foreground'}"
+      >
+        <Boxes class="h-4 w-4" />
+        Unidades & Estoque
+      </button>
     </div>
 
     {#if activeTab === "details"}
@@ -235,11 +257,18 @@
         mode="photos"
         readonly={!canManage}
       />
-    {:else}
+    {:else if activeTab === "documents"}
       <CatalogModelMedia
         modelId={details.model.id}
         modelName={details.model.name}
         mode="documents"
+        readonly={!canManage}
+      />
+    {:else}
+      <CatalogModelInventory
+        modelId={details.model.id}
+        modelName={details.model.name}
+        controlMode={details.model.control_mode}
         readonly={!canManage}
       />
     {/if}

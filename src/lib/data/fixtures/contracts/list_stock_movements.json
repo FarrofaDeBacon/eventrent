@@ -1,0 +1,25 @@
+{
+  "command": "list_stock_movements",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": [
+    {
+      "created_at": "2026-11-20T10:00:00Z",
+      "equipment_model_id": "018f0000-0000-7000-8000-000000000050",
+      "equipment_unit_id": "018f0000-0000-7000-8000-000000000081",
+      "from_warehouse_id": null,
+      "id": "018f0000-0000-7000-8000-000000000083",
+      "movement_type": "purchase_in",
+      "performed_by_user_id": "018f0000-0000-7000-8000-000000000002",
+      "quantity": 1,
+      "reason": "Compra de novo equipamento",
+      "reference_id": "NF-12345",
+      "tenant_id": "018f0000-0000-7000-8000-000000000001",
+      "to_warehouse_id": "018f0000-0000-7000-8000-000000000080"
+    }
+  ],
+  "sample_errors": {
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada."
+  }
+}

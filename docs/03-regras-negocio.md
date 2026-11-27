@@ -51,44 +51,46 @@ As regras de negócio do EventRent operam de maneira determinística, implementa
 
 As permissões são definidas como constantes imutáveis em `crates/core/src/domain/permission.rs` (`ALL_PERMISSIONS`):
 
-| Constante                 | Chave                | Descrição                                                   |
-| ------------------------- | -------------------- | ----------------------------------------------------------- |
-| `PERM_USER_READ`          | `user:read`          | Listar e consultar usuários do tenant                       |
-| `PERM_USER_MANAGE`        | `user:manage`        | Criar, editar, ativar, desativar e redefinir senha          |
-| `PERM_ROLE_READ`          | `role:read`          | Consultar perfis de acesso e matriz de permissões           |
-| `PERM_ROLE_MANAGE`        | `role:manage`        | Criar e gerenciar perfis personalizados                     |
-| `PERM_BRANDING_READ`      | `branding:read`      | Consultar configurações de aparência e marca                |
-| `PERM_BRANDING_MANAGE`    | `branding:manage`    | Alterar nome da empresa, cores, logotipo e ícone            |
-| `PERM_CUSTOMER_READ`      | `customer:read`      | Consultar clientes e contatos                               |
-| `PERM_CUSTOMER_MANAGE`    | `customer:manage`    | Criar e editar clientes e contatos                          |
-| `PERM_SUPPLIER_READ`      | `supplier:read`      | Consultar fornecedores                                      |
-| `PERM_SUPPLIER_MANAGE`    | `supplier:manage`    | Criar e editar fornecedores                                 |
-| `PERM_VENUE_READ`         | `venue:read`         | Consultar locais e espaços de eventos                       |
-| `PERM_VENUE_MANAGE`       | `venue:manage`       | Criar e editar locais e espaços de eventos                  |
-| `PERM_CATALOG_READ`       | `catalog:read`       | Consultar catálogo de modelos, marcas e categorias          |
-| `PERM_CATALOG_MANAGE`     | `catalog:manage`     | Criar e editar modelos, fotos, manuais, marcas e categorias |
-| `PERM_RESERVATION_READ`   | `reservation:read`   | Consultar reservas de equipamentos                          |
-| `PERM_RESERVATION_MANAGE` | `reservation:manage` | Criar, alterar e cancelar reservas de equipamentos          |
-| `PERM_QUOTE_READ`         | `quote:read`         | Consultar orçamentos e propostas comerciais                 |
-| `PERM_QUOTE_MANAGE`       | `quote:manage`       | Criar, editar e aprovar orçamentos e propostas comerciais   |
-| `PERM_WAREHOUSE_READ`     | `warehouse:read`     | Consultar ordens de separação, saída, retorno e estoque     |
-| `PERM_WAREHOUSE_OPERATE`  | `warehouse:operate`  | Executar conferência de saída/retorno e manutenção          |
-| `PERM_FINANCE_READ`       | `finance:read`       | Consultar contas a receber, faturamento e fluxo de caixa    |
-| `PERM_FINANCE_MANAGE`     | `finance:manage`     | Registrar baixas, cobranças e ajustes financeiros           |
-| `PERM_AUDIT_READ`         | `audit:read`         | Consultar trilha de auditoria (`audit_log`)                 |
-| `PERM_SETTINGS_READ`      | `settings:read`      | Consultar parâmetros globais do sistema                     |
-| `PERM_SETTINGS_MANAGE`    | `settings:manage`    | Alterar parâmetros globais do sistema                       |
-| `PERM_BACKUP_MANAGE`      | `backup:manage`      | Gerenciar backups e restaurar estado do sistema             |
+| Constante                 | Chave                | Descrição                                                     |
+| ------------------------- | -------------------- | ------------------------------------------------------------- |
+| `PERM_USER_READ`          | `user:read`          | Listar e consultar usuários do tenant                         |
+| `PERM_USER_MANAGE`        | `user:manage`        | Criar, editar, ativar, desativar e redefinir senha            |
+| `PERM_ROLE_READ`          | `role:read`          | Consultar perfis de acesso e matriz de permissões             |
+| `PERM_ROLE_MANAGE`        | `role:manage`        | Criar e gerenciar perfis personalizados                       |
+| `PERM_BRANDING_READ`      | `branding:read`      | Consultar configurações de aparência e marca                  |
+| `PERM_BRANDING_MANAGE`    | `branding:manage`    | Alterar nome da empresa, cores, logotipo e ícone              |
+| `PERM_CUSTOMER_READ`      | `customer:read`      | Consultar clientes e contatos                                 |
+| `PERM_CUSTOMER_MANAGE`    | `customer:manage`    | Criar e editar clientes e contatos                            |
+| `PERM_SUPPLIER_READ`      | `supplier:read`      | Consultar fornecedores                                        |
+| `PERM_SUPPLIER_MANAGE`    | `supplier:manage`    | Criar e editar fornecedores                                   |
+| `PERM_VENUE_READ`         | `venue:read`         | Consultar locais e espaços de eventos                         |
+| `PERM_VENUE_MANAGE`       | `venue:manage`       | Criar e editar locais e espaços de eventos                    |
+| `PERM_CATALOG_READ`       | `catalog:read`       | Consultar catálogo de modelos, marcas e categorias            |
+| `PERM_CATALOG_MANAGE`     | `catalog:manage`     | Criar e editar modelos, fotos, manuais, marcas e categorias   |
+| `PERM_RESERVATION_READ`   | `reservation:read`   | Consultar reservas de equipamentos                            |
+| `PERM_RESERVATION_MANAGE` | `reservation:manage` | Criar, alterar e cancelar reservas de equipamentos            |
+| `PERM_QUOTE_READ`         | `quote:read`         | Consultar orçamentos e propostas comerciais                   |
+| `PERM_QUOTE_MANAGE`       | `quote:manage`       | Criar, editar e aprovar orçamentos e propostas comerciais     |
+| `PERM_WAREHOUSE_READ`     | `warehouse:read`     | Consultar ordens de separação, saída, retorno e estoque       |
+| `PERM_WAREHOUSE_OPERATE`  | `warehouse:operate`  | Executar conferência de saída/retorno e manutenção            |
+| `PERM_INVENTORY_READ`     | `inventory:read`     | Consultar depósitos, unidades físicas, saldos e movimentações |
+| `PERM_INVENTORY_MANAGE`   | `inventory:manage`   | Cadastrar depósitos, unidades físicas, status e movimentos    |
+| `PERM_FINANCE_READ`       | `finance:read`       | Consultar contas a receber, faturamento e fluxo de caixa      |
+| `PERM_FINANCE_MANAGE`     | `finance:manage`     | Registrar baixas, cobranças e ajustes financeiros             |
+| `PERM_AUDIT_READ`         | `audit:read`         | Consultar trilha de auditoria (`audit_log`)                   |
+| `PERM_SETTINGS_READ`      | `settings:read`      | Consultar parâmetros globais do sistema                       |
+| `PERM_SETTINGS_MANAGE`    | `settings:manage`    | Alterar parâmetros globais do sistema                         |
+| `PERM_BACKUP_MANAGE`      | `backup:manage`      | Gerenciar backups e restaurar estado do sistema               |
 
 ### 4.2. Perfis de Sistema Padrão
 
 Criados de forma idempotente por `ensure_system_roles` para cada tenant:
 
-1. **Proprietário (`owner`)**: Possui **todas as 26 permissões** do catálogo canônico (`ALL_PERMISSIONS`).
-2. **Comercial (`commercial`)**: `customer:read`, `customer:manage`, `supplier:read`, `venue:read`, `venue:manage`, `catalog:read`, `reservation:read`, `reservation:manage`, `quote:read`, `quote:manage`, `branding:read`.
-3. **Estoque (`warehouse`)**: `supplier:read`, `supplier:manage`, `venue:read`, `venue:manage`, `catalog:read`, `catalog:manage`, `reservation:read`, `warehouse:read`, `warehouse:operate`, `branding:read`.
-4. **Técnico (`technician`)**: `venue:read`, `catalog:read`, `reservation:read`, `warehouse:read`, `warehouse:operate`, `branding:read`.
-5. **Financeiro (`finance`)**: `customer:read`, `supplier:read`, `supplier:manage`, `venue:read`, `quote:read`, `reservation:read`, `finance:read`, `finance:manage`, `audit:read`, `branding:read`.
+1. **Proprietário (`owner`)**: Possui **todas as 28 permissões** do catálogo canônico (`ALL_PERMISSIONS`).
+2. **Comercial (`commercial`)**: `customer:read`, `customer:manage`, `supplier:read`, `venue:read`, `venue:manage`, `catalog:read`, `inventory:read`, `reservation:read`, `reservation:manage`, `quote:read`, `quote:manage`, `branding:read`.
+3. **Estoque (`warehouse`)**: `supplier:read`, `supplier:manage`, `venue:read`, `venue:manage`, `catalog:read`, `catalog:manage`, `inventory:read`, `inventory:manage`, `reservation:read`, `warehouse:read`, `warehouse:operate`, `branding:read`.
+4. **Técnico (`technician`)**: `venue:read`, `catalog:read`, `inventory:read`, `reservation:read`, `warehouse:read`, `warehouse:operate`, `branding:read`.
+5. **Financeiro (`finance`)**: `customer:read`, `supplier:read`, `supplier:manage`, `venue:read`, `catalog:read`, `inventory:read`, `quote:read`, `reservation:read`, `finance:read`, `finance:manage`, `audit:read`, `branding:read`.
 
 ### 4.3. Regras de Proteção de Contas e Auditoria
 
@@ -216,3 +218,16 @@ Criados de forma idempotente por `ensure_system_roles` para cada tenant:
 - **RN-BKP-06 — Isolamento de Concorrência**: Operações de backup adquirem a trava RAII `BackupOperationGuard`. Operações concorrentes de backup/restauração e a coleta de lixo de mídias (`run_media_gc`) são bloqueadas enquanto a rotina estiver em execução.
 - **RN-BKP-07 — Retenção Automatizada (Dias, Semanas e Meses)**: Ao concluir um backup com sucesso, a limpeza de retenção preserva no máximo um backup por dia nos últimos X dias, um por semana nas últimas Y semanas e um por mês nos últimos Z meses, eliminando cópias obsoletas de forma determinística.
 - **RN-BKP-08 — Restauração a Frio na Inicialização**: A substituição do banco e da pasta de mídia é agendada em marcador atômico e executada exclusivamente a frio antes da inicialização de conexões e pools SQLite na inicialização do aplicativo, com criação prévia de salvaguarda de segurança (`.pre-restore.bak`).
+
+---
+
+## 9. Regras de Gestão de Estoque e Unidades Físicas (Fase 2B / ADR-0018)
+
+- **RN-EST-01 — Modos de Controle Híbrido**: Modelos de catálogo com modo `serialized` exigem tombamento individual de cada unidade física em `equipment_unit`, com geração sequencial de código patrimonial `EQ000001` e controle individual de número de série e condição física. Modelos com modo `quantity` operam com controle agregado de saldos em `stock_balance` por depósito.
+- **RN-EST-02 — Bloqueio de Alteração de Modo de Controle**: Uma vez tombada ao menos uma unidade física ou lançada ao menos uma movimentação de estoque para um modelo, seu `control_mode` torna-se estritamente imutável para evitar corrupção lógica do livro-razão.
+- **RN-EST-03 — Numeração Patrimonial Sequencial e Atômica**: Os identificadores patrimoniais são emitidos no padrão `EQ%06d` (ex: `EQ000001`, `EQ000002`), garantidos por transação atômica sobre a tabela `equipment_patrimony_seq` (`ON CONFLICT DO UPDATE SET last_number = last_number + 1 RETURNING last_number`), impedindo colisões e duplicidades.
+- **RN-EST-04 — Multidepósito e Depósito Padrão**: Todo tenant possui obrigatoriamente um depósito ativo padrão (`is_default = 1`), provisionado de forma idempotente no setup inicial e inicialização da aplicação ("Depósito principal", código `PRINCIPAL`) pela função `ensure_default_inventory`. Ao definir um novo depósito como padrão, o padrão anterior é automaticamente destituído em transação atômica.
+- **RN-EST-05 — Livro-Razão Imutável (Append-Only)**: A tabela `stock_movement` registra todas as entradas, saídas, devoluções, transferências, perdas e ajustes com autoria (`performed_by_user_id`), data/hora e justificativa textual obrigatória. Triggers de banco abortam qualquer tentativa de `UPDATE` ou `DELETE`.
+- **RN-EST-06 — Saldo em Mãos Não-Negativo**: Em nenhuma circunstância o saldo disponível/em mãos (`quantity_on_hand`) pode assumir valores negativos. Triggers de integridade rejeitam movimentações que resultem em saldo negativo.
+- **RN-EST-07 — Vistorias e Fotos de Avaria**: Unidades físicas podem ter fotos de vistoria, avarias e comprovantes fiscais vinculadas através da tabela `equipment_unit_media`, reutilizando o subsistema de armazenamento seguro de mídias por hash SHA-256 (`MediaStore`).
+- **RN-EST-08 — Segregação e Sigilo Financeiro no Estoque**: Usuários com permissão operacional de estoque (`warehouse:read` e `warehouse:operate`) que não possuem a permissão financeira explícita (`finance:read`) visualizam dados completos de localização, patrimônio, status e movimentações, porém têm os campos `cost_price_cents` e `replacement_value_cents` estritamente sanitizados para `None` pelo Core.

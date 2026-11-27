@@ -1,0 +1,29 @@
+{
+  "command": "list_warehouses",
+  "is_public": false,
+  "has_return_value": true,
+  "sample_output": [
+    {
+      "active": true,
+      "address_line1": "Av. Industrial, 1000",
+      "address_line2": "Galpão 4",
+      "city": "São Paulo",
+      "code": "GALPAO-01",
+      "created_at": "2026-11-20T10:00:00Z",
+      "created_by": "018f0000-0000-7000-8000-000000000002",
+      "deleted_at": null,
+      "description": "Depósito central de equipamentos",
+      "id": "018f0000-0000-7000-8000-000000000080",
+      "is_default": true,
+      "name": "Galpão Principal",
+      "postal_code": "01000-000",
+      "state": "SP",
+      "tenant_id": "018f0000-0000-7000-8000-000000000001",
+      "updated_at": "2026-11-20T10:00:00Z"
+    }
+  ],
+  "sample_errors": {
+    "Forbidden": "Permissão negada: requer 'recurso:acao'",
+    "Unauthorized": "Não autenticado: Sessão ausente, inválida ou expirada."
+  }
+}

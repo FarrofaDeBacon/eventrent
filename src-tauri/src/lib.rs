@@ -5,7 +5,8 @@ pub mod guards;
 
 use chrono::{DateTime, Utc};
 use eventrent_core::{
-    ensure_default_tenant, ensure_system_roles, AppConfig, CoreServices, SessionInfo,
+    ensure_default_inventory, ensure_default_tenant, ensure_system_roles, AppConfig, CoreServices,
+    SessionInfo,
 };
 use eventrent_media_fs::FsMediaStore;
 use eventrent_store_sqlite::{init_db, SqliteStore};
@@ -442,6 +443,16 @@ async fn initialize_app(app_handle: &AppHandle) -> Result<(AppState, PathBuf), (
         )
     })?;
 
+    ensure_default_inventory(&default_tenant_id, store_bundle.inventory.as_ref())
+        .await
+        .map_err(|e| {
+            tracing::error!("Erro crítico ao garantir inventário padrão: {}", e);
+            (
+                format!("Falha ao inicializar depósito padrão do sistema: {e}"),
+                log_dir_display.clone(),
+            )
+        })?;
+
     tracing::info!(
         "Banco SQLite, tenant padrão ({}) e perfis de sistema verificados com sucesso",
         default_tenant_id
@@ -603,6 +614,22 @@ pub fn run() {
             commands::backup::schedule_restore,
             commands::backup::choose_backup_folder,
             commands::backup::choose_backup_file,
+            commands::inventory::list_warehouses,
+            commands::inventory::get_warehouse,
+            commands::inventory::create_warehouse,
+            commands::inventory::update_warehouse,
+            commands::inventory::set_default_warehouse,
+            commands::inventory::delete_warehouse,
+            commands::inventory::list_equipment_units,
+            commands::inventory::get_equipment_unit,
+            commands::inventory::create_equipment_unit,
+            commands::inventory::update_equipment_unit,
+            commands::inventory::decommission_equipment_unit,
+            commands::inventory::delete_equipment_unit,
+            commands::inventory::get_stock_balance,
+            commands::inventory::list_stock_balances,
+            commands::inventory::record_stock_movement,
+            commands::inventory::list_stock_movements,
         ])
         .build(tauri::generate_context!());
 

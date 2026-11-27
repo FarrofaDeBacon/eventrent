@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
@@ -66,6 +66,101 @@ pub fn validate_canonical_media_path(rel: &str) -> Result<()> {
     Ok(())
 }
 
+/// Consulta o espaço livre aproximado disponível em bytes no disco correspondente ao caminho informado.
+#[cfg(windows)]
+pub fn get_available_disk_space(path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    let mut check_path = path.to_path_buf();
+    while !check_path.exists() {
+        if !check_path.pop() {
+            break;
+        }
+    }
+    let wide: Vec<u16> = check_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut free_bytes_available: u64 = 0;
+    let mut total_number_of_bytes: u64 = 0;
+    let mut total_number_of_free_bytes: u64 = 0;
+
+    extern "system" {
+        fn GetDiskFreeSpaceExW(
+            lpDirectoryName: *const u16,
+            lpFreeBytesAvailableToCaller: *mut u64,
+            lpTotalNumberOfBytes: *mut u64,
+            lpTotalNumberOfFreeBytes: *mut u64,
+        ) -> i32;
+    }
+
+    let success = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut free_bytes_available,
+            &mut total_number_of_bytes,
+            &mut total_number_of_free_bytes,
+        )
+    };
+
+    if success != 0 {
+        Some(free_bytes_available)
+    } else {
+        None
+    }
+}
+
+#[cfg(unix)]
+pub fn get_available_disk_space(path: &Path) -> Option<u64> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut check_path = path.to_path_buf();
+    while !check_path.exists() {
+        if !check_path.pop() {
+            break;
+        }
+    }
+
+    let c_path = CString::new(check_path.as_os_str().as_bytes()).ok()?;
+    #[repr(C)]
+    struct Statvfs {
+        f_bsize: std::ffi::c_ulong,
+        f_frsize: std::ffi::c_ulong,
+        f_blocks: std::ffi::c_ulong,
+        f_bfree: std::ffi::c_ulong,
+        f_bavail: std::ffi::c_ulong,
+        f_files: std::ffi::c_ulong,
+        f_ffree: std::ffi::c_ulong,
+        f_favail: std::ffi::c_ulong,
+        f_fsid: std::ffi::c_ulong,
+        f_flag: std::ffi::c_ulong,
+        f_namemax: std::ffi::c_ulong,
+        f_spare: [std::ffi::c_int; 6],
+    }
+    extern "C" {
+        fn statvfs(path: *const std::ffi::c_char, buf: *mut Statvfs) -> std::ffi::c_int;
+    }
+    unsafe {
+        let mut stat: Statvfs = std::mem::zeroed();
+        if statvfs(c_path.as_ptr(), &mut stat) == 0 {
+            let frsize = if stat.f_frsize > 0 {
+                stat.f_frsize
+            } else {
+                stat.f_bsize
+            };
+            Some((stat.f_bavail as u64).saturating_mul(frsize as u64))
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
+pub fn get_available_disk_space(_path: &Path) -> Option<u64> {
+    None
+}
+
 impl BackupFsService {
     pub fn new(
         app_data_dir: PathBuf,
@@ -98,6 +193,18 @@ impl BackupFsService {
                 destination_folder.display()
             ))
         })?;
+
+        // Checagem de espaço livre aproximado no destino antes de iniciar o backup
+        if let Some(free_space) = get_available_disk_space(destination_folder) {
+            let db_size = fs::metadata(&self.db_path).map(|m| m.len()).unwrap_or(0);
+            let estimated_required = db_size.saturating_mul(2).max(10 * 1024 * 1024);
+            if free_space < estimated_required {
+                return Err(CoreError::Validation(format!(
+                    "Espaço livre insuficiente no disco de destino ({} bytes disponíveis, estimados {} bytes necessários). Libere espaço antes de executar o backup.",
+                    free_space, estimated_required
+                )));
+            }
+        }
 
         let now = Utc::now();
         let ts = now.format("%Y-%m-%d-%H%M%S").to_string();
@@ -354,6 +461,7 @@ impl BackupFsService {
             });
 
             // 3.3. Adiciona arquivos de mídia (modo Stored / sem recompressão)
+            let mut skipped_media_files = 0u64;
             if media_dir_buf.exists() {
                 if !media_dir_buf.is_dir() {
                     let _ = fs::remove_file(&temp_zip_path);
@@ -386,41 +494,43 @@ impl BackupFsService {
                         if path.is_dir() {
                             stack.push(path);
                         } else if path.is_file() {
-                            let file_name = path
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or_default();
-                            if file_name.starts_with(".tmp.") || file_name.contains(".tmp.") {
+                            let rel = match path.strip_prefix(&media_dir_buf) {
+                                Ok(r) => r,
+                                Err(_) => {
+                                    skipped_media_files += 1;
+                                    continue;
+                                }
+                            };
+
+                            let rel_slash = rel.to_string_lossy().replace('\\', "/");
+
+                            // Rejeita qualquer arquivo não-canônico (ex: Thumbs.db, .DS_Store, *.restore_tmp, *.tmp.*).
+                            // Apenas caminhos estritamente no padrão media/<tenant>/<2 hex>/<64 hex> são aceitos.
+                            if validate_canonical_media_path(&rel_slash).is_err() {
+                                tracing::warn!(
+                                    path = %path.display(),
+                                    rel = %rel_slash,
+                                    "Arquivo não-canônico na pasta de mídia ignorado durante backup"
+                                );
+                                skipped_media_files += 1;
                                 continue;
                             }
 
-                            let rel = path.strip_prefix(&media_dir_buf).map_err(|e| {
-                                let _ = fs::remove_file(&temp_zip_path);
-                                CoreError::Internal(format!(
-                                    "Falha ao calcular caminho relativo de mídia ({}): {e}",
-                                    path.display()
-                                ))
-                            })?;
+                            // Extrai o hash esperado a partir do nome do arquivo (último segmento de 64 hex)
+                            let expected_hash = match rel_slash.rsplit('/').next() {
+                                Some(h) if h.len() == 64 => h,
+                                _ => {
+                                    skipped_media_files += 1;
+                                    continue;
+                                }
+                            };
 
-                            let rel_slash = rel.to_string_lossy().replace('\\', "/");
-                            let zip_entry_name = format!("media/{rel_slash}");
-                            validate_zip_entry_name(&zip_entry_name).inspect_err(|_| {
-                                let _ = fs::remove_file(&temp_zip_path);
-                            })?;
-
+                            // Lê o arquivo para verificar se o hash SHA-256 do conteúdo realmente bate com o nome
                             let mut mf = File::open(&path).map_err(|e| {
                                 let _ = fs::remove_file(&temp_zip_path);
                                 CoreError::Internal(format!(
                                     "Falha ao abrir arquivo de mídia para backup ({}): {e}",
                                     path.display()
-                                ))
-                            })?;
-
-                            zip.start_file(&zip_entry_name, stored_opts).map_err(|e| {
-                                let _ = fs::remove_file(&temp_zip_path);
-                                CoreError::Internal(format!(
-                                    "Falha ao iniciar entrada de mídia no zip ({}): {e}",
-                                    zip_entry_name
                                 ))
                             })?;
 
@@ -441,19 +551,54 @@ impl BackupFsService {
                                 }
                                 hasher.update(&buffer[..n]);
                                 total_bytes += n as u64;
-                                zip.write_all(&buffer[..n]).map_err(|e| {
-                                    let _ = fs::remove_file(&temp_zip_path);
-                                    CoreError::Internal(format!(
-                                        "Falha ao gravar arquivo de mídia no zip ({}): {e}",
-                                        path.display()
-                                    ))
-                                })?;
                             }
+
+                            let actual_hash = format!("{:x}", hasher.finalize());
+                            if !actual_hash.eq_ignore_ascii_case(expected_hash) {
+                                tracing::warn!(
+                                    path = %path.display(),
+                                    expected = %expected_hash,
+                                    actual = %actual_hash,
+                                    "Arquivo de mídia com conteúdo divergente do nome hash ignorado durante backup"
+                                );
+                                skipped_media_files += 1;
+                                continue;
+                            }
+
+                            // Grava no arquivo ZIP o arquivo canônico validado
+                            let zip_entry_name = format!("media/{rel_slash}");
+                            validate_zip_entry_name(&zip_entry_name).inspect_err(|_| {
+                                let _ = fs::remove_file(&temp_zip_path);
+                            })?;
+
+                            mf.seek(std::io::SeekFrom::Start(0)).map_err(|e| {
+                                let _ = fs::remove_file(&temp_zip_path);
+                                CoreError::Internal(format!(
+                                    "Falha ao reposicionar ponteiro do arquivo de mídia ({}): {e}",
+                                    path.display()
+                                ))
+                            })?;
+
+                            zip.start_file(&zip_entry_name, stored_opts).map_err(|e| {
+                                let _ = fs::remove_file(&temp_zip_path);
+                                CoreError::Internal(format!(
+                                    "Falha ao iniciar entrada de mídia no zip ({}): {e}",
+                                    zip_entry_name
+                                ))
+                            })?;
+
+                            std::io::copy(&mut mf, &mut zip).map_err(|e| {
+                                let _ = fs::remove_file(&temp_zip_path);
+                                CoreError::Internal(format!(
+                                    "Falha ao gravar arquivo de mídia no zip ({}): {e}",
+                                    path.display()
+                                ))
+                            })?;
 
                             file_entries.push(BackupFileEntry {
                                 path: zip_entry_name,
                                 byte_size: total_bytes,
-                                sha256: format!("{:x}", hasher.finalize()),
+                                sha256: actual_hash,
                             });
                         }
                     }
@@ -470,6 +615,7 @@ impl BackupFsService {
                 database_integrity_checked: true,
                 files: file_entries,
                 table_counts,
+                skipped_media_files,
             };
 
             let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(|e| {
@@ -592,6 +738,7 @@ impl BackupFsService {
                                         // A listagem lê apenas o manifesto; a verificação profunda com conferência
                                         // criptográfica de SHA-256 de todas as entradas ocorre sob demanda via verify_backup.
                                         verified: false,
+                                        skipped_media_files: manifest.skipped_media_files,
                                     });
                                 }
                             }
@@ -880,7 +1027,12 @@ impl BackupFsService {
         })?;
         let mut hasher = Sha256::new();
         let mut buf = [0u8; 64 * 1024];
-        while let Ok(n) = f.read(&mut buf) {
+        loop {
+            let n = f.read(&mut buf).map_err(|e| {
+                CoreError::Internal(format!(
+                    "Falha ao ler bytes do arquivo de backup para cálculo de SHA-256: {e}"
+                ))
+            })?;
             if n == 0 {
                 break;
             }
@@ -1098,6 +1250,21 @@ impl BackupFsService {
             ));
         }
 
+        // Checagem de espaço livre aproximado no disco do app_data_dir antes da restauração
+        if let Some(free_space) = get_available_disk_space(&self.app_data_dir) {
+            let backup_size = fs::metadata(&backup_file_path)
+                .map(|m| m.len())
+                .unwrap_or(0);
+            let estimated_required = backup_size.saturating_mul(2).max(10 * 1024 * 1024);
+            if free_space < estimated_required {
+                let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
+                return Err(CoreError::Validation(format!(
+                    "Espaço livre insuficiente no disco para restauração ({} bytes disponíveis, estimados {} bytes necessários).",
+                    free_space, estimated_required
+                )));
+            }
+        }
+
         // Cria snapshot de salvaguarda prévia (pre-restore) cobrindo banco e mídia com propagação estrita de erros
         let mut pre_restore_path_str = None;
         let db_backup_original = self.app_data_dir.join("eventrent.db.pre-restore.bak");
@@ -1256,6 +1423,20 @@ impl BackupFsService {
             pre_restore_path_str = Some(pre_restore_file.to_string_lossy().to_string());
         }
 
+        let orig_wal = PathBuf::from(format!("{}-wal", self.db_path.to_string_lossy()));
+        let orig_shm = PathBuf::from(format!("{}-shm", self.db_path.to_string_lossy()));
+        let bak_wal = PathBuf::from(format!("{}-wal", db_backup_original.to_string_lossy()));
+        let bak_shm = PathBuf::from(format!("{}-shm", db_backup_original.to_string_lossy()));
+        let _ = fs::remove_file(&bak_wal);
+        let _ = fs::remove_file(&bak_shm);
+
+        if orig_wal.exists() {
+            let _ = fs::copy(&orig_wal, &bak_wal);
+        }
+        if orig_shm.exists() {
+            let _ = fs::copy(&orig_shm, &bak_shm);
+        }
+
         // Rastreamento de arquivos criados para garantia de rollback integral
         let mut extracted_media_paths: Vec<PathBuf> = Vec::new();
         let restored_db_tmp = self.app_data_dir.join("eventrent.restored.tmp.db");
@@ -1271,6 +1452,16 @@ impl BackupFsService {
             }
             if db_backup_original.exists() {
                 let _ = fs::copy(&db_backup_original, &self.db_path);
+            }
+            if bak_wal.exists() {
+                let _ = fs::copy(&bak_wal, &orig_wal);
+            } else {
+                let _ = fs::remove_file(&orig_wal);
+            }
+            if bak_shm.exists() {
+                let _ = fs::copy(&bak_shm, &orig_shm);
+            } else {
+                let _ = fs::remove_file(&orig_shm);
             }
             let _ = fs::rename(&marker_path, self.app_data_dir.join("restore_failed.json"));
         };
@@ -1350,10 +1541,12 @@ impl BackupFsService {
 
         // 2. Validação física de integridade no banco restaurado via PRAGMA integrity_check
         {
-            let check_conn = format!("sqlite://{}?mode=ro", restored_db_tmp.display());
+            let check_opts = SqliteConnectOptions::new()
+                .filename(&restored_db_tmp)
+                .read_only(true);
             let check_pool = match sqlx::sqlite::SqlitePoolOptions::new()
                 .max_connections(1)
-                .connect(&check_conn)
+                .connect_with(check_opts)
                 .await
             {
                 Ok(p) => p,
@@ -1480,6 +1673,43 @@ impl BackupFsService {
                     )));
                 }
 
+                // Verifica se o arquivo de mídia já existe previamente com o mesmo tamanho e SHA-256.
+                // Como o armazenamento de mídia é endereçado por conteúdo (CAS), arquivos preexistentes
+                // idênticos não precisam ser regravados e JAMAIS devem entrar em extracted_media_paths,
+                // garantindo que um rollback eventual não destrua mídias preexistentes legítimas do banco atual.
+                let already_present_and_valid = if target_path.is_file() {
+                    if let Ok(existing_meta) = fs::metadata(&target_path) {
+                        if existing_meta.len() == meta.byte_size {
+                            if let Ok(mut ef) = File::open(&target_path) {
+                                let mut e_hasher = Sha256::new();
+                                let mut e_buf = [0u8; 64 * 1024];
+                                while let Ok(n) = ef.read(&mut e_buf) {
+                                    if n == 0 {
+                                        break;
+                                    }
+                                    e_hasher.update(&e_buf[..n]);
+                                }
+                                let e_sha = format!("{:x}", e_hasher.finalize());
+                                e_sha.eq_ignore_ascii_case(&meta.sha256)
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if already_present_and_valid {
+                    // Arquivo idêntico já existe previamente: preserva intacto e não adiciona a extracted_media_paths
+                    files_restored_count += 1;
+                    continue;
+                }
+
                 if let Some(parent) = target_path.parent() {
                     if let Err(e) = fs::create_dir_all(parent) {
                         rollback(&extracted_media_paths);
@@ -1589,9 +1819,11 @@ impl BackupFsService {
         }
         let _ = fs::remove_file(&restored_cfg_tmp);
 
-        // Remove o marcador de restauração pendente e o backup original de rollback
+        // Remove o marcador de restauração pendente e os backups originais de rollback
         let _ = fs::remove_file(&marker_path);
         let _ = fs::remove_file(&db_backup_original);
+        let _ = fs::remove_file(&bak_wal);
+        let _ = fs::remove_file(&bak_shm);
 
         tracing::info!(
             files_restored_count,
@@ -1633,10 +1865,12 @@ impl BackupFsService {
         }
 
         // Abre conexão somente-leitura para conferir se há migração pendente
-        let conn_str = format!("sqlite://{}?mode=ro", db_path.display());
+        let ro_opts = SqliteConnectOptions::new()
+            .filename(db_path)
+            .read_only(true);
         let pool = match sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
-            .connect(&conn_str)
+            .connect_with(ro_opts)
             .await
         {
             Ok(p) => p,
@@ -1699,10 +1933,12 @@ impl BackupFsService {
         let _ = fs::remove_file(&tmp_snapshot);
 
         // Conecta ao banco para snapshot consistente via VACUUM INTO
-        let conn_rw = format!("sqlite://{}", db_path.display());
+        let rw_opts = SqliteConnectOptions::new()
+            .filename(db_path)
+            .read_only(false);
         let rw_pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
-            .connect(&conn_rw)
+            .connect_with(rw_opts)
             .await
             .map_err(|e| {
                 CoreError::Internal(format!(
@@ -1723,10 +1959,12 @@ impl BackupFsService {
         })?;
 
         // Valida integridade física do snapshot gerado via PRAGMA integrity_check
-        let check_conn = format!("sqlite://{}?mode=ro", tmp_snapshot.display());
+        let snap_opts = SqliteConnectOptions::new()
+            .filename(&tmp_snapshot)
+            .read_only(true);
         let check_pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
-            .connect(&check_conn)
+            .connect_with(snap_opts)
             .await
             .map_err(|e| {
                 let _ = fs::remove_file(&tmp_snapshot);
@@ -1888,10 +2126,12 @@ mod tests {
             fs::write(&sample_media, img_bytes).unwrap();
 
             // Inicializa banco SQLite com tabela de teste
-            let conn_str = format!("sqlite://{}?mode=rwc", db_path.display());
+            let conn_opts = SqliteConnectOptions::new()
+                .filename(&db_path)
+                .create_if_missing(true);
             let pool = SqlitePoolOptions::new()
                 .max_connections(1)
-                .connect(&conn_str)
+                .connect_with(conn_opts)
                 .await
                 .unwrap();
 
@@ -1922,6 +2162,22 @@ mod tests {
                 self.media_dir.clone(),
                 self.config_path.clone(),
             )
+        }
+
+        #[allow(dead_code)]
+        async fn pool_ro(&self) -> SqlitePool {
+            let opts = SqliteConnectOptions::new()
+                .filename(&self.db_path)
+                .read_only(true);
+            SqlitePoolOptions::new().connect_with(opts).await.unwrap()
+        }
+
+        #[allow(dead_code)]
+        async fn pool_rw(&self) -> SqlitePool {
+            let opts = SqliteConnectOptions::new()
+                .filename(&self.db_path)
+                .read_only(false);
+            SqlitePoolOptions::new().connect_with(opts).await.unwrap()
         }
     }
 
@@ -2089,6 +2345,34 @@ mod tests {
             .expect("Execução da retenção");
 
         assert!(backup_path.exists());
+        assert_eq!(plan.files_to_keep.len(), 1);
+        assert_eq!(plan.files_to_delete.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_retention_execution_never_deletes_most_recent_when_limits_are_zero() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        let conn_str = format!("sqlite://{}?mode=ro", env.db_path.display());
+        let pool = SqlitePoolOptions::new().connect(&conn_str).await.unwrap();
+
+        let (_manifest, backup_path) = service
+            .run_backup(&env.backup_dest, &pool, "0.10.0-fase2n")
+            .await
+            .unwrap();
+
+        pool.close().await;
+
+        let plan = service
+            .execute_retention(&env.backup_dest, 0, 0, 0)
+            .expect("Execução da retenção");
+
+        assert!(
+            backup_path.exists(),
+            "O backup recém-criado deve continuar existindo mesmo com retenção zerada"
+        );
         assert_eq!(plan.files_to_keep.len(), 1);
         assert_eq!(plan.files_to_delete.len(), 0);
     }
@@ -2490,8 +2774,14 @@ mod tests {
         let env = TestEnvironment::setup().await;
         let service = env.service();
 
-        let sample_media = env.media_dir.join("locked_file.png");
-        fs::write(&sample_media, b"fake png data").unwrap();
+        let img_bytes = b"sample locked media content";
+        let mut hasher = Sha256::new();
+        hasher.update(img_bytes);
+        let sha = format!("{:x}", hasher.finalize());
+        let sample_dir = env.media_dir.join("default").join(&sha[..2]);
+        fs::create_dir_all(&sample_dir).unwrap();
+        let sample_media = sample_dir.join(&sha);
+        fs::write(&sample_media, img_bytes).unwrap();
 
         // Trava o arquivo para leitura
         #[cfg(windows)]
@@ -2892,5 +3182,539 @@ mod tests {
             current_db_bytes, initial_db_bytes,
             "Rollback deve garantir que banco de dados continue intacto"
         );
+    }
+
+    #[tokio::test]
+    async fn test_backup_ignores_non_canonical_media_and_restores_successfully() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        // Insere arquivos não-canônicos e espúrios na pasta de mídia
+        fs::write(
+            env.media_dir.join("Thumbs.db"),
+            b"fake windows thumbs cache",
+        )
+        .unwrap();
+        fs::write(env.media_dir.join(".DS_Store"), b"fake macos ds_store").unwrap();
+        fs::write(
+            env.media_dir.join("backup_residue.restore_tmp"),
+            b"leftover restore tmp",
+        )
+        .unwrap();
+        fs::write(
+            env.media_dir.join("transient.tmp.48912"),
+            b"leftover upload tmp",
+        )
+        .unwrap();
+
+        let tenant_folder = env.media_dir.join("tenant_test");
+        fs::create_dir_all(&tenant_folder).unwrap();
+        fs::write(
+            tenant_folder.join("random_document.pdf"),
+            b"not a canonical media",
+        )
+        .unwrap();
+
+        // Arquivo que até tem 64 hex no nome, mas o SHA-256 real do conteúdo não bate
+        let hex_folder = tenant_folder.join("aa");
+        fs::create_dir_all(&hex_folder).unwrap();
+        let forged_name = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        fs::write(hex_folder.join(forged_name), b"corrupted or forged content").unwrap();
+
+        let conn_str = format!("sqlite://{}?mode=ro", env.db_path.display());
+        let pool = SqlitePoolOptions::new().connect(&conn_str).await.unwrap();
+
+        let (manifest, backup_path) = service
+            .run_backup(&env.backup_dest, &pool, "0.10.0-fase2n")
+            .await
+            .expect("Backup deve suceder mesmo com arquivos espúrios na pasta de mídia");
+        pool.close().await;
+
+        // Deve ter ignorado os 6 arquivos não-canônicos
+        assert_eq!(
+            manifest.skipped_media_files, 6,
+            "Deve contabilizar exatamente os 6 arquivos não-canônicos ignorados"
+        );
+
+        // O backup deve ser 100% íntegro e válido na auto-verificação e verificação sob demanda
+        let verify_res = service
+            .verify_backup_file(&backup_path, 10)
+            .expect("Verificação deve rodar com sucesso");
+        assert!(
+            verify_res.valid,
+            "Backup com mídia não-canônica ignorada deve ser considerado válido: {:?}",
+            verify_res.error_message
+        );
+
+        // Restauração do backup deve funcionar sem falhar por causa dos arquivos espúrios
+        service
+            .schedule_restore(&backup_path, "usr_admin", 10)
+            .expect("Agendamento de restauração deve ser aceito");
+
+        let restore_res = service.execute_pending_restore_at_startup(10).await;
+        assert!(
+            restore_res.is_ok(),
+            "Restauração deve concluir com sucesso sem ser bloqueada por arquivos ignorados: {:?}",
+            restore_res.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_restore_rollback_preserves_preexisting_media_when_restoration_fails() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        // Identifica o arquivo de mídia preexistente criado no setup
+        let sample_media_files: Vec<PathBuf> = fs::read_dir(env.media_dir.join("default"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .flat_map(|sub| {
+                fs::read_dir(sub.path())
+                    .unwrap()
+                    .filter_map(|e| e.ok().map(|ent| ent.path()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert!(
+            !sample_media_files.is_empty(),
+            "Mídia preexistente deve existir"
+        );
+        let preexisting_media_path = sample_media_files[0].clone();
+        let preexisting_bytes = fs::read(&preexisting_media_path).unwrap();
+
+        let conn_str = format!("sqlite://{}?mode=ro", env.db_path.display());
+        let pool = SqlitePoolOptions::new().connect(&conn_str).await.unwrap();
+        let (_manifest, backup_path) = service
+            .run_backup(&env.backup_dest, &pool, "0.10.0-fase2n")
+            .await
+            .expect("Backup deve ser criado");
+        pool.close().await;
+
+        // Cria uma cópia adulterada do zip onde um arquivo extra de mídia falhará na conferência de SHA
+        let tampered_zip = env.backup_dest.join("tampered_rollback.eventrent-backup");
+        {
+            let src = File::open(&backup_path).unwrap();
+            let mut archive = ZipArchive::new(src).unwrap();
+            let dst = File::create(&tampered_zip).unwrap();
+            let mut writer = ZipWriter::new(dst);
+            let opt = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+            let bad_media_hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+            let bad_media_entry = format!("media/default/bb/{bad_media_hash}");
+
+            for i in 0..archive.len() {
+                let mut e = archive.by_index(i).unwrap();
+                let name = e.name().to_string();
+                let mut d = Vec::new();
+                e.read_to_end(&mut d).unwrap();
+                if name == "manifest.json" {
+                    let mut mf: BackupManifest = serde_json::from_slice(&d).unwrap();
+                    // Adiciona entrada fraudulenta ao manifesto
+                    mf.files.push(BackupFileEntry {
+                        path: bad_media_entry.clone(),
+                        byte_size: 15,
+                        sha256: bad_media_hash.to_string(),
+                    });
+                    d = serde_json::to_vec_pretty(&mf).unwrap();
+                }
+                writer.start_file(name, opt).unwrap();
+                writer.write_all(&d).unwrap();
+            }
+
+            // Grava o arquivo com bytes divergentes do sha declarado
+            writer.start_file(bad_media_entry, opt).unwrap();
+            writer.write_all(b"wrong sha bytes").unwrap();
+            writer.finish().unwrap();
+        }
+
+        // Agenda e executa restauração que falhará na conferência do arquivo fraudulento
+        let mut hasher = Sha256::new();
+        let b = fs::read(&tampered_zip).unwrap();
+        hasher.update(&b);
+        let marker = RestorePendingMarker {
+            backup_file_path: tampered_zip.to_string_lossy().to_string(),
+            backup_sha256: format!("{:x}", hasher.finalize()),
+            scheduled_at: Utc::now().to_rfc3339(),
+            scheduled_by_user_id: "usr_admin".to_string(),
+        };
+        fs::write(
+            env.app_data_dir.join(RESTORE_PENDING_FILE),
+            serde_json::to_string(&marker).unwrap(),
+        )
+        .unwrap();
+
+        let res = service.execute_pending_restore_at_startup(10).await;
+        assert!(
+            res.is_err(),
+            "Restauração deve falhar devido à divergência de SHA no arquivo corrompido"
+        );
+
+        // Ponto Crítico da Tarefa 0.2:
+        // A mídia preexistente DEVE continuar existindo e intacta, NÃO pode ter sido deletada pelo rollback!
+        assert!(
+            preexisting_media_path.exists(),
+            "Mídia preexistente não deve ser deletada no rollback de restauração"
+        );
+        let current_bytes = fs::read(&preexisting_media_path).unwrap();
+        assert_eq!(
+            current_bytes, preexisting_bytes,
+            "Conteúdo da mídia preexistente deve permanecer rigorosamente inalterado"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_backup_and_restore_with_special_characters_in_path() {
+        let _test_guard = TEST_LOCK.lock().await;
+
+        let base_tmp =
+            std::env::temp_dir().join(format!("eventrent_special_test_{}", uuid::Uuid::now_v7()));
+        let root = base_tmp.join("Área #1 100% Espaço & Acentuação");
+        let app_data_dir = root.join("AppData Local");
+        let db_path = app_data_dir.join("eventrent_banco #1.db");
+        let config_path = app_data_dir.join("configuração & tema.json");
+        let media_dir = app_data_dir.join("mídias #100%");
+        let backup_dest = root.join("Destino de Backups 100%");
+
+        fs::create_dir_all(&app_data_dir).unwrap();
+        fs::create_dir_all(&media_dir).unwrap();
+        fs::create_dir_all(&backup_dest).unwrap();
+
+        fs::write(&config_path, r#"{"theme": "system"}"#).unwrap();
+
+        let img_bytes = b"special_path_media_bytes";
+        let mut hasher = Sha256::new();
+        hasher.update(img_bytes);
+        let sha = format!("{:x}", hasher.finalize());
+        let sample_dir = media_dir.join("default").join(&sha[..2]);
+        fs::create_dir_all(&sample_dir).unwrap();
+        let sample_media = sample_dir.join(&sha);
+        fs::write(&sample_media, img_bytes).unwrap();
+
+        let conn_opts = SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(conn_opts)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE test_special (id INTEGER PRIMARY KEY, valor TEXT);
+             INSERT INTO test_special (id, valor) VALUES (1, 'acentuação e % #');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let service = BackupFsService::new(
+            app_data_dir.clone(),
+            db_path.clone(),
+            media_dir.clone(),
+            config_path.clone(),
+        );
+
+        let (manifest, backup_path) = service
+            .run_backup(&backup_dest, &pool, "0.10.0-fase2n")
+            .await
+            .expect("Backup deve suceder mesmo com caminhos contendo acentos, %, # e espaços");
+        pool.close().await;
+
+        assert_eq!(manifest.files.len(), 3); // db, config, media
+
+        let verify = service
+            .verify_backup_file(&backup_path, 10)
+            .expect("Verificação sob demanda");
+        assert!(
+            verify.valid,
+            "Backup em pasta com caracteres especiais deve ser válido: {:?}",
+            verify.error_message
+        );
+
+        // Altera o banco para testar restauração
+        let rw_opts = SqliteConnectOptions::new()
+            .filename(&db_path)
+            .read_only(false);
+        let pool_rw = SqlitePoolOptions::new()
+            .connect_with(rw_opts)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM test_special WHERE id = 1")
+            .execute(&pool_rw)
+            .await
+            .unwrap();
+        pool_rw.close().await;
+
+        service
+            .schedule_restore(&backup_path, "usr_special", 10)
+            .expect("Agendamento de restauração");
+
+        let report = service
+            .execute_pending_restore_at_startup(10)
+            .await
+            .expect("Execução da restauração a frio");
+        assert!(report.is_some(), "Relatório de restauração gerado");
+
+        // Confere restauração dos dados via SqliteConnectOptions::filename
+        let ro_opts = SqliteConnectOptions::new()
+            .filename(&db_path)
+            .read_only(true);
+        let pool_check = SqlitePoolOptions::new()
+            .connect_with(ro_opts)
+            .await
+            .unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM test_special WHERE id = 1")
+            .fetch_one(&pool_check)
+            .await
+            .unwrap();
+        pool_check.close().await;
+        assert_eq!(
+            count, 1,
+            "Dados originais devem ter sido restaurados com sucesso"
+        );
+
+        let _ = fs::remove_dir_all(&base_tmp);
+    }
+
+    #[tokio::test]
+    async fn test_restore_rollback_preserves_wal_file_when_restore_fails() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        let pool = env.pool_ro().await;
+        let (_manifest, backup_path) = service
+            .run_backup(&env.backup_dest, &pool, "0.10.0-fase2n")
+            .await
+            .unwrap();
+        pool.close().await;
+
+        // Cria arquivos -wal e -shm simulando transações uncommitted
+        let wal_path = PathBuf::from(format!("{}-wal", env.db_path.to_string_lossy()));
+        let wal_bytes = b"wal simulation uncommitted data 1234567890";
+        fs::write(&wal_path, wal_bytes).unwrap();
+
+        // Adultera o backup para forçar falha e rollback
+        let bad_zip = env.backup_dest.join("bad_backup_wal_test.eventrent-backup");
+        fs::copy(&backup_path, &bad_zip).unwrap();
+
+        // Agenda marcador
+        let marker = RestorePendingMarker {
+            backup_file_path: bad_zip.to_string_lossy().to_string(),
+            backup_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
+            scheduled_at: Utc::now().to_rfc3339(),
+            scheduled_by_user_id: "usr_admin".to_string(),
+        };
+        fs::write(
+            env.app_data_dir.join(RESTORE_PENDING_FILE),
+            serde_json::to_string(&marker).unwrap(),
+        )
+        .unwrap();
+
+        let res = service.execute_pending_restore_at_startup(10).await;
+        assert!(res.is_err(), "Restauração deve falhar com SHA divergente");
+
+        // O arquivo -wal original DEVE ter sido preservado pelo rollback
+        assert!(wal_path.exists(), "Arquivo -wal deve existir após rollback");
+        let current_wal_bytes = fs::read(&wal_path).unwrap();
+        assert_eq!(
+            current_wal_bytes, wal_bytes,
+            "Conteúdo do arquivo -wal deve ter sido preservado intacto pelo rollback"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_full_end_to_end_backup_mutation_and_restore_cycle() {
+        let _test_guard = TEST_LOCK.lock().await;
+        let env = TestEnvironment::setup().await;
+        let service = env.service();
+
+        // 1. Popula múltiplas tabelas no banco de dados SQLite
+        let pool = env.pool_rw().await;
+        sqlx::query(
+            "CREATE TABLE customers (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL);
+             INSERT INTO customers (id, name, email) VALUES
+             ('cust_01', 'Cliente Original 1', 'cli1@real.local'),
+             ('cust_02', 'Cliente Original 2', 'cli2@real.local'),
+             ('cust_03', 'TESTE RESTAURACAO', 'restauracao@real.local');
+             CREATE TABLE products (id TEXT PRIMARY KEY, title TEXT NOT NULL, price INTEGER NOT NULL);
+             INSERT INTO products (id, title, price) VALUES
+             ('prod_01', 'Pioneer CDJ-3000', 15000),
+             ('prod_02', 'Mesa Yamaha QL5', 45000);",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        // 2. Cria múltiplos arquivos canônicos de mídia com SHA-256 e tamanhos conhecidos
+        let media_files = vec![
+            (
+                b"conteudo da foto 1 do modelo pioneer cdj 3000".to_vec(),
+                "default",
+            ),
+            (
+                b"conteudo da foto 2 do modelo pioneer detalhes traseiros".to_vec(),
+                "default",
+            ),
+            (
+                b"conteudo do documento pdf do cliente teste restauracao".to_vec(),
+                "tenant_alpha",
+            ),
+        ];
+
+        let mut expected_media = Vec::new();
+        for (bytes, tenant) in &media_files {
+            let mut hasher = Sha256::new();
+            hasher.update(bytes);
+            let sha = format!("{:x}", hasher.finalize());
+            let dir = env.media_dir.join(tenant).join(&sha[..2]);
+            fs::create_dir_all(&dir).unwrap();
+            let file_path = dir.join(&sha);
+            fs::write(&file_path, bytes).unwrap();
+            expected_media.push((file_path, sha, bytes.clone()));
+        }
+
+        // 3. Executa backup completo
+        let pool_ro = env.pool_ro().await;
+        let (manifest, backup_path) = service
+            .run_backup(&env.backup_dest, &pool_ro, "0.10.0-fase2n")
+            .await
+            .expect("Backup completo inicial deve ter sucesso");
+        pool_ro.close().await;
+
+        assert!(backup_path.exists(), "Arquivo de backup deve existir");
+        assert!(
+            manifest.files.len() >= 5,
+            "Manifesto deve conter db, config e ao menos 3 mídias"
+        );
+
+        let verify_result = service
+            .verify_backup_file(&backup_path, 10)
+            .expect("Verificação do backup gerado");
+        assert!(
+            verify_result.valid,
+            "Backup recém-gerado deve ser estritamente válido"
+        );
+
+        // 4. Mutação do ambiente:
+        // A) No banco: apaga o cliente TESTE RESTAURACAO, altera o cliente 1, adiciona um intruso
+        let pool_mut = env.pool_rw().await;
+        sqlx::query(
+            "DELETE FROM customers WHERE id = 'cust_03';
+             UPDATE customers SET name = 'Cliente 1 Corrompido' WHERE id = 'cust_01';
+             INSERT INTO customers (id, name, email) VALUES ('cust_evil', 'Intruso', 'evil@hacker.local');
+             DELETE FROM products WHERE id = 'prod_01';",
+        )
+        .execute(&pool_mut)
+        .await
+        .unwrap();
+        pool_mut.close().await;
+
+        // B) No disco de mídia: apaga uma mídia e adultera outra
+        let (first_media_path, _, _) = &expected_media[0];
+        fs::remove_file(first_media_path).expect("Apagar primeira mídia");
+        let (second_media_path, _, _) = &expected_media[1];
+        fs::write(
+            second_media_path,
+            b"bytes adulterados que nao batem com sha256",
+        )
+        .unwrap();
+
+        // 5. Agenda a restauração a frio
+        let marker = service
+            .schedule_restore(&backup_path, "usr_admin", 10)
+            .expect("Agendamento de restauração deve ser aceito");
+        assert_eq!(marker.scheduled_by_user_id, "usr_admin");
+        assert!(
+            env.app_data_dir.join(RESTORE_PENDING_FILE).exists(),
+            "Marcador restore_pending deve existir"
+        );
+
+        // 6. Executa a restauração a frio no boot
+        let restore_report = service
+            .execute_pending_restore_at_startup(10)
+            .await
+            .expect("Execução da restauração a frio no boot deve ter sucesso")
+            .expect("Relatório de restauração deve existir");
+
+        assert!(
+            restore_report.files_restored_count >= 5,
+            "Contagem de arquivos restaurados deve cobrir db, config e mídias"
+        );
+        assert!(
+            restore_report.pre_restore_snapshot_file.is_some(),
+            "Salvaguarda pré-restauração deve ter sido criada com sucesso"
+        );
+        assert!(
+            !env.app_data_dir.join(RESTORE_PENDING_FILE).exists(),
+            "Marcador deve ter sido consumido e removido"
+        );
+
+        // 7. Validação ponta a ponta dos dados no SQLite
+        let pool_check = env.pool_ro().await;
+        let restored_customers: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, name FROM customers ORDER BY id")
+                .fetch_all(&pool_check)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            restored_customers.len(),
+            3,
+            "Devem existir exatamente os 3 clientes originais"
+        );
+        assert_eq!(
+            restored_customers[0],
+            ("cust_01".to_string(), "Cliente Original 1".to_string())
+        );
+        assert_eq!(
+            restored_customers[1],
+            ("cust_02".to_string(), "Cliente Original 2".to_string())
+        );
+        assert_eq!(
+            restored_customers[2],
+            ("cust_03".to_string(), "TESTE RESTAURACAO".to_string())
+        );
+
+        let restored_products: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, title FROM products ORDER BY id")
+                .fetch_all(&pool_check)
+                .await
+                .unwrap();
+        assert_eq!(
+            restored_products.len(),
+            2,
+            "Devem existir os 2 produtos originais"
+        );
+        assert_eq!(
+            restored_products[0],
+            ("prod_01".to_string(), "Pioneer CDJ-3000".to_string())
+        );
+        pool_check.close().await;
+
+        // 8. Validação ponta a ponta de todas as mídias em disco (SHA-256 e bytes exatos)
+        for (media_path, expected_sha, expected_bytes) in &expected_media {
+            assert!(
+                media_path.exists(),
+                "Arquivo de mídia {} deve existir após restauração",
+                media_path.display()
+            );
+            let actual_bytes = fs::read(media_path).unwrap();
+            assert_eq!(
+                &actual_bytes, expected_bytes,
+                "Bytes da mídia restaurada devem ser idênticos aos originais"
+            );
+            let mut hasher = Sha256::new();
+            hasher.update(&actual_bytes);
+            let actual_sha = format!("{:x}", hasher.finalize());
+            assert_eq!(
+                &actual_sha, expected_sha,
+                "SHA-256 da mídia restaurada deve bater com o original"
+            );
+        }
     }
 }

@@ -158,17 +158,14 @@
       const input: SetBackupSettingsInput = {
         destination_folder: destinationFolder.trim(),
         schedule_enabled: autoBackupEnabled,
-        retention_daily: Math.max(
-          1,
-          Math.min(365, Number(retentionDaily) || 7),
-        ),
+        retention_daily: Math.max(1, Math.min(60, Number(retentionDaily) || 7)),
         retention_weekly: Math.max(
-          1,
-          Math.min(52, Number(retentionWeekly) || 4),
+          0,
+          Math.min(52, Number(retentionWeekly) || 0),
         ),
         retention_monthly: Math.max(
-          1,
-          Math.min(120, Number(retentionMonthly) || 12),
+          0,
+          Math.min(60, Number(retentionMonthly) || 0),
         ),
       };
 
@@ -202,9 +199,15 @@
     isRunningBackup = true;
     try {
       const result = await getBackupRepository().runBackupNow();
-      toast.success(
-        `Backup concluído: ${result.file_name} (${formatBytes(result.byte_size)})`,
-      );
+      if (result.skipped_media_files && result.skipped_media_files > 0) {
+        toast.warning(
+          `Backup concluído com ressalvas: ${result.file_name} (${formatBytes(result.byte_size)}). ${result.skipped_media_files} arquivo(s) espúrios/não-canônicos ignorados na pasta de mídia.`,
+        );
+      } else {
+        toast.success(
+          `Backup concluído: ${result.file_name} (${formatBytes(result.byte_size)})`,
+        );
+      }
       await loadData();
     } catch (err) {
       toast.error(
@@ -447,12 +450,12 @@
                     id="ret-days"
                     type="number"
                     min="1"
-                    max="365"
+                    max="60"
                     bind:value={retentionDaily}
                     disabled={!canManage || isSavingSettings}
                   />
                   <span class="text-[10px] text-muted-foreground block">
-                    Mantém 1 por dia nos últimos X dias.
+                    Mantém 1 por dia nos últimos X dias (1 a 60).
                   </span>
                 </div>
                 <div class="space-y-1">
@@ -465,13 +468,13 @@
                   <Input
                     id="ret-weeks"
                     type="number"
-                    min="1"
+                    min="0"
                     max="52"
                     bind:value={retentionWeekly}
                     disabled={!canManage || isSavingSettings}
                   />
                   <span class="text-[10px] text-muted-foreground block">
-                    Mantém 1 por semana nas últimas X semanas.
+                    Mantém 1 por semana nas últimas X semanas (0 a 52).
                   </span>
                 </div>
                 <div class="space-y-1">
@@ -484,13 +487,13 @@
                   <Input
                     id="ret-months"
                     type="number"
-                    min="1"
-                    max="120"
+                    min="0"
+                    max="60"
                     bind:value={retentionMonthly}
                     disabled={!canManage || isSavingSettings}
                   />
                   <span class="text-[10px] text-muted-foreground block">
-                    Mantém 1 por mês nos últimos X meses.
+                    Mantém 1 por mês nos últimos X meses (0 a 60).
                   </span>
                 </div>
               </div>
@@ -524,11 +527,27 @@
             <div
               class="flex items-center justify-between border-b border-border pb-2"
             >
-              <span class="text-muted-foreground">Último backup:</span>
+              <span class="text-muted-foreground"
+                >Último backup bem-sucedido:</span
+              >
               <span class="font-medium text-foreground">
-                {formatDate(status?.settings.last_backup_at ?? null)}
+                {formatDate(
+                  status?.settings.last_success_at ??
+                    status?.settings.last_backup_at ??
+                    null,
+                )}
               </span>
             </div>
+            {#if status?.settings.last_attempt_at && status.settings.last_attempt_at !== (status.settings.last_success_at ?? status.settings.last_backup_at)}
+              <div
+                class="flex items-center justify-between border-b border-border pb-2 text-xs"
+              >
+                <span class="text-muted-foreground">Última tentativa:</span>
+                <span class="font-medium text-foreground">
+                  {formatDate(status.settings.last_attempt_at)}
+                </span>
+              </div>
+            {/if}
             <div
               class="flex items-center justify-between border-b border-border pb-2"
             >
@@ -647,7 +666,18 @@
                     <td
                       class="py-3 px-4 font-mono text-xs text-foreground font-medium"
                     >
-                      {backup.file_name}
+                      <div class="flex items-center gap-1.5 flex-wrap">
+                        <span>{backup.file_name}</span>
+                        {#if backup.skipped_media_files && backup.skipped_media_files > 0}
+                          <Badge
+                            variant="secondary"
+                            class="text-[10px] px-1.5 py-0 bg-amber-500/10 text-amber-500 border border-amber-500/20"
+                            title="{backup.skipped_media_files} arquivo(s) espúrios/não-canônicos ignorados"
+                          >
+                            {backup.skipped_media_files} ignorados
+                          </Badge>
+                        {/if}
+                      </div>
                     </td>
                     <td class="py-3 px-4 text-xs text-muted-foreground">
                       {formatBytes(backup.byte_size)}

@@ -3051,8 +3051,142 @@ mod unit_tests {
             }
         }
 
+        #[async_trait::async_trait]
+        impl crate::store::InventoryStore for DummyStore {
+            async fn create_warehouse(
+                &self,
+                _: &crate::domain::Warehouse,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update_warehouse(
+                &self,
+                _: &crate::domain::Warehouse,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn find_warehouse_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::Warehouse>> {
+                unreachable!()
+            }
+            async fn find_warehouse_by_code(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::Warehouse>> {
+                unreachable!()
+            }
+            async fn get_default_warehouse(
+                &self,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::Warehouse>> {
+                unreachable!()
+            }
+            async fn list_warehouses(
+                &self,
+                _: &str,
+                _: bool,
+            ) -> crate::error::Result<Vec<crate::domain::Warehouse>> {
+                unreachable!()
+            }
+            async fn set_default_warehouse(&self, _: &str, _: &str) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn delete_warehouse(&self, _: &str, _: &str) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn create_unit(
+                &self,
+                _: &crate::domain::EquipmentUnit,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn update_unit(
+                &self,
+                _: &crate::domain::EquipmentUnit,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn find_unit_by_id(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::EquipmentUnit>> {
+                unreachable!()
+            }
+            async fn find_unit_by_patrimony(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::EquipmentUnit>> {
+                unreachable!()
+            }
+            async fn list_units(
+                &self,
+                _: &str,
+                _: &crate::domain::EquipmentUnitFilter,
+            ) -> crate::error::Result<Vec<crate::domain::EquipmentUnit>> {
+                unreachable!()
+            }
+            async fn list_unit_details(
+                &self,
+                _: &str,
+                _: &crate::domain::EquipmentUnitFilter,
+            ) -> crate::error::Result<crate::domain::EquipmentUnitListPage> {
+                unreachable!()
+            }
+            async fn next_patrimony_tag(&self, _: &str) -> crate::error::Result<String> {
+                unreachable!()
+            }
+            async fn count_unit_movements(&self, _: &str, _: &str) -> crate::error::Result<i64> {
+                unreachable!()
+            }
+            async fn delete_unit(&self, _: &str, _: &str) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn get_stock_balance(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Option<crate::domain::StockBalance>> {
+                unreachable!()
+            }
+            async fn list_stock_balances_by_model(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Vec<crate::domain::StockBalance>> {
+                unreachable!()
+            }
+            async fn list_stock_balances_by_warehouse(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> crate::error::Result<Vec<crate::domain::StockBalance>> {
+                unreachable!()
+            }
+            async fn record_stock_movement(
+                &self,
+                _: &crate::domain::StockMovement,
+            ) -> crate::error::Result<()> {
+                unreachable!()
+            }
+            async fn list_stock_movements(
+                &self,
+                _: &str,
+                _: &crate::domain::StockMovementFilter,
+            ) -> crate::error::Result<Vec<crate::domain::StockMovement>> {
+                unreachable!()
+            }
+        }
+
         let dummy = Arc::new(DummyStore);
         let res = StoreBundle::new(
+            dummy.clone(),
             dummy.clone(),
             dummy.clone(),
             dummy.clone(),
@@ -3142,6 +3276,9 @@ mod unit_tests {
                 unreachable!()
             }
             fn catalog(&self) -> &dyn crate::store::CatalogStore {
+                unreachable!()
+            }
+            fn inventory(&self) -> &dyn crate::store::InventoryStore {
                 unreachable!()
             }
             async fn commit(self: Box<Self>) -> Result<()> {
@@ -3280,6 +3417,9 @@ mod unit_tests {
                 unreachable!()
             }
             fn catalog(&self) -> &dyn crate::store::CatalogStore {
+                unreachable!()
+            }
+            fn inventory(&self) -> &dyn crate::store::InventoryStore {
                 unreachable!()
             }
             async fn commit(self: Box<Self>) -> Result<()> {

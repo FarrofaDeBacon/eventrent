@@ -16,6 +16,8 @@ const DEFAULT_SETTINGS: BackupSettings = {
   retention_daily: 7,
   retention_weekly: 4,
   retention_monthly: 6,
+  last_attempt_at: null,
+  last_success_at: null,
   last_backup_at: null,
   last_backup_status: null,
   last_backup_error: null,
@@ -94,12 +96,15 @@ export class MockBackupRepository implements BackupRepository {
       is_compatible: true,
       file_count: 5,
       verified: true,
+      skipped_media_files: 0,
     };
 
     this.mockBackups.unshift(newBackup);
 
     const updatedSettings: BackupSettings = {
       ...settings,
+      last_attempt_at: nowIso,
+      last_success_at: nowIso,
       last_backup_at: nowIso,
       last_backup_status: "success",
       last_backup_error: null,
@@ -133,6 +138,7 @@ export class MockBackupRepository implements BackupRepository {
           },
         ],
         table_counts: { users: 1 },
+        skipped_media_files: 0,
       },
       error_message: null,
       is_compatible: true,

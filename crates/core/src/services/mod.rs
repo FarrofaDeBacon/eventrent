@@ -1,6 +1,9 @@
 mod backup;
 mod catalog;
+mod inventory;
 mod media;
+
+pub use inventory::ensure_default_inventory;
 
 use crate::domain::{
     build_customer_search_text, build_name_sort, build_venue_name_sort, build_venue_search_text,
@@ -310,6 +313,9 @@ impl<'a> TxStoreBundle for PassthroughTxStoreBundle<'a> {
     fn catalog(&self) -> &dyn crate::store::CatalogStore {
         self.stores.catalog.as_ref()
     }
+    fn inventory(&self) -> &dyn crate::store::InventoryStore {
+        self.stores.inventory.as_ref()
+    }
     async fn commit(self: Box<Self>) -> Result<()> {
         Ok(())
     }
@@ -539,6 +545,7 @@ impl CoreServices {
                 let branding = stores.branding().save(&tenant_id, &branding_input).await?;
 
                 ensure_system_roles(&tenant_id, stores.roles(), stores.audit()).await?;
+                ensure_default_inventory(&tenant_id, stores.inventory()).await?;
 
                 let owner_role = stores
                     .roles()

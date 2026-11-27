@@ -52,7 +52,7 @@ Todos os trechos de código abaixo foram extraídos dinamicamente pelo script `s
 Em `crates/core/src/domain/backup.rs`, a função `validate_zip_entry_name` valida estritamente cada entrada de arquivo contra ataques de Zip-Slip, rejeitando caracteres de controle ASCII, caminhos contendo `:`, caminhos absolutos no formato Unix ou Windows e quaisquer segmentos com `..`:
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/core/src/domain/backup.rs:392-430 -->
+<!-- snippet: crates/core/src/domain/backup.rs:392-430@d8475d4 -->
 ```rust
     }
 
@@ -100,7 +100,7 @@ pub fn validate_zip_entry_name(name: &str) -> Result<()> {
 Em `crates/backup-fs/src/lib.rs`, o método `verify_backup_file` inspeciona o cabeçalho e todas as entradas do arquivo ZIP antes da extração, impondo tetos rígidos (`MAX_SINGLE_FILE_UNCOMPRESSED_BYTES` de 2 GiB, `MAX_TOTAL_UNCOMPRESSED_BYTES` de 5 GiB) e abortando imediatamente caso a razão de compressão exceda o limite de 100:1 para arquivos acima de 1 MiB:
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/backup-fs/src/lib.rs:517-559 -->
+<!-- snippet: crates/backup-fs/src/lib.rs:517-559@d8475d4 -->
 ```rust
                         "Falha ao executar auto-verificação prévia no backup gerado: {e}"
                     )));
@@ -154,7 +154,7 @@ Em `crates/backup-fs/src/lib.rs`:
 1. No método `schedule_restore`, o marcador `restore_pending.json` é gravado atomicamente através de arquivo temporário com UUID v7, chamada explícita de `f.sync_all()` e substituição atômica via `fs::rename`:
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/backup-fs/src/lib.rs:749-785 -->
+<!-- snippet: crates/backup-fs/src/lib.rs:749-785@d8475d4 -->
 ```rust
             }
         };
@@ -198,7 +198,7 @@ Em `crates/backup-fs/src/lib.rs`:
 2. No método `execute_pending_restore_at_startup`, a inicialização do aplicativo detecta o marcador antes da abertura do banco SQLite, cria uma cópia de salvaguarda `eventrent.db.pre-restore.bak` e garante rollback atômico em caso de falha:
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/backup-fs/src/lib.rs:789-825 -->
+<!-- snippet: crates/backup-fs/src/lib.rs:789-825@d8475d4 -->
 ```rust
                         hasher.update(&buffer[..n]);
                         actual_bytes = actual_bytes.saturating_add(n as u64);
@@ -244,7 +244,7 @@ Em `crates/backup-fs/src/lib.rs`:
 Em `crates/backup-fs/src/lib.rs`, o snapshot consistente do banco SQLite é gerado por meio do comando DDL `VACUUM INTO`. O caminho temporário é gerado internamente pelo sistema (`app_data_dir` + UUID v7) e sanitizado com escape de aspas simples:
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/backup-fs/src/lib.rs:77-98 -->
+<!-- snippet: crates/backup-fs/src/lib.rs:77-98@d8475d4 -->
 ```rust
             app_data_dir,
             db_path,
@@ -275,7 +275,7 @@ Em `crates/backup-fs/src/lib.rs`, o snapshot consistente do banco SQLite é gera
 Em `src-tauri/src/commands/backup.rs`, os comandos `choose_backup_folder` e `choose_backup_file` validam imediatamente o caminho retornado pelo diálogo nativo usando `validate_destination_folder` e `validate_backup_file_for_restore`, impedindo que raízes de sistema, pastas proibidas ou arquivos não canônicos sejam selecionados ou sobrescritos:
 
 <!-- prettier-ignore -->
-<!-- snippet: src-tauri/src/commands/backup.rs:216-274 -->
+<!-- snippet: src-tauri/src/commands/backup.rs:216-274@d8475d4 -->
 ```rust
 
 #[tauri::command]
@@ -343,7 +343,7 @@ pub async fn choose_backup_folder(
 Em `crates/core/src/domain/backup.rs`, as funções puras de domínio determinam o agendamento (`is_backup_due`, a cada 24 horas) e a condição de alerta de backup desatualizado (`is_backup_stale`, mais de 7 dias sem backup ou nenhum backup já efetuado):
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/core/src/domain/backup.rs:164-191 -->
+<!-- snippet: crates/core/src/domain/backup.rs:164-191@d8475d4 -->
 ```rust
 pub fn is_backup_due(
     last_backup_at: Option<&str>,
@@ -380,7 +380,7 @@ pub fn is_backup_due_with_status(
 Em `src-tauri/src/lib.rs`, na rotina de boot do aplicativo desktop, o snapshot de salvaguarda pré-atualização é executado exatamente antes de inicializar o banco de dados e aplicar as migrações:
 
 <!-- prettier-ignore -->
-<!-- snippet: src-tauri/src/lib.rs:390-405 -->
+<!-- snippet: src-tauri/src/lib.rs:390-405@d8475d4 -->
 ```rust
     }
 
@@ -405,7 +405,7 @@ Em `src-tauri/src/lib.rs`, na rotina de boot do aplicativo desktop, o snapshot d
 Em `crates/core/src/domain/backup.rs`, a trava atômica de processo impede backups simultâneos ou concorrência com o coletor de lixo de mídia:
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/core/src/domain/backup.rs:26-46 -->
+<!-- snippet: crates/core/src/domain/backup.rs:26-46@d8475d4 -->
 ```rust
 pub struct BackupOperationGuard;
 
@@ -435,7 +435,7 @@ impl BackupOperationGuard {
 Em `src/routes/settings/backup/+page.svelte`, o botão de confirmação permanece desabilitado até a digitação literal da palavra `RESTAURAR`:
 
 <!-- prettier-ignore -->
-<!-- snippet: src/routes/settings/backup/+page.svelte:728-763 -->
+<!-- snippet: src/routes/settings/backup/+page.svelte:728-763@d8475d4 -->
 ```svelte
                           isSchedulingRestore}
                       >
@@ -480,7 +480,7 @@ Em `src/routes/settings/backup/+page.svelte`, o botão de confirmação permanec
 Em `e2e/backup.spec.ts`, o fluxo de ponta a ponta exercita a interface e a trava de confirmação:
 
 <!-- prettier-ignore -->
-<!-- snippet: e2e/backup.spec.ts:65-95 -->
+<!-- snippet: e2e/backup.spec.ts:65-95@d8475d4 -->
 ```typescript
 
     // Feedback de sucesso
@@ -623,3 +623,10 @@ A suíte completa de validação (`pnpm verify`) foi executada com 100% de suces
    - No modal bloqueante, insira sua senha de login atual e digite a palavra `RESTAURAR` em maiúsculas.
    - Clique em **Confirmar Restauração**. Uma notificação informa que a restauração foi agendada para a próxima inicialização.
    - Feche o aplicativo e abra-o novamente. A inicialização a frio validará o hash SHA-256 do arquivo, gerará o snapshot de segurança do estado atual e restaurará o banco e os arquivos de mídia com sucesso.
+5. **Roteiro de Restauração Real de Ponta a Ponta**:
+   - Cadastre um cliente com nome identificável (ex: `TESTE RESTAURACAO`) e vincule uma imagem a um modelo de equipamento.
+   - Execute **Fazer backup agora** em `/settings/backup` e observe a geração do pacote.
+   - Em seguida, **apague** o cliente `TESTE RESTAURACAO` e a foto vinculada para simular perda de dados.
+   - Agende a restauração do backup informando a senha de login e digitando `RESTAURAR`.
+   - Reinicie o aplicativo (`pnpm tauri dev` ou instalador MSI/NSIS).
+   - Ao abrir a tela inicial e navegar para Clientes e Equipamentos, confirme que o cliente `TESTE RESTAURACAO` e a imagem foram 100% reconstituídos.
