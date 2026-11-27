@@ -554,7 +554,7 @@ pub fn build_fixture_for_command(cmd_name: &str) -> Option<ContractFixture> {
         ),
         "list_equipment_units" => (
             true,
-            json!([sample_equipment_unit_details_json()]),
+            sample_equipment_unit_list_page_json(),
             standard_errors_for(false, false, false),
         ),
         "get_equipment_unit" => (
@@ -568,6 +568,11 @@ pub fn build_fixture_for_command(cmd_name: &str) -> Option<ContractFixture> {
             standard_errors_for(false, false, true),
         ),
         "update_equipment_unit" => (
+            true,
+            sample_equipment_unit_json(),
+            standard_errors_for(false, true, true),
+        ),
+        "decommission_equipment_unit" => (
             true,
             sample_equipment_unit_json(),
             standard_errors_for(false, true, true),
@@ -596,16 +601,6 @@ pub fn build_fixture_for_command(cmd_name: &str) -> Option<ContractFixture> {
             true,
             json!([sample_stock_movement_json()]),
             standard_errors_for(false, false, false),
-        ),
-        "attach_unit_media" => (
-            true,
-            sample_unit_media_json(),
-            standard_errors_for(false, false, true),
-        ),
-        "detach_unit_media" => (
-            false,
-            serde_json::Value::Null,
-            standard_errors_for(false, true, true),
         ),
         _ => return None,
     };
@@ -882,6 +877,13 @@ fn sample_equipment_unit_json() -> serde_json::Value {
         "notes": "Com case rígido e cabos originais",
         "acquisition_date": "2026-01-10",
         "warranty_expires_at": "2027-01-10",
+        "acquisition_cost_cents": 1500000,
+        "supplier_id": null,
+        "invoice_number": "NF-12345",
+        "origin": "own",
+        "return_by": null,
+        "usage_hours": 0,
+        "location_note": "Prateleira A1",
         "active": true,
         "created_at": "2026-11-20T10:00:00Z",
         "updated_at": "2026-11-20T10:00:00Z",
@@ -895,7 +897,15 @@ fn sample_equipment_unit_details_json() -> serde_json::Value {
         "unit": sample_equipment_unit_json(),
         "model_name": "Pioneer CDJ-3000",
         "warehouse_name": "Galpão Principal",
-        "media": [sample_unit_media_json()]
+        "model_thumbnail_url": null
+    })
+}
+
+fn sample_equipment_unit_list_page_json() -> serde_json::Value {
+    json!({
+        "items": [sample_equipment_unit_details_json()],
+        "next_cursor": null,
+        "has_more": false
     })
 }
 
@@ -906,8 +916,8 @@ fn sample_stock_balance_json() -> serde_json::Value {
         "warehouse_id": "018f0000-0000-7000-8000-000000000080",
         "equipment_model_id": "018f0000-0000-7000-8000-000000000050",
         "quantity_on_hand": 5,
-        "quantity_allocated": 0,
         "quantity_maintenance": 0,
+        "min_quantity": 0,
         "updated_at": "2026-11-20T10:00:00Z"
     })
 }
@@ -926,19 +936,6 @@ fn sample_stock_movement_json() -> serde_json::Value {
         "reference_id": "NF-12345",
         "performed_by_user_id": "018f0000-0000-7000-8000-000000000002",
         "created_at": "2026-11-20T10:00:00Z"
-    })
-}
-
-fn sample_unit_media_json() -> serde_json::Value {
-    json!({
-        "id": "018f0000-0000-7000-8000-000000000084",
-        "tenant_id": "018f0000-0000-7000-8000-000000000001",
-        "equipment_unit_id": "018f0000-0000-7000-8000-000000000081",
-        "blob_id": "018f0000-0000-7000-8000-000000000090",
-        "media_type": "damage_photo",
-        "caption": "Pequeno arranhão lateral no chassi",
-        "created_at": "2026-11-20T10:00:00Z",
-        "created_by": "018f0000-0000-7000-8000-000000000002"
     })
 }
 

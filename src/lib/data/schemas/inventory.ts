@@ -6,36 +6,36 @@ import { z } from "zod";
 
 export const UnitStatusSchema = z.enum([
   "available",
-  "rented",
   "maintenance",
   "damaged",
   "lost",
+  "decommissioned",
 ]);
 export type UnitStatus = z.infer<typeof UnitStatusSchema>;
 
-export const PhysicalConditionSchema = z.enum(["new", "good", "fair", "poor"]);
+export const UnitOriginSchema = z.enum(["own", "third_party"]);
+export type UnitOrigin = z.infer<typeof UnitOriginSchema>;
+
+export const PhysicalConditionSchema = z.enum([
+  "new",
+  "good",
+  "fair",
+  "poor",
+  "damaged",
+]);
 export type PhysicalCondition = z.infer<typeof PhysicalConditionSchema>;
 
 export const StockMovementTypeSchema = z.enum([
   "purchase_in",
   "return_in",
-  "rental_out",
   "transfer_out",
   "transfer_in",
-  "maintenance_out",
-  "maintenance_in",
+  "status_change",
   "loss_out",
+  "decommission_out",
   "adjustment",
 ]);
 export type StockMovementType = z.infer<typeof StockMovementTypeSchema>;
-
-export const UnitMediaTypeSchema = z.enum([
-  "damage_photo",
-  "inspection_photo",
-  "serial_photo",
-  "invoice_doc",
-]);
-export type UnitMediaType = z.infer<typeof UnitMediaTypeSchema>;
 
 // ==========================================
 // 1. WAREHOUSES (Depósitos)
@@ -75,6 +75,7 @@ export const CreateWarehouseInputSchema = z.object({
 export type CreateWarehouseInput = z.infer<typeof CreateWarehouseInputSchema>;
 
 export const UpdateWarehouseInputSchema = z.object({
+  expected_updated_at: z.string(),
   name: z.string().min(1, "Nome do depósito é obrigatório"),
   code: z.string().min(1, "Código do depósito é obrigatório"),
   description: z.string().nullable().optional(),
@@ -91,18 +92,6 @@ export type UpdateWarehouseInput = z.infer<typeof UpdateWarehouseInputSchema>;
 // 2. EQUIPMENT UNITS (Unidades Físicas)
 // ==========================================
 
-export const EquipmentUnitMediaSchema = z.object({
-  id: z.string(),
-  tenant_id: z.string(),
-  equipment_unit_id: z.string(),
-  blob_id: z.string(),
-  media_type: UnitMediaTypeSchema,
-  caption: z.string().nullable().optional(),
-  created_at: z.string(),
-  created_by: z.string().nullable().optional(),
-});
-export type EquipmentUnitMedia = z.infer<typeof EquipmentUnitMediaSchema>;
-
 export const EquipmentUnitSchema = z.object({
   id: z.string(),
   tenant_id: z.string(),
@@ -115,6 +104,13 @@ export const EquipmentUnitSchema = z.object({
   notes: z.string().nullable().optional(),
   acquisition_date: z.string().nullable().optional(),
   warranty_expires_at: z.string().nullable().optional(),
+  acquisition_cost_cents: z.number().int().nonnegative().nullable().optional(),
+  supplier_id: z.string().nullable().optional(),
+  invoice_number: z.string().nullable().optional(),
+  origin: UnitOriginSchema,
+  return_by: z.string().nullable().optional(),
+  usage_hours: z.number().int().nonnegative(),
+  location_note: z.string().nullable().optional(),
   active: z.boolean(),
   created_at: z.string(),
   updated_at: z.string(),
@@ -127,9 +123,16 @@ export const EquipmentUnitDetailsSchema = z.object({
   unit: EquipmentUnitSchema,
   model_name: z.string(),
   warehouse_name: z.string(),
-  media: z.array(EquipmentUnitMediaSchema),
+  model_thumbnail_url: z.string().nullable().optional(),
 });
 export type EquipmentUnitDetails = z.infer<typeof EquipmentUnitDetailsSchema>;
+
+export const EquipmentUnitListPageSchema = z.object({
+  items: z.array(EquipmentUnitDetailsSchema),
+  next_cursor: z.string().nullable().optional(),
+  has_more: z.boolean(),
+});
+export type EquipmentUnitListPage = z.infer<typeof EquipmentUnitListPageSchema>;
 
 export const CreateEquipmentUnitInputSchema = z.object({
   equipment_model_id: z.string().min(1, "Modelo é obrigatório"),
@@ -139,12 +142,20 @@ export const CreateEquipmentUnitInputSchema = z.object({
   notes: z.string().nullable().optional(),
   acquisition_date: z.string().nullable().optional(),
   warranty_expires_at: z.string().nullable().optional(),
+  acquisition_cost_cents: z.number().int().nonnegative().nullable().optional(),
+  supplier_id: z.string().nullable().optional(),
+  invoice_number: z.string().nullable().optional(),
+  origin: UnitOriginSchema.optional(),
+  return_by: z.string().nullable().optional(),
+  usage_hours: z.number().int().nonnegative().optional(),
+  location_note: z.string().nullable().optional(),
 });
 export type CreateEquipmentUnitInput = z.infer<
   typeof CreateEquipmentUnitInputSchema
 >;
 
 export const UpdateEquipmentUnitInputSchema = z.object({
+  expected_updated_at: z.string(),
   warehouse_id: z.string().nullable().optional(),
   serial_number: z.string().nullable().optional(),
   status: UnitStatusSchema.optional(),
@@ -152,10 +163,26 @@ export const UpdateEquipmentUnitInputSchema = z.object({
   notes: z.string().nullable().optional(),
   acquisition_date: z.string().nullable().optional(),
   warranty_expires_at: z.string().nullable().optional(),
+  acquisition_cost_cents: z.number().int().nonnegative().nullable().optional(),
+  supplier_id: z.string().nullable().optional(),
+  invoice_number: z.string().nullable().optional(),
+  origin: UnitOriginSchema.optional(),
+  return_by: z.string().nullable().optional(),
+  usage_hours: z.number().int().nonnegative().optional(),
+  location_note: z.string().nullable().optional(),
   active: z.boolean().optional(),
+  status_change_reason: z.string().nullable().optional(),
 });
 export type UpdateEquipmentUnitInput = z.infer<
   typeof UpdateEquipmentUnitInputSchema
+>;
+
+export const DecommissionEquipmentUnitInputSchema = z.object({
+  expected_updated_at: z.string(),
+  reason: z.string().min(1, "Motivo da baixa é obrigatório"),
+});
+export type DecommissionEquipmentUnitInput = z.infer<
+  typeof DecommissionEquipmentUnitInputSchema
 >;
 
 export const EquipmentUnitFilterSchema = z.object({
@@ -164,6 +191,8 @@ export const EquipmentUnitFilterSchema = z.object({
   status: UnitStatusSchema.optional(),
   active_only: z.boolean().optional(),
   search: z.string().optional(),
+  cursor: z.string().optional(),
+  limit: z.number().int().positive().optional(),
 });
 export type EquipmentUnitFilter = z.infer<typeof EquipmentUnitFilterSchema>;
 
@@ -177,8 +206,8 @@ export const StockBalanceSchema = z.object({
   warehouse_id: z.string(),
   equipment_model_id: z.string(),
   quantity_on_hand: z.number().int().nonnegative(),
-  quantity_allocated: z.number().int().nonnegative(),
   quantity_maintenance: z.number().int().nonnegative(),
+  min_quantity: z.number().int().nonnegative(),
   updated_at: z.string(),
 });
 export type StockBalance = z.infer<typeof StockBalanceSchema>;
@@ -221,11 +250,3 @@ export const StockMovementFilterSchema = z.object({
   limit: z.number().int().positive().optional(),
 });
 export type StockMovementFilter = z.infer<typeof StockMovementFilterSchema>;
-
-export const AttachUnitMediaInputSchema = z.object({
-  equipment_unit_id: z.string().min(1, "Unidade é obrigatória"),
-  blob_id: z.string().min(1, "Blob de mídia é obrigatório"),
-  media_type: UnitMediaTypeSchema,
-  caption: z.string().nullable().optional(),
-});
-export type AttachUnitMediaInput = z.infer<typeof AttachUnitMediaInputSchema>;

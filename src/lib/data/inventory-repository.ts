@@ -4,15 +4,15 @@ import type {
   UpdateWarehouseInput,
   EquipmentUnit,
   EquipmentUnitDetails,
+  EquipmentUnitListPage,
   CreateEquipmentUnitInput,
   UpdateEquipmentUnitInput,
+  DecommissionEquipmentUnitInput,
   EquipmentUnitFilter,
   StockBalance,
   StockMovement,
   RecordStockMovementInput,
   StockMovementFilter,
-  EquipmentUnitMedia,
-  AttachUnitMediaInput,
 } from "./schemas/inventory";
 
 export interface InventoryRepository {
@@ -27,12 +27,16 @@ export interface InventoryRepository {
   // Equipment Units (Unidades Físicas)
   listEquipmentUnits(
     filter?: EquipmentUnitFilter,
-  ): Promise<EquipmentUnitDetails[]>;
+  ): Promise<EquipmentUnitListPage>;
   getEquipmentUnit(id: string): Promise<EquipmentUnitDetails>;
   createEquipmentUnit(input: CreateEquipmentUnitInput): Promise<EquipmentUnit>;
   updateEquipmentUnit(
     id: string,
     input: UpdateEquipmentUnitInput,
+  ): Promise<EquipmentUnit>;
+  decommissionEquipmentUnit(
+    id: string,
+    input: DecommissionEquipmentUnitInput,
   ): Promise<EquipmentUnit>;
   deleteEquipmentUnit(id: string): Promise<void>;
 
@@ -47,8 +51,4 @@ export interface InventoryRepository {
   ): Promise<StockBalance[]>;
   recordStockMovement(input: RecordStockMovementInput): Promise<StockMovement>;
   listStockMovements(filter?: StockMovementFilter): Promise<StockMovement[]>;
-
-  // Media (Fotos de Vistoria / Avaria)
-  attachUnitMedia(input: AttachUnitMediaInput): Promise<EquipmentUnitMedia>;
-  detachUnitMedia(id: string): Promise<void>;
 }

@@ -6,15 +6,15 @@ import type {
   UpdateWarehouseInput,
   EquipmentUnit,
   EquipmentUnitDetails,
+  EquipmentUnitListPage,
   CreateEquipmentUnitInput,
   UpdateEquipmentUnitInput,
+  DecommissionEquipmentUnitInput,
   EquipmentUnitFilter,
   StockBalance,
   StockMovement,
   RecordStockMovementInput,
   StockMovementFilter,
-  EquipmentUnitMedia,
-  AttachUnitMediaInput,
 } from "./schemas/inventory";
 
 export class TauriInventoryRepository implements InventoryRepository {
@@ -49,8 +49,8 @@ export class TauriInventoryRepository implements InventoryRepository {
 
   async listEquipmentUnits(
     filter?: EquipmentUnitFilter,
-  ): Promise<EquipmentUnitDetails[]> {
-    return invoke<EquipmentUnitDetails[]>("list_equipment_units", {
+  ): Promise<EquipmentUnitListPage> {
+    return invoke<EquipmentUnitListPage>("list_equipment_units", {
       filter: filter ?? null,
     });
   }
@@ -70,6 +70,13 @@ export class TauriInventoryRepository implements InventoryRepository {
     input: UpdateEquipmentUnitInput,
   ): Promise<EquipmentUnit> {
     return invoke<EquipmentUnit>("update_equipment_unit", { id, input });
+  }
+
+  async decommissionEquipmentUnit(
+    id: string,
+    input: DecommissionEquipmentUnitInput,
+  ): Promise<EquipmentUnit> {
+    return invoke<EquipmentUnit>("decommission_equipment_unit", { id, input });
   }
 
   async deleteEquipmentUnit(id: string): Promise<void> {
@@ -108,15 +115,5 @@ export class TauriInventoryRepository implements InventoryRepository {
     return invoke<StockMovement[]>("list_stock_movements", {
       filter: filter ?? null,
     });
-  }
-
-  async attachUnitMedia(
-    input: AttachUnitMediaInput,
-  ): Promise<EquipmentUnitMedia> {
-    return invoke<EquipmentUnitMedia>("attach_unit_media", { input });
-  }
-
-  async detachUnitMedia(id: string): Promise<void> {
-    return invoke<void>("detach_unit_media", { id });
   }
 }

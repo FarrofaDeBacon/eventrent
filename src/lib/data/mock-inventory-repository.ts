@@ -5,15 +5,15 @@ import type {
   UpdateWarehouseInput,
   EquipmentUnit,
   EquipmentUnitDetails,
+  EquipmentUnitListPage,
   CreateEquipmentUnitInput,
   UpdateEquipmentUnitInput,
+  DecommissionEquipmentUnitInput,
   EquipmentUnitFilter,
   StockBalance,
   StockMovement,
   RecordStockMovementInput,
   StockMovementFilter,
-  EquipmentUnitMedia,
-  AttachUnitMediaInput,
 } from "./schemas/inventory";
 
 export class MockInventoryRepository implements InventoryRepository {
@@ -21,8 +21,8 @@ export class MockInventoryRepository implements InventoryRepository {
     {
       id: "wh_mock_01",
       tenant_id: "tenant_default",
-      name: "Galpão Principal",
-      code: "GALPAO-01",
+      name: "Depósito principal",
+      code: "PRINCIPAL",
       description: "Depósito central de equipamentos",
       address_line1: "Av. Industrial, 1000",
       address_line2: null,
@@ -41,7 +41,6 @@ export class MockInventoryRepository implements InventoryRepository {
   public units: EquipmentUnit[] = [];
   public balances: StockBalance[] = [];
   public movements: StockMovement[] = [];
-  public unitMedia: EquipmentUnitMedia[] = [];
 
   private patrimonySeq = 1;
 
@@ -108,25 +107,23 @@ export class MockInventoryRepository implements InventoryRepository {
   }
 
   async setDefaultWarehouse(id: string): Promise<void> {
-    const idx = this.warehouses.findIndex((w) => w.id === id && !w.deleted_at);
-    if (idx === -1) throw new Error(`Depósito '${id}' não encontrado.`);
+    const wh = this.warehouses.find((w) => w.id === id && !w.deleted_at);
+    if (!wh) throw new Error(`Depósito '${id}' não encontrado.`);
     for (const w of this.warehouses) {
-      w.is_default = false;
+      w.is_default = w.id === id;
     }
-    this.warehouses[idx].is_default = true;
-    this.warehouses[idx].updated_at = new Date().toISOString();
   }
 
   async deleteWarehouse(id: string): Promise<void> {
     const idx = this.warehouses.findIndex((w) => w.id === id && !w.deleted_at);
     if (idx === -1) throw new Error(`Depósito '${id}' não encontrado.`);
     this.warehouses[idx].deleted_at = new Date().toISOString();
-    this.warehouses[idx].is_default = false;
+    this.warehouses[idx].active = false;
   }
 
   async listEquipmentUnits(
     filter?: EquipmentUnitFilter,
-  ): Promise<EquipmentUnitDetails[]> {
+  ): Promise<EquipmentUnitListPage> {
     let list = this.units.filter((u) => !u.deleted_at);
     if (filter?.equipment_model_id) {
       list = list.filter(
@@ -151,16 +148,20 @@ export class MockInventoryRepository implements InventoryRepository {
       );
     }
 
-    return list.map((unit) => ({
+    const items: EquipmentUnitDetails[] = list.map((unit) => ({
       unit: { ...unit },
       model_name: "Modelo Mock",
       warehouse_name:
         this.warehouses.find((w) => w.id === unit.warehouse_id)?.name ??
         "Depósito Mock",
-      media: this.unitMedia
-        .filter((m) => m.equipment_unit_id === unit.id)
-        .map((m) => ({ ...m })),
+      model_thumbnail_url: null,
     }));
+
+    return {
+      items,
+      next_cursor: null,
+      has_more: false,
+    };
   }
 
   async getEquipmentUnit(id: string): Promise<EquipmentUnitDetails> {
@@ -172,9 +173,7 @@ export class MockInventoryRepository implements InventoryRepository {
       warehouse_name:
         this.warehouses.find((w) => w.id === unit.warehouse_id)?.name ??
         "Depósito Mock",
-      media: this.unitMedia
-        .filter((m) => m.equipment_unit_id === unit.id)
-        .map((m) => ({ ...m })),
+      model_thumbnail_url: null,
     };
   }
 
@@ -198,6 +197,13 @@ export class MockInventoryRepository implements InventoryRepository {
       notes: input.notes ?? null,
       acquisition_date: input.acquisition_date ?? null,
       warranty_expires_at: input.warranty_expires_at ?? null,
+      acquisition_cost_cents: input.acquisition_cost_cents ?? null,
+      supplier_id: input.supplier_id ?? null,
+      invoice_number: input.invoice_number ?? null,
+      origin: input.origin ?? "own",
+      return_by: input.return_by ?? null,
+      usage_hours: input.usage_hours ?? 0,
+      location_note: input.location_note ?? null,
       active: true,
       created_at: now,
       updated_at: now,
@@ -240,9 +246,38 @@ export class MockInventoryRepository implements InventoryRepository {
       unit.acquisition_date = input.acquisition_date;
     if (input.warranty_expires_at !== undefined)
       unit.warranty_expires_at = input.warranty_expires_at;
+    if (input.acquisition_cost_cents !== undefined)
+      unit.acquisition_cost_cents = input.acquisition_cost_cents;
+    if (input.supplier_id !== undefined) unit.supplier_id = input.supplier_id;
+    if (input.invoice_number !== undefined)
+      unit.invoice_number = input.invoice_number;
+    if (input.origin !== undefined) unit.origin = input.origin;
+    if (input.return_by !== undefined) unit.return_by = input.return_by;
+    if (input.usage_hours !== undefined) unit.usage_hours = input.usage_hours;
+    if (input.location_note !== undefined)
+      unit.location_note = input.location_note;
     if (input.active !== undefined) unit.active = input.active;
     unit.updated_at = new Date().toISOString();
 
+    return { ...unit };
+  }
+
+  async decommissionEquipmentUnit(
+    id: string,
+    input: DecommissionEquipmentUnitInput,
+  ): Promise<EquipmentUnit> {
+    const unit = this.units.find((u) => u.id === id && !u.deleted_at);
+    if (!unit) throw new Error(`Unidade '${id}' não encontrada.`);
+    if (
+      input.expected_updated_at &&
+      unit.updated_at !== input.expected_updated_at
+    ) {
+      throw new Error("Conflito de versão ao baixar unidade.");
+    }
+    unit.status = "decommissioned";
+    unit.active = false;
+    unit.notes = input.reason;
+    unit.updated_at = new Date().toISOString();
     return { ...unit };
   }
 
@@ -269,8 +304,8 @@ export class MockInventoryRepository implements InventoryRepository {
         warehouse_id: warehouseId,
         equipment_model_id: equipmentModelId,
         quantity_on_hand: 0,
-        quantity_allocated: 0,
         quantity_maintenance: 0,
+        min_quantity: 0,
         updated_at: new Date().toISOString(),
       };
       this.balances.push(bal);
@@ -325,8 +360,8 @@ export class MockInventoryRepository implements InventoryRepository {
           warehouse_id: input.from_warehouse_id,
           equipment_model_id: input.equipment_model_id,
           quantity_on_hand: 0,
-          quantity_allocated: 0,
           quantity_maintenance: 0,
+          min_quantity: 0,
           updated_at: now,
         };
         this.balances.push(fromBal);
@@ -350,8 +385,8 @@ export class MockInventoryRepository implements InventoryRepository {
           warehouse_id: input.to_warehouse_id,
           equipment_model_id: input.equipment_model_id,
           quantity_on_hand: 0,
-          quantity_allocated: 0,
           quantity_maintenance: 0,
+          min_quantity: 0,
           updated_at: now,
         };
         this.balances.push(toBal);
@@ -388,30 +423,5 @@ export class MockInventoryRepository implements InventoryRepository {
       list = list.filter((m) => m.movement_type === filter.movement_type);
     }
     return list.map((m) => ({ ...m }));
-  }
-
-  async attachUnitMedia(
-    input: AttachUnitMediaInput,
-  ): Promise<EquipmentUnitMedia> {
-    const now = new Date().toISOString();
-    const media: EquipmentUnitMedia = {
-      id: `eum_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      tenant_id: "tenant_default",
-      equipment_unit_id: input.equipment_unit_id,
-      blob_id: input.blob_id,
-      media_type: input.media_type,
-      caption: input.caption ?? null,
-      created_at: now,
-      created_by: "usr_mock",
-    };
-    this.unitMedia.push(media);
-    return { ...media };
-  }
-
-  async detachUnitMedia(id: string): Promise<void> {
-    const idx = this.unitMedia.findIndex((m) => m.id === id);
-    if (idx !== -1) {
-      this.unitMedia.splice(idx, 1);
-    }
   }
 }

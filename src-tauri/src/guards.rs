@@ -355,11 +355,7 @@ pub const COMMAND_REGISTRY: &[CommandDefinition] = &[
         is_public: false,
     },
     CommandDefinition {
-        name: "attach_unit_media",
-        is_public: false,
-    },
-    CommandDefinition {
-        name: "detach_unit_media",
+        name: "decommission_equipment_unit",
         is_public: false,
     },
 ];

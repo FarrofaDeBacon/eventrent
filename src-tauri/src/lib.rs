@@ -624,13 +624,12 @@ pub fn run() {
             commands::inventory::get_equipment_unit,
             commands::inventory::create_equipment_unit,
             commands::inventory::update_equipment_unit,
+            commands::inventory::decommission_equipment_unit,
             commands::inventory::delete_equipment_unit,
             commands::inventory::get_stock_balance,
             commands::inventory::list_stock_balances,
             commands::inventory::record_stock_movement,
             commands::inventory::list_stock_movements,
-            commands::inventory::attach_unit_media,
-            commands::inventory::detach_unit_media,
         ])
         .build(tauri::generate_context!());
 

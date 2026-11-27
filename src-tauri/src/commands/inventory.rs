@@ -1,8 +1,8 @@
 use crate::guards::require_session;
 use crate::AppState;
 use eventrent_core::{
-    AttachUnitMediaInput, CreateEquipmentUnitInput, CreateWarehouseInput, EquipmentUnit,
-    EquipmentUnitDetails, EquipmentUnitFilter, EquipmentUnitMedia, RecordStockMovementInput,
+    CreateEquipmentUnitInput, CreateWarehouseInput, DecommissionEquipmentUnitInput, EquipmentUnit,
+    EquipmentUnitDetails, EquipmentUnitFilter, EquipmentUnitListPage, RecordStockMovementInput,
     StockBalance, StockMovement, StockMovementFilter, UpdateEquipmentUnitInput,
     UpdateWarehouseInput, Warehouse,
 };
@@ -90,7 +90,7 @@ pub async fn delete_warehouse(state: State<'_, AppState>, id: String) -> Result<
 pub async fn list_equipment_units(
     state: State<'_, AppState>,
     filter: Option<EquipmentUnitFilter>,
-) -> Result<Vec<EquipmentUnitDetails>, String> {
+) -> Result<EquipmentUnitListPage, String> {
     let session = require_session(&state).await?;
     let f = filter.unwrap_or_default();
     state
@@ -136,6 +136,20 @@ pub async fn update_equipment_unit(
     state
         .services
         .update_equipment_unit(&session, &id, &input)
+        .await
+        .map_err(crate::map_core_err)
+}
+
+#[tauri::command]
+pub async fn decommission_equipment_unit(
+    state: State<'_, AppState>,
+    id: String,
+    input: DecommissionEquipmentUnitInput,
+) -> Result<EquipmentUnit, String> {
+    let session = require_session(&state).await?;
+    state
+        .services
+        .decommission_equipment_unit(&session, &id, &input)
         .await
         .map_err(crate::map_core_err)
 }
@@ -209,33 +223,6 @@ pub async fn list_stock_movements(
     state
         .services
         .list_stock_movements(&session, &f)
-        .await
-        .map_err(crate::map_core_err)
-}
-
-// ==========================================
-// 4. MÍDIAS DA UNIDADE FÍSICA (Unit Media)
-// ==========================================
-
-#[tauri::command]
-pub async fn attach_unit_media(
-    state: State<'_, AppState>,
-    input: AttachUnitMediaInput,
-) -> Result<EquipmentUnitMedia, String> {
-    let session = require_session(&state).await?;
-    state
-        .services
-        .attach_unit_media(&session, &input)
-        .await
-        .map_err(crate::map_core_err)
-}
-
-#[tauri::command]
-pub async fn detach_unit_media(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let session = require_session(&state).await?;
-    state
-        .services
-        .detach_unit_media(&session, &id)
         .await
         .map_err(crate::map_core_err)
 }

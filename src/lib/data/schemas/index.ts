@@ -46,9 +46,9 @@ import {
   WarehouseSchema,
   EquipmentUnitSchema,
   EquipmentUnitDetailsSchema,
+  EquipmentUnitListPageSchema,
   StockBalanceSchema,
   StockMovementSchema,
-  EquipmentUnitMediaSchema,
 } from "./inventory";
 
 /**
@@ -162,15 +162,14 @@ export const commandReturnSchemas: Record<string, z.ZodTypeAny> = {
   update_warehouse: WarehouseSchema,
   set_default_warehouse: z.void(),
   delete_warehouse: z.void(),
-  list_equipment_units: z.array(EquipmentUnitDetailsSchema),
+  list_equipment_units: EquipmentUnitListPageSchema,
   get_equipment_unit: EquipmentUnitDetailsSchema,
   create_equipment_unit: EquipmentUnitSchema,
   update_equipment_unit: EquipmentUnitSchema,
+  decommission_equipment_unit: EquipmentUnitSchema,
   delete_equipment_unit: z.void(),
   get_stock_balance: StockBalanceSchema,
   list_stock_balances: z.array(StockBalanceSchema),
   record_stock_movement: StockMovementSchema,
   list_stock_movements: z.array(StockMovementSchema),
-  attach_unit_media: EquipmentUnitMediaSchema,
-  detach_unit_media: z.void(),
 };

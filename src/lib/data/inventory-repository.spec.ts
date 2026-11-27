@@ -12,7 +12,7 @@ describe("InventoryRepository (Mock Data Layer)", () => {
     it("deve listar depósitos contendo o Galpão Principal como padrão", async () => {
       const warehouses = await repo.listWarehouses();
       expect(warehouses.length).toBe(1);
-      expect(warehouses[0].name).toBe("Galpão Principal");
+      expect(warehouses[0].name).toBe("Depósito principal");
       expect(warehouses[0].is_default).toBe(true);
     });
 
@@ -47,6 +47,7 @@ describe("InventoryRepository (Mock Data Layer)", () => {
       await repo.updateWarehouse(created.id, {
         name: "Depósito Atualizado",
         code: "DEP-ATU",
+        expected_updated_at: created.updated_at,
       });
 
       const updated = await repo.getWarehouse(created.id);
@@ -96,6 +97,7 @@ describe("InventoryRepository (Mock Data Layer)", () => {
         status: "maintenance",
         physical_condition: "fair",
         notes: "Botão Cue com mau contato",
+        expected_updated_at: unit.updated_at,
       });
 
       expect(updated.status).toBe("maintenance");
@@ -119,40 +121,32 @@ describe("InventoryRepository (Mock Data Layer)", () => {
       const searchAlpha = await repo.listEquipmentUnits({
         search: "alpha",
       });
-      expect(searchAlpha.length).toBe(1);
-      expect(searchAlpha[0].unit.serial_number).toBe("PIONEER-ALPHA");
+      expect(searchAlpha.items.length).toBe(1);
+      expect(searchAlpha.items[0].unit.serial_number).toBe("PIONEER-ALPHA");
 
       const searchBeta = await repo.listEquipmentUnits({
         search: "EQ000002",
       });
-      expect(searchBeta.length).toBe(1);
+      expect(searchBeta.items.length).toBe(1);
     });
   });
 
-  describe("Mídias de Unidade Física", () => {
-    it("deve anexar e desanexar foto de vistoria/avaria em uma unidade", async () => {
+  describe("Baixa de Unidade Física (Decommission)", () => {
+    it("deve baixar unidade patrimonial com motivo obrigatório", async () => {
       const unit = await repo.createEquipmentUnit({
         equipment_model_id: "mod_speaker",
       });
 
-      const media = await repo.attachUnitMedia({
-        equipment_unit_id: unit.id,
-        blob_id: "blob_foto_avaria_123",
-        media_type: "damage_photo",
-        caption: "Arranhão na grade frontal",
+      const decommissioned = await repo.decommissionEquipmentUnit(unit.id, {
+        expected_updated_at: unit.updated_at,
+        reason: "Equipamento danificado irreparável em evento",
       });
 
-      expect(media.id).toBeDefined();
-      expect(media.media_type).toBe("damage_photo");
+      expect(decommissioned.status).toBe("decommissioned");
+      expect(decommissioned.active).toBe(false);
 
       const unitDetails = await repo.getEquipmentUnit(unit.id);
-      expect(unitDetails.media.length).toBe(1);
-      expect(unitDetails.media[0].caption).toBe("Arranhão na grade frontal");
-
-      await repo.detachUnitMedia(media.id);
-
-      const unitDetailsAfter = await repo.getEquipmentUnit(unit.id);
-      expect(unitDetailsAfter.media.length).toBe(0);
+      expect(unitDetails.unit.status).toBe("decommissioned");
     });
   });
 
