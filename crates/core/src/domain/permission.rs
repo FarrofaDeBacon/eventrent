@@ -18,6 +18,8 @@ pub const PERM_QUOTE_READ: &str = "quote:read";
 pub const PERM_QUOTE_MANAGE: &str = "quote:manage";
 pub const PERM_WAREHOUSE_READ: &str = "warehouse:read";
 pub const PERM_WAREHOUSE_OPERATE: &str = "warehouse:operate";
+pub const PERM_INVENTORY_READ: &str = "inventory:read";
+pub const PERM_INVENTORY_MANAGE: &str = "inventory:manage";
 pub const PERM_FINANCE_READ: &str = "finance:read";
 pub const PERM_FINANCE_MANAGE: &str = "finance:manage";
 pub const PERM_AUDIT_READ: &str = "audit:read";
@@ -52,6 +54,8 @@ pub const ALL_PERMISSIONS: &[&str] = &[
     PERM_QUOTE_MANAGE,
     PERM_WAREHOUSE_READ,
     PERM_WAREHOUSE_OPERATE,
+    PERM_INVENTORY_READ,
+    PERM_INVENTORY_MANAGE,
     PERM_FINANCE_READ,
     PERM_FINANCE_MANAGE,
     PERM_AUDIT_READ,
@@ -87,6 +91,7 @@ pub const SYSTEM_ROLES: &[SystemRoleSpec] = &[
             PERM_VENUE_READ,
             PERM_VENUE_MANAGE,
             PERM_CATALOG_READ,
+            PERM_INVENTORY_READ,
             PERM_RESERVATION_READ,
             PERM_RESERVATION_MANAGE,
             PERM_QUOTE_READ,
@@ -105,6 +110,8 @@ pub const SYSTEM_ROLES: &[SystemRoleSpec] = &[
             PERM_VENUE_MANAGE,
             PERM_CATALOG_READ,
             PERM_CATALOG_MANAGE,
+            PERM_INVENTORY_READ,
+            PERM_INVENTORY_MANAGE,
             PERM_RESERVATION_READ,
             PERM_WAREHOUSE_READ,
             PERM_WAREHOUSE_OPERATE,
@@ -119,6 +126,7 @@ pub const SYSTEM_ROLES: &[SystemRoleSpec] = &[
         permissions: &[
             PERM_VENUE_READ,
             PERM_CATALOG_READ,
+            PERM_INVENTORY_READ,
             PERM_RESERVATION_READ,
             PERM_WAREHOUSE_READ,
             PERM_WAREHOUSE_OPERATE,
@@ -134,6 +142,8 @@ pub const SYSTEM_ROLES: &[SystemRoleSpec] = &[
             PERM_SUPPLIER_READ,
             PERM_SUPPLIER_MANAGE,
             PERM_VENUE_READ,
+            PERM_CATALOG_READ,
+            PERM_INVENTORY_READ,
             PERM_QUOTE_READ,
             PERM_RESERVATION_READ,
             PERM_FINANCE_READ,
