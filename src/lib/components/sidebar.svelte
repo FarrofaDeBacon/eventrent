@@ -75,7 +75,7 @@
       labelKey: "nav.inventory",
       href: "/inventory",
       icon: Boxes,
-      permission: PERMISSIONS.WAREHOUSE_READ,
+      permission: PERMISSIONS.INVENTORY_READ,
     },
     {
       labelKey: "nav.customers",

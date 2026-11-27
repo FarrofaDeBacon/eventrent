@@ -39,9 +39,9 @@ describe("Contratos IPC entre Rust e TypeScript (Fixtures e Repositórios)", () 
     validRecoveryKey = setup.recovery_key;
   });
 
-  it("deve existir o diretório de fixtures e conter todas as 87 fixtures de comandos", () => {
+  it("deve existir o diretório de fixtures e conter todas as 86 fixtures de comandos", () => {
     const fixtureKeys = Object.keys(fixtureModules);
-    expect(fixtureKeys.length).toBe(87);
+    expect(fixtureKeys.length).toBe(86);
   });
 
   it("cada fixture deve conter a estrutura canônica completa e sem campos vazios", () => {
@@ -249,13 +249,12 @@ describe("Contratos IPC entre Rust e TypeScript (Fixtures e Repositórios)", () 
       "get_equipment_unit",
       "create_equipment_unit",
       "update_equipment_unit",
+      "decommission_equipment_unit",
       "delete_equipment_unit",
       "get_stock_balance",
       "list_stock_balances",
       "record_stock_movement",
       "list_stock_movements",
-      "attach_unit_media",
-      "detach_unit_media",
     ];
 
     const fixtureKeys = Object.keys(fixtureModules);

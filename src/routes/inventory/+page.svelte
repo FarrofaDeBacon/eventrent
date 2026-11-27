@@ -119,7 +119,7 @@
       ]);
 
       warehouses = whList;
-      units = uList;
+      units = uList.items;
       movements = mvList;
 
       const map: Record<string, string> = {};
@@ -200,6 +200,7 @@
     submittingWarehouse = true;
     try {
       const input: UpdateWarehouseInput = {
+        expected_updated_at: selectedWarehouse.updated_at,
         name: editWarehouseName.trim(),
         code: editWarehouseCode.trim().toUpperCase(),
         description: editWarehouseDescription.trim() || undefined,
@@ -245,6 +246,7 @@
     submittingEditUnit = true;
     try {
       await repo.updateEquipmentUnit(selectedUnit.unit.id, {
+        expected_updated_at: selectedUnit.unit.updated_at,
         warehouse_id: editUnitWarehouseId,
         status: editUnitStatus,
         physical_condition: editUnitCondition,
@@ -297,15 +299,14 @@
         reference_id: movRefId.trim() || undefined,
         from_warehouse_id:
           movType === "transfer_out" ||
-          movType === "rental_out" ||
-          movType === "maintenance_out" ||
-          movType === "loss_out"
+          movType === "loss_out" ||
+          movType === "decommission_out"
             ? movFromWarehouseId || undefined
             : undefined,
         to_warehouse_id:
           movType === "purchase_in" ||
           movType === "return_in" ||
-          movType === "transfer_out" ||
+          movType === "transfer_in" ||
           movType === "adjustment"
             ? movToWarehouseId || undefined
             : undefined,
@@ -330,14 +331,14 @@
     switch (status) {
       case "available":
         return { label: "Disponível", variant: "default" };
-      case "rented":
-        return { label: "Alugado / Em Evento", variant: "secondary" };
       case "maintenance":
         return { label: "Em Manutenção", variant: "destructive" };
       case "damaged":
         return { label: "Avariado", variant: "destructive" };
       case "lost":
         return { label: "Extraviado / Perdido", variant: "destructive" };
+      case "decommissioned":
+        return { label: "Baixado", variant: "secondary" };
       default:
         return { label: status, variant: "secondary" };
     }
@@ -365,22 +366,20 @@
     switch (type) {
       case "purchase_in":
         return { label: "Entrada (Compra)", variant: "default" };
-      case "rental_out":
-        return { label: "Saída (Locação)", variant: "secondary" };
       case "return_in":
         return { label: "Retorno (Devolução)", variant: "default" };
       case "transfer_out":
         return { label: "Transferência (Saída)", variant: "outline" };
       case "transfer_in":
         return { label: "Transferência (Entrada)", variant: "outline" };
+      case "status_change":
+        return { label: "Mudança de Status", variant: "secondary" };
       case "adjustment":
         return { label: "Ajuste de Balanço", variant: "secondary" };
-      case "maintenance_out":
-        return { label: "Envio p/ Manutenção", variant: "destructive" };
-      case "maintenance_in":
-        return { label: "Retorno de Manutenção", variant: "default" };
       case "loss_out":
         return { label: "Baixa / Perda", variant: "destructive" };
+      case "decommission_out":
+        return { label: "Baixa Definitiva", variant: "destructive" };
       default:
         return { label: type, variant: "secondary" };
     }
@@ -724,7 +723,7 @@
                   <th class="px-4 py-3">Depósito</th>
                   <th class="px-4 py-3">Status</th>
                   <th class="px-4 py-3">Condição</th>
-                  <th class="px-4 py-3">Vistorias</th>
+                  <th class="px-4 py-3">Origem</th>
                   <th class="px-4 py-3 text-right">Ações</th>
                 </tr>
               </thead>
@@ -753,7 +752,9 @@
                       {getConditionLabel(item.unit.physical_condition)}
                     </td>
                     <td class="px-4 py-3 text-xs text-muted-foreground">
-                      {item.media.length} foto(s)
+                      {item.unit.origin === "third_party"
+                        ? "Terceiro"
+                        : "Próprio"}
                     </td>
                     <td class="px-4 py-3 text-right">
                       {#if canOperate}

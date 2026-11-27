@@ -1309,6 +1309,7 @@ describe("R3 / Tarefa 0.3 — Contratos Reais Rust ↔ TypeScript e Cobertura do
       const input = {
         name: "Galpão Central Reformado",
         code: "GALPAO-01",
+        expected_updated_at: "2026-03-01T12:00:00Z",
       };
       const res = await repo.updateWarehouse("wh_01", input);
       expect(
@@ -1390,6 +1391,7 @@ describe("R3 / Tarefa 0.3 — Contratos Reais Rust ↔ TypeScript e Cobertura do
       mockedInvoke.mockResolvedValueOnce(fix.sample_output);
       const input = {
         notes: "Revisado",
+        expected_updated_at: "2026-03-01T12:00:00Z",
       };
       const res = await repo.updateEquipmentUnit("unit_01", input);
       expect(
@@ -1472,32 +1474,22 @@ describe("R3 / Tarefa 0.3 — Contratos Reais Rust ↔ TypeScript e Cobertura do
       });
     });
 
-    it("attach_unit_media: anexa foto de vistoria ou avaria na unidade", async () => {
-      coveredCommands.add("attach_unit_media");
-      const fix = getFixture("attach_unit_media");
+    it("decommission_equipment_unit: efetua baixa patrimonial com motivo", async () => {
+      coveredCommands.add("decommission_equipment_unit");
+      const fix = getFixture("decommission_equipment_unit");
       mockedInvoke.mockResolvedValueOnce(fix.sample_output);
       const input = {
-        equipment_unit_id: "unit_01",
-        blob_id: "blob_01",
-        media_type: "damage_photo" as const,
-        caption: "Foto da avaria",
+        expected_updated_at: "2026-11-20T10:00:00Z",
+        reason: "Baixa por obsolescência",
       };
-      const res = await repo.attachUnitMedia(input);
+      const res = await repo.decommissionEquipmentUnit("unit_01", input);
       expect(
-        commandReturnSchemas["attach_unit_media"].safeParse(res).success,
+        commandReturnSchemas["decommission_equipment_unit"].safeParse(res)
+          .success,
       ).toBe(true);
-      expect(mockedInvoke).toHaveBeenCalledWith("attach_unit_media", {
+      expect(mockedInvoke).toHaveBeenCalledWith("decommission_equipment_unit", {
+        id: "unit_01",
         input,
-      });
-    });
-
-    it("detach_unit_media: desanexa mídia da unidade", async () => {
-      coveredCommands.add("detach_unit_media");
-      const fix = getFixture("detach_unit_media");
-      mockedInvoke.mockResolvedValueOnce(fix.sample_output);
-      await repo.detachUnitMedia("eum_01");
-      expect(mockedInvoke).toHaveBeenCalledWith("detach_unit_media", {
-        id: "eum_01",
       });
     });
   });
@@ -1537,13 +1529,13 @@ describe("R3 / Tarefa 0.3 — Contratos Reais Rust ↔ TypeScript e Cobertura do
     });
   });
 
-  describe("12. Tarefa 0.3 — Garantia Estrutural: Cobertura Integral dos 87 Comandos IPC", () => {
-    it("FALHA se qualquer comando do registro COMMAND_REGISTRY (87 fixtures) não possuir teste de contrato de repositório", () => {
+  describe("12. Tarefa 0.3 — Garantia Estrutural: Cobertura Integral dos 86 Comandos IPC", () => {
+    it("FALHA se qualquer comando do registro COMMAND_REGISTRY (86 fixtures) não possuir teste de contrato de repositório", () => {
       const allFixtureCommands = Object.keys(fixtureModules)
         .map((p) => p.replace("./fixtures/contracts/", "").replace(".json", ""))
         .sort();
 
-      expect(allFixtureCommands.length).toBe(87);
+      expect(allFixtureCommands.length).toBe(86);
 
       const missingCommands: string[] = [];
       for (const cmd of allFixtureCommands) {
@@ -1557,7 +1549,7 @@ describe("R3 / Tarefa 0.3 — Contratos Reais Rust ↔ TypeScript e Cobertura do
         `Os seguintes comandos estão em COMMAND_REGISTRY / fixtures mas NÃO possuem teste de contrato em repositório: ${missingCommands.join(", ")}`,
       ).toEqual([]);
 
-      expect(coveredCommands.size).toBe(87);
+      expect(coveredCommands.size).toBe(86);
     });
   });
 });

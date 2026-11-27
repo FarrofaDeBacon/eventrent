@@ -214,7 +214,7 @@ export function canAccessRoute(
     return hasPermission(session, PERMISSIONS.CATALOG_READ);
   }
   if (pathname.startsWith("/inventory")) {
-    return hasPermission(session, PERMISSIONS.WAREHOUSE_READ);
+    return hasPermission(session, PERMISSIONS.INVENTORY_READ);
   }
 
   // Rota raiz: qualquer sessão autenticada tem acesso

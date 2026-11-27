@@ -1,7 +1,6 @@
 <script lang="ts">
   import {
     Boxes,
-    Camera,
     Plus,
     RefreshCw,
     Trash2,
@@ -15,7 +14,6 @@
     type PhysicalCondition,
     type StockBalance,
     type StockMovementType,
-    type UnitMediaType,
     type UnitStatus,
     type Warehouse,
   } from "$lib/data";
@@ -48,7 +46,6 @@
   let selectedUnit = $state<EquipmentUnitDetails | null>(null);
 
   let movementModalOpen = $state(false);
-  let mediaModalOpen = $state(false);
 
   // Form Nova Unidade
   let newUnitWarehouseId = $state("");
@@ -73,19 +70,16 @@
   let movRefId = $state("");
   let submittingMovement = $state(false);
 
-  // Form Mídia / Foto
-  let newMediaBlobId = $state("");
-  let newMediaType = $state<UnitMediaType>("damage_photo");
-  let newMediaCaption = $state("");
-  let submittingMedia = $state(false);
-
   async function loadData() {
     loading = true;
     error = null;
     try {
       warehouses = await repo.listWarehouses(false);
       if (controlMode === "serialized") {
-        units = await repo.listEquipmentUnits({ equipment_model_id: modelId });
+        const res = await repo.listEquipmentUnits({
+          equipment_model_id: modelId,
+        });
+        units = res.items;
       } else {
         balances = await repo.listStockBalances(modelId);
       }
@@ -142,6 +136,7 @@
     submittingEditUnit = true;
     try {
       await repo.updateEquipmentUnit(selectedUnit.unit.id, {
+        expected_updated_at: selectedUnit.unit.updated_at,
         warehouse_id: editUnitWarehouseId,
         status: editUnitStatus,
         physical_condition: editUnitCondition,
@@ -181,7 +176,9 @@
       await repo.recordStockMovement({
         equipment_model_id: modelId,
         from_warehouse_id:
-          movType === "transfer_out" || movType === "rental_out"
+          movType === "transfer_out" ||
+          movType === "loss_out" ||
+          movType === "decommission_out"
             ? movWarehouseId
             : undefined,
         to_warehouse_id:
@@ -207,59 +204,20 @@
     }
   }
 
-  // Mídias
-  function openMediaModal(item: EquipmentUnitDetails) {
-    selectedUnit = item;
-    newMediaBlobId = "";
-    newMediaCaption = "";
-    mediaModalOpen = true;
-  }
-
-  async function handleAttachMedia() {
-    if (!selectedUnit || !newMediaBlobId.trim()) {
-      toast.error("Informe o identificador do arquivo de mídia.");
-      return;
-    }
-    submittingMedia = true;
-    try {
-      await repo.attachUnitMedia({
-        equipment_unit_id: selectedUnit.unit.id,
-        blob_id: newMediaBlobId.trim(),
-        media_type: newMediaType,
-        caption: newMediaCaption.trim() || undefined,
-      });
-      toast.success("Foto/documento anexado à unidade!");
-      mediaModalOpen = false;
-      await loadData();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    } finally {
-      submittingMedia = false;
-    }
-  }
-
-  async function handleDetachMedia(mediaId: string) {
-    try {
-      await repo.detachUnitMedia(mediaId);
-      toast.success("Mídia desanexada.");
-      await loadData();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    }
-  }
-
   function getStatusBadge(status: UnitStatus) {
     switch (status) {
       case "available":
         return { label: "Disponível", variant: "default" as const };
-      case "rented":
-        return { label: "Alugado", variant: "secondary" as const };
       case "maintenance":
         return { label: "Manutenção", variant: "outline" as const };
       case "damaged":
         return { label: "Avariado", variant: "destructive" as const };
       case "lost":
         return { label: "Extraviado", variant: "destructive" as const };
+      case "decommissioned":
+        return { label: "Baixado", variant: "secondary" as const };
+      default:
+        return { label: status, variant: "default" as const };
     }
   }
 
@@ -379,7 +337,6 @@
                 <th class="px-4 py-3">Depósito</th>
                 <th class="px-4 py-3">Status</th>
                 <th class="px-4 py-3">Condição</th>
-                <th class="px-4 py-3">Vistoria / Fotos</th>
                 <th class="px-4 py-3 text-right">Ações</th>
               </tr>
             </thead>
@@ -401,16 +358,6 @@
                   </td>
                   <td class="px-4 py-3 text-muted-foreground">
                     {getConditionLabel(item.unit.physical_condition)}
-                  </td>
-                  <td class="px-4 py-3">
-                    <button
-                      type="button"
-                      class="inline-flex items-center gap-1.5 text-xs text-primary hover:underline cursor-pointer"
-                      onclick={() => openMediaModal(item)}
-                    >
-                      <Camera class="h-3.5 w-3.5" />
-                      {item.media.length} foto(s)
-                    </button>
                   </td>
                   <td class="px-4 py-3 text-right">
                     <div class="inline-flex items-center gap-1">
@@ -470,7 +417,7 @@
               <tr>
                 <th class="px-4 py-3">Depósito</th>
                 <th class="px-4 py-3 text-right">Disponível (Em Estoque)</th>
-                <th class="px-4 py-3 text-right">Alocado em Eventos</th>
+                <th class="px-4 py-3 text-right">Estoque Mínimo</th>
                 <th class="px-4 py-3 text-right">Em Manutenção</th>
                 <th class="px-4 py-3 text-right">Total Físico</th>
               </tr>
@@ -495,7 +442,7 @@
                   <td
                     class="px-4 py-3 text-right font-mono text-muted-foreground"
                   >
-                    {bal.quantity_allocated}
+                    {bal.min_quantity}
                   </td>
                   <td
                     class="px-4 py-3 text-right font-mono text-muted-foreground"
@@ -505,9 +452,7 @@
                   <td
                     class="px-4 py-3 text-right font-mono font-bold text-foreground"
                   >
-                    {bal.quantity_on_hand +
-                      bal.quantity_allocated +
-                      bal.quantity_maintenance}
+                    {bal.quantity_on_hand + bal.quantity_maintenance}
                   </td>
                 </tr>
               {/each}
@@ -842,111 +787,4 @@
       </Button>
     </div>
   </form>
-</Dialog>
-
-<!-- Modal: Fotos de Vistoria da Unidade -->
-<Dialog
-  bind:open={mediaModalOpen}
-  title={`Vistorias e Avarias — ${selectedUnit?.unit.patrimony_tag ?? ""}`}
-  description="Histórico de fotos e registros visuais desta unidade física."
->
-  <div class="space-y-4">
-    {#if selectedUnit && selectedUnit.media.length > 0}
-      <div class="space-y-2">
-        {#each selectedUnit.media as m (m.id)}
-          <div
-            class="flex items-center justify-between rounded-lg border border-border bg-muted/20 p-2 text-xs"
-          >
-            <div>
-              <span class="font-semibold text-foreground">
-                {m.media_type === "damage_photo"
-                  ? "Avaria"
-                  : m.media_type === "inspection_photo"
-                    ? "Vistoria"
-                    : "Serial"}
-              </span>
-              {#if m.caption}
-                <p class="text-muted-foreground">{m.caption}</p>
-              {/if}
-            </div>
-            {#if !readonly}
-              <Button
-                variant="ghost"
-                size="sm"
-                class="text-destructive hover:bg-destructive/10"
-                onclick={() => handleDetachMedia(m.id)}
-              >
-                <Trash2 class="h-3.5 w-3.5" />
-              </Button>
-            {/if}
-          </div>
-        {/each}
-      </div>
-    {:else}
-      <p class="text-xs text-muted-foreground italic">
-        Nenhuma foto de vistoria anexada a esta unidade.
-      </p>
-    {/if}
-
-    {#if !readonly}
-      <div class="border-t border-border pt-4 space-y-3">
-        <h4 class="text-xs font-semibold text-foreground">Anexar Nova Foto</h4>
-        <div>
-          <label
-            for="media-blob-id"
-            class="block text-xs font-medium text-muted-foreground mb-1"
-          >
-            ID do Arquivo de Mídia *
-          </label>
-          <Input
-            id="media-blob-id"
-            placeholder="Identificador do blob de foto"
-            bind:value={newMediaBlobId}
-          />
-        </div>
-        <div>
-          <label
-            for="media-type"
-            class="block text-xs font-medium text-muted-foreground mb-1"
-          >
-            Tipo de Registro
-          </label>
-          <select
-            id="media-type"
-            bind:value={newMediaType}
-            class="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-          >
-            <option value="damage_photo">Foto de Avaria</option>
-            <option value="inspection_photo"
-              >Foto de Vistoria Pré/Pós Evento</option
-            >
-            <option value="serial_photo">Foto da Etiqueta de Série</option>
-          </select>
-        </div>
-        <div>
-          <label
-            for="media-caption"
-            class="block text-xs font-medium text-muted-foreground mb-1"
-          >
-            Descrição / Local do Dano
-          </label>
-          <Input
-            id="media-caption"
-            placeholder="Ex: Risco na lateral esquerda do chassi"
-            bind:value={newMediaCaption}
-          />
-        </div>
-        <div class="flex justify-end gap-2">
-          <Button
-            type="button"
-            size="sm"
-            onclick={handleAttachMedia}
-            disabled={submittingMedia}
-          >
-            {submittingMedia ? "Anexando..." : "Anexar Foto"}
-          </Button>
-        </div>
-      </div>
-    {/if}
-  </div>
 </Dialog>

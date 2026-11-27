@@ -6,7 +6,7 @@
     {
       "equipment_model_id": "018f0000-0000-7000-8000-000000000050",
       "id": "018f0000-0000-7000-8000-000000000082",
-      "quantity_allocated": 0,
+      "min_quantity": 0,
       "quantity_maintenance": 0,
       "quantity_on_hand": 5,
       "tenant_id": "018f0000-0000-7000-8000-000000000001",
