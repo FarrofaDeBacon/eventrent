@@ -51,44 +51,46 @@ As regras de negócio do EventRent operam de maneira determinística, implementa
 
 As permissões são definidas como constantes imutáveis em `crates/core/src/domain/permission.rs` (`ALL_PERMISSIONS`):
 
-| Constante                 | Chave                | Descrição                                                   |
-| ------------------------- | -------------------- | ----------------------------------------------------------- |
-| `PERM_USER_READ`          | `user:read`          | Listar e consultar usuários do tenant                       |
-| `PERM_USER_MANAGE`        | `user:manage`        | Criar, editar, ativar, desativar e redefinir senha          |
-| `PERM_ROLE_READ`          | `role:read`          | Consultar perfis de acesso e matriz de permissões           |
-| `PERM_ROLE_MANAGE`        | `role:manage`        | Criar e gerenciar perfis personalizados                     |
-| `PERM_BRANDING_READ`      | `branding:read`      | Consultar configurações de aparência e marca                |
-| `PERM_BRANDING_MANAGE`    | `branding:manage`    | Alterar nome da empresa, cores, logotipo e ícone            |
-| `PERM_CUSTOMER_READ`      | `customer:read`      | Consultar clientes e contatos                               |
-| `PERM_CUSTOMER_MANAGE`    | `customer:manage`    | Criar e editar clientes e contatos                          |
-| `PERM_SUPPLIER_READ`      | `supplier:read`      | Consultar fornecedores                                      |
-| `PERM_SUPPLIER_MANAGE`    | `supplier:manage`    | Criar e editar fornecedores                                 |
-| `PERM_VENUE_READ`         | `venue:read`         | Consultar locais e espaços de eventos                       |
-| `PERM_VENUE_MANAGE`       | `venue:manage`       | Criar e editar locais e espaços de eventos                  |
-| `PERM_CATALOG_READ`       | `catalog:read`       | Consultar catálogo de modelos, marcas e categorias          |
-| `PERM_CATALOG_MANAGE`     | `catalog:manage`     | Criar e editar modelos, fotos, manuais, marcas e categorias |
-| `PERM_RESERVATION_READ`   | `reservation:read`   | Consultar reservas de equipamentos                          |
-| `PERM_RESERVATION_MANAGE` | `reservation:manage` | Criar, alterar e cancelar reservas de equipamentos          |
-| `PERM_QUOTE_READ`         | `quote:read`         | Consultar orçamentos e propostas comerciais                 |
-| `PERM_QUOTE_MANAGE`       | `quote:manage`       | Criar, editar e aprovar orçamentos e propostas comerciais   |
-| `PERM_WAREHOUSE_READ`     | `warehouse:read`     | Consultar ordens de separação, saída, retorno e estoque     |
-| `PERM_WAREHOUSE_OPERATE`  | `warehouse:operate`  | Executar conferência de saída/retorno e manutenção          |
-| `PERM_FINANCE_READ`       | `finance:read`       | Consultar contas a receber, faturamento e fluxo de caixa    |
-| `PERM_FINANCE_MANAGE`     | `finance:manage`     | Registrar baixas, cobranças e ajustes financeiros           |
-| `PERM_AUDIT_READ`         | `audit:read`         | Consultar trilha de auditoria (`audit_log`)                 |
-| `PERM_SETTINGS_READ`      | `settings:read`      | Consultar parâmetros globais do sistema                     |
-| `PERM_SETTINGS_MANAGE`    | `settings:manage`    | Alterar parâmetros globais do sistema                       |
-| `PERM_BACKUP_MANAGE`      | `backup:manage`      | Gerenciar backups e restaurar estado do sistema             |
+| Constante                 | Chave                | Descrição                                                     |
+| ------------------------- | -------------------- | ------------------------------------------------------------- |
+| `PERM_USER_READ`          | `user:read`          | Listar e consultar usuários do tenant                         |
+| `PERM_USER_MANAGE`        | `user:manage`        | Criar, editar, ativar, desativar e redefinir senha            |
+| `PERM_ROLE_READ`          | `role:read`          | Consultar perfis de acesso e matriz de permissões             |
+| `PERM_ROLE_MANAGE`        | `role:manage`        | Criar e gerenciar perfis personalizados                       |
+| `PERM_BRANDING_READ`      | `branding:read`      | Consultar configurações de aparência e marca                  |
+| `PERM_BRANDING_MANAGE`    | `branding:manage`    | Alterar nome da empresa, cores, logotipo e ícone              |
+| `PERM_CUSTOMER_READ`      | `customer:read`      | Consultar clientes e contatos                                 |
+| `PERM_CUSTOMER_MANAGE`    | `customer:manage`    | Criar e editar clientes e contatos                            |
+| `PERM_SUPPLIER_READ`      | `supplier:read`      | Consultar fornecedores                                        |
+| `PERM_SUPPLIER_MANAGE`    | `supplier:manage`    | Criar e editar fornecedores                                   |
+| `PERM_VENUE_READ`         | `venue:read`         | Consultar locais e espaços de eventos                         |
+| `PERM_VENUE_MANAGE`       | `venue:manage`       | Criar e editar locais e espaços de eventos                    |
+| `PERM_CATALOG_READ`       | `catalog:read`       | Consultar catálogo de modelos, marcas e categorias            |
+| `PERM_CATALOG_MANAGE`     | `catalog:manage`     | Criar e editar modelos, fotos, manuais, marcas e categorias   |
+| `PERM_RESERVATION_READ`   | `reservation:read`   | Consultar reservas de equipamentos                            |
+| `PERM_RESERVATION_MANAGE` | `reservation:manage` | Criar, alterar e cancelar reservas de equipamentos            |
+| `PERM_QUOTE_READ`         | `quote:read`         | Consultar orçamentos e propostas comerciais                   |
+| `PERM_QUOTE_MANAGE`       | `quote:manage`       | Criar, editar e aprovar orçamentos e propostas comerciais     |
+| `PERM_WAREHOUSE_READ`     | `warehouse:read`     | Consultar ordens de separação, saída, retorno e estoque       |
+| `PERM_WAREHOUSE_OPERATE`  | `warehouse:operate`  | Executar conferência de saída/retorno e manutenção            |
+| `PERM_INVENTORY_READ`     | `inventory:read`     | Consultar depósitos, unidades físicas, saldos e movimentações |
+| `PERM_INVENTORY_MANAGE`   | `inventory:manage`   | Cadastrar depósitos, unidades físicas, status e movimentos    |
+| `PERM_FINANCE_READ`       | `finance:read`       | Consultar contas a receber, faturamento e fluxo de caixa      |
+| `PERM_FINANCE_MANAGE`     | `finance:manage`     | Registrar baixas, cobranças e ajustes financeiros             |
+| `PERM_AUDIT_READ`         | `audit:read`         | Consultar trilha de auditoria (`audit_log`)                   |
+| `PERM_SETTINGS_READ`      | `settings:read`      | Consultar parâmetros globais do sistema                       |
+| `PERM_SETTINGS_MANAGE`    | `settings:manage`    | Alterar parâmetros globais do sistema                         |
+| `PERM_BACKUP_MANAGE`      | `backup:manage`      | Gerenciar backups e restaurar estado do sistema               |
 
 ### 4.2. Perfis de Sistema Padrão
 
 Criados de forma idempotente por `ensure_system_roles` para cada tenant:
 
-1. **Proprietário (`owner`)**: Possui **todas as 26 permissões** do catálogo canônico (`ALL_PERMISSIONS`).
-2. **Comercial (`commercial`)**: `customer:read`, `customer:manage`, `supplier:read`, `venue:read`, `venue:manage`, `catalog:read`, `reservation:read`, `reservation:manage`, `quote:read`, `quote:manage`, `branding:read`.
-3. **Estoque (`warehouse`)**: `supplier:read`, `supplier:manage`, `venue:read`, `venue:manage`, `catalog:read`, `catalog:manage`, `reservation:read`, `warehouse:read`, `warehouse:operate`, `branding:read`.
-4. **Técnico (`technician`)**: `venue:read`, `catalog:read`, `reservation:read`, `warehouse:read`, `warehouse:operate`, `branding:read`.
-5. **Financeiro (`finance`)**: `customer:read`, `supplier:read`, `supplier:manage`, `venue:read`, `quote:read`, `reservation:read`, `finance:read`, `finance:manage`, `audit:read`, `branding:read`.
+1. **Proprietário (`owner`)**: Possui **todas as 28 permissões** do catálogo canônico (`ALL_PERMISSIONS`).
+2. **Comercial (`commercial`)**: `customer:read`, `customer:manage`, `supplier:read`, `venue:read`, `venue:manage`, `catalog:read`, `inventory:read`, `reservation:read`, `reservation:manage`, `quote:read`, `quote:manage`, `branding:read`.
+3. **Estoque (`warehouse`)**: `supplier:read`, `supplier:manage`, `venue:read`, `venue:manage`, `catalog:read`, `catalog:manage`, `inventory:read`, `inventory:manage`, `reservation:read`, `warehouse:read`, `warehouse:operate`, `branding:read`.
+4. **Técnico (`technician`)**: `venue:read`, `catalog:read`, `inventory:read`, `reservation:read`, `warehouse:read`, `warehouse:operate`, `branding:read`.
+5. **Financeiro (`finance`)**: `customer:read`, `supplier:read`, `supplier:manage`, `venue:read`, `catalog:read`, `inventory:read`, `quote:read`, `reservation:read`, `finance:read`, `finance:manage`, `audit:read`, `branding:read`.
 
 ### 4.3. Regras de Proteção de Contas e Auditoria
 
