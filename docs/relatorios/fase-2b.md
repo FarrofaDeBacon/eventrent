@@ -282,7 +282,7 @@ CREATE TABLE equipment_patrimony_seq (
 Índices parciais para número de série por modelo e patrimônio:
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/store-sqlite/migrations/0011_inventory.sql:72-80 -->
+<!-- snippet: crates/store-sqlite/migrations/0011_inventory.sql:80-88 -->
 ```sql
 CREATE UNIQUE INDEX idx_equipment_unit_tenant_patrimony_active
     ON equipment_unit (tenant_id, patrimony_tag)
@@ -299,7 +299,7 @@ CREATE INDEX idx_equipment_unit_tenant_model_status
 ### 3.2. Provisionamento Idempotente de Depósito Padrão (`ensure_default_inventory`) (R2)
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/core/src/services/inventory.rs:721-758 -->
+<!-- snippet: crates/core/src/services/inventory.rs:1087-1124 -->
 ```rust
 pub async fn ensure_default_inventory(
     tenant_id: &str,
@@ -345,7 +345,7 @@ pub async fn ensure_default_inventory(
 ### 3.3. Emissão Sequencial Atômica de Patrimônio sob Demanda (R2 & R3a)
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/store-sqlite/src/inventory.rs:410-434 -->
+<!-- snippet: crates/store-sqlite/src/inventory.rs:531-555 -->
 ```rust
     async fn next_patrimony_tag(&self, tenant_id: &str) -> Result<String> {
         let insert_query = sqlx::query(
@@ -379,7 +379,7 @@ pub async fn ensure_default_inventory(
 - **Teste**: `test_inventory_patrimony_concurrency_no_duplicates_or_gaps` (12 tarefas tokio concorrentes) -> **PASS**.
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/store-sqlite/src/lib.rs:7925-7971 -->
+<!-- snippet: crates/store-sqlite/src/lib.rs:7894-7940 -->
 ```rust
         let tenant_id = ensure_default_tenant(store.tenants.as_ref(), store.branding.as_ref())
             .await
@@ -435,12 +435,12 @@ pub async fn ensure_default_inventory(
 - **Teste**: `test_inventory_stock_movement_concurrency_ledger_sum_and_no_negative` (2 saídas simultâneas disputando o último item restante) -> **PASS**.
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/store-sqlite/src/lib.rs:8115-8160 -->
+<!-- snippet: crates/store-sqlite/src/lib.rs:8086-8132 -->
 ```rust
                             equipment_unit_id: None,
                             from_warehouse_id: Some(wh),
                             to_warehouse_id: None,
-                            movement_type: StockMovementType::RentalOut,
+                            movement_type: StockMovementType::LossOut,
                             quantity: 1,
                             reason: "Saída Concorrente 1 do último item".to_string(),
                             reference_id: None,
@@ -461,7 +461,7 @@ pub async fn ensure_default_inventory(
                             equipment_unit_id: None,
                             from_warehouse_id: Some(wh),
                             to_warehouse_id: None,
-                            movement_type: StockMovementType::RentalOut,
+                            movement_type: StockMovementType::LossOut,
                             quantity: 1,
                             reason: "Saída Concorrente 2 do último item".to_string(),
                             reference_id: None,
@@ -483,6 +483,7 @@ pub async fn ensure_default_inventory(
         assert_eq!(
             failures, 1,
             "Exatamente uma das saídas simultâneas deve falhar por falta de saldo"
+        );
 ```
 <!-- /snippet -->
 
@@ -490,9 +491,8 @@ pub async fn ensure_default_inventory(
 - **Teste**: `test_inventory_triggers_append_only_explicit_update_delete` (UPDATE e DELETE em `stock_movement`) -> **PASS**.
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/store-sqlite/src/lib.rs:8260-8290 -->
+<!-- snippet: crates/store-sqlite/src/lib.rs:8232-8264 -->
 ```rust
-        )
         .bind(mov_id)
         .bind(&tenant_id)
         .bind(&default_wh.id)
@@ -523,6 +523,9 @@ pub async fn ensure_default_inventory(
             .execute(&pool)
             .await;
         assert!(
+            delete_res.is_err(),
+            "DELETE em stock_movement deve ser abortado pelo trigger trg_stock_movement_no_delete"
+        );
 ```
 <!-- /snippet -->
 
@@ -530,22 +533,9 @@ pub async fn ensure_default_inventory(
 - **Teste**: `test_inventory_financial_redaction_across_roles_owner_stock_tech` -> **PASS**.
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/store-sqlite/src/lib.rs:8445-8475 -->
+<!-- snippet: crates/store-sqlite/src/lib.rs:8474-8496 -->
 ```rust
-            .await
-            .unwrap();
-
-        // O retorno de create_equipment_model para Estoque já deve vir sanitizado
-        assert_eq!(
-            created_by_stock.model.cost_price_cents, None,
-            "Estoque não deve ver cost_price_cents no retorno de criação"
-        );
-        assert_eq!(
-            created_by_stock.model.replacement_value_cents, None,
-            "Estoque não deve ver replacement_value_cents no retorno de criação"
-        );
-
-        let model_id = &created_by_stock.model.id;
+        let model_id = &created_by_owner.model.id;
 
         // A) get_equipment_model
         let model_owner = services
@@ -563,6 +553,11 @@ pub async fn ensure_default_inventory(
         assert_eq!(model_stock.model.replacement_value_cents, None);
 
         let model_tech = services
+            .get_equipment_model(&tech_session, model_id)
+            .await
+            .unwrap();
+        assert_eq!(model_tech.model.cost_price_cents, None);
+        assert_eq!(model_tech.model.replacement_value_cents, None);
 ```
 <!-- /snippet -->
 
@@ -570,7 +565,7 @@ pub async fn ensure_default_inventory(
 - **Teste**: `test_inventory_block_control_mode_alteration_when_units_or_movements_exist` -> **PASS**.
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/core/src/services/catalog.rs:1320-1355 -->
+<!-- snippet: crates/core/src/services/catalog.rs:1339-1374 -->
 ```rust
                     if existing.control_mode != input.control_mode {
                         let units = stores
@@ -615,7 +610,7 @@ pub async fn ensure_default_inventory(
 - **Teste**: `test_inventory_partial_unique_constraints_and_soft_delete` -> **PASS**.
 
 <!-- prettier-ignore -->
-<!-- snippet: crates/store-sqlite/src/lib.rs:8950-8989 -->
+<!-- snippet: crates/store-sqlite/src/lib.rs:8975-9014 -->
 ```rust
         // Modelo DIFERENTE com mesmo serial -> SUCESSO (série é única POR modelo)
         let dup_serial_diff_model_res = sqlx::query(
